@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth-context";
 import { motion } from "framer-motion";
-import { LogIn, User, Lock } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { toast } from "sonner";
 
 export default function LoginPage() {
@@ -43,11 +43,7 @@ export default function LoginPage() {
       }
       login(data.user);
       toast.success("Login berhasil");
-      if (data.user.role === "admin") {
-        router.push("/admin");
-      } else {
-        router.push("/dashboard");
-      }
+      router.push(data.user.role === "admin" ? "/admin" : "/dashboard");
     } catch {
       toast.error("Gagal terhubung ke server");
     } finally {
@@ -58,34 +54,34 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
         className="w-full max-w-sm"
       >
-        <Card>
+        <Card className="border-white/5 bg-zinc-900">
           <CardHeader className="text-center">
-            <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
-              <User className="size-6 text-emerald-600 dark:text-emerald-400" />
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-emerald-500/10">
+              <LogIn className="size-5 text-emerald-500" />
             </div>
-            <CardTitle>Masuk ke Panel</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-base">Akses Responden</CardTitle>
+            <CardDescription className="text-xs">
               Masukkan kredensial Anda
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Nama</label>
+              <div className="space-y-1.5">
+                <label className="text-xs text-zinc-400">Nama / NIM</label>
                 <Input
-                  placeholder="Nama pengguna"
+                  placeholder="Masukkan nama"
                   value={nama}
                   onChange={(e) => setNama(e.target.value)}
                   disabled={loading}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Password</label>
+              <div className="space-y-1.5">
+                <label className="text-xs text-zinc-400">Password</label>
                 <Input
                   type="password"
                   placeholder="Password"

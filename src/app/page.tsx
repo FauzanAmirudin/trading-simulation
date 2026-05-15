@@ -6,158 +6,146 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   TrendingUp,
-  Wallet,
-  Layers,
   ArrowRight,
+  CircleDot,
   BarChart3,
   Users,
   Timer,
+  Wallet,
+  Layers,
+  BookOpen,
+  DollarSign,
 } from "lucide-react";
 
 const features = [
   {
-    icon: Wallet,
+    icon: DollarSign,
     title: "Modal Virtual Rp 100 Juta",
-    desc: "Setiap responden mendapat modal virtual untuk melakukan simulasi transaksi jual-beli saham tanpa risiko nyata.",
+    desc: "Setiap responden mendapatkan dana virtual untuk bertransaksi tanpa risiko finansial nyata.",
   },
   {
     icon: Timer,
-    title: "Sistem Sesi Perdagangan",
-    desc: "Terdapat 6 putaran sesi perdagangan dengan durasi tertentu yang dikontrol oleh admin riset.",
+    title: "6 Sesi Perdagangan",
+    desc: "Eksperimen terdiri dari 6 putaran sesi yang dikontrol penuh oleh peneliti melalui panel admin.",
   },
   {
     icon: BarChart3,
     title: "Order Book Real-time",
-    desc: "Pantau harga Bid/Ask secara langsung dan lakukan transaksi dengan mekanisme order book yang transparan.",
+    desc: "Mekanisme lelang saham dengan antrean Bid dan Ask yang dapat dipantau secara langsung.",
   },
   {
-    icon: TrendingUp,
+    icon: Layers,
     title: "3 Saham Per Sesi",
     desc: "Setiap sesi menyajikan 3 saham pilihan untuk diprediksi dan diperdagangkan oleh responden.",
   },
   {
-    icon: Layers,
+    icon: BookOpen,
     title: "Prediksi Harga",
-    desc: "Sebelum sesi dimulai, responden memasukkan tebakan harga saham sebagai bagian dari data riset.",
+    desc: "Responden memasukkan tebakan harga sebelum sesi dimulai sebagai data riset perilaku.",
   },
   {
     icon: Users,
     title: "Multi Responden",
-    desc: "Hingga 60 responden dapat berpartisipasi secara bersamaan dalam satu sesi eksperimen.",
+    desc: "Hingga 60 responden berpartisipasi bersamaan dalam satu lingkungan pasar eksperimental.",
   },
 ];
 
 export default function Home() {
+  const sessionActive = false;
+
   return (
     <div className="flex flex-col">
-      <section className="relative overflow-hidden border-b bg-gradient-to-b from-emerald-50 to-white py-24 dark:from-emerald-950/20 dark:to-background">
-        <div className="mx-auto max-w-6xl px-4 text-center">
+      <section className="relative overflow-hidden py-28">
+        <div className="mx-auto max-w-5xl px-4 text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl bg-emerald-100 dark:bg-emerald-900/50">
-              <TrendingUp className="size-8 text-emerald-600 dark:text-emerald-400" />
+            <div className="mx-auto mb-6 flex size-14 items-center justify-center rounded-xl bg-emerald-500/10">
+              <TrendingUp className="size-7 text-emerald-500" />
             </div>
-            <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">
-              Simulasi Trading Saham
-              <span className="block text-emerald-600 dark:text-emerald-400">
-                Eksperimental
-              </span>
+
+            <div className="mb-4 flex items-center justify-center gap-2 text-xs text-zinc-500">
+              <CircleDot className="size-3 text-rose-500 animate-ping absolute" />
+              <CircleDot className="size-3 text-rose-500 relative" />
+              <span>Sesi perdagangan <span className="text-zinc-400 font-medium">tidak aktif</span></span>
+            </div>
+
+            <h1 className="mx-auto max-w-4xl text-4xl font-bold tracking-tight sm:text-5xl">
+              Simulasi Trading{" "}
+              <span className="text-emerald-500">&</span> Analisis
+              <br />
+              Perilaku Pasar
             </h1>
-            <p className="mx-auto mt-4 max-w-2xl text-lg text-muted-foreground">
-              Platform simulasi perdagangan saham berbasis riset. Uji strategi
-              trading Anda dengan modal virtual Rp 100.000.000 dalam lingkungan
-              pasar yang terkontrol.
+            <p className="mx-auto mt-4 max-w-2xl text-base text-zinc-500 leading-relaxed">
+              Platform eksperimen perdagangan saham berbasis riset. Uji strategi trading
+              Anda dengan modal virtual Rp 100.000.000 dalam lingkungan pasar yang
+              terkontrol dan terukur.
             </p>
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
               <Link href="/login">
-                <Button size="lg" className="gap-2 text-base">
-                  Mulai Eksperimen
+                <Button
+                  size="lg"
+                  className="gap-2 px-6 text-sm"
+                  disabled={!sessionActive}
+                >
+                  Masuk ke Panel Responden
                   <ArrowRight className="size-4" />
                 </Button>
               </Link>
-              <Link href="#tentang">
-                <Button variant="outline" size="lg" className="text-base">
-                  Pelajari Lebih Lanjut
+              <Link href="/login">
+                <Button variant="outline" size="lg" className="px-6 text-sm">
+                  Login Admin
                 </Button>
               </Link>
             </div>
+            {!sessionActive && (
+              <p className="mt-3 text-xs text-zinc-600">
+                Tombol responden aktif saat sesi dimulai oleh Admin
+              </p>
+            )}
           </motion.div>
         </div>
       </section>
 
-      <section id="tentang" className="py-20">
+      <section className="border-t border-white/5 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
             className="mb-12 text-center"
           >
-            <h2 className="text-3xl font-bold tracking-tight">
-              Aturan Main Simulasi
-            </h2>
-            <p className="mt-2 text-muted-foreground">
-              Pahami mekanisme sebelum memulai perdagangan
+            <h2 className="text-2xl font-bold tracking-tight">Mekanisme Simulasi</h2>
+            <p className="mt-1.5 text-sm text-zinc-500">
+              Pahami alur eksperimen sebelum memulai
             </p>
           </motion.div>
 
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((f, i) => (
               <motion.div
                 key={f.title}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: i * 0.1 }}
+                transition={{ duration: 0.4, delay: i * 0.08 }}
               >
-                <Card className="h-full">
+                <Card className="h-full border-white/5 bg-zinc-900/50">
                   <CardHeader>
-                    <div className="flex size-10 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/50">
-                      <f.icon className="size-5 text-emerald-600 dark:text-emerald-400" />
+                    <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10">
+                      <f.icon className="size-4.5 text-emerald-500" />
                     </div>
-                    <CardTitle className="mt-2">{f.title}</CardTitle>
+                    <CardTitle className="mt-1.5 text-sm">{f.title}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-muted-foreground">{f.desc}</p>
+                    <p className="text-xs text-zinc-500 leading-relaxed">{f.desc}</p>
                   </CardContent>
                 </Card>
               </motion.div>
             ))}
           </div>
-        </div>
-      </section>
-
-      <section className="border-t bg-muted/30 py-16">
-        <div className="mx-auto max-w-6xl px-4 text-center">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <h2 className="text-2xl font-bold tracking-tight">
-              Siap Memulai?
-            </h2>
-            <p className="mt-2 text-muted-foreground">
-              Login sebagai responden atau admin untuk mengakses panel
-            </p>
-            <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <Link href="/login">
-                <Button size="lg" className="gap-2">
-                  Masuk ke Panel Responden
-                </Button>
-              </Link>
-              <Link href="/admin">
-                <Button variant="outline" size="lg">
-                  Panel Admin
-                </Button>
-              </Link>
-            </div>
-          </motion.div>
         </div>
       </section>
     </div>
