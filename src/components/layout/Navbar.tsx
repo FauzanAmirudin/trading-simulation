@@ -6,7 +6,7 @@ import Link from "next/link";
 import { TrendingUp, LogOut, User } from "lucide-react";
 
 export function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, hydrated, logout } = useAuth();
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-white/5 bg-zinc-950/80 backdrop-blur-md">
@@ -16,7 +16,9 @@ export function Navbar() {
           <span className="text-zinc-300">Riset Pasar Modal</span>
         </Link>
         <nav className="flex items-center gap-3">
-          {user ? (
+          {!hydrated ? (
+            <div className="h-8 w-20" />
+          ) : user ? (
             <>
               <span className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <User className="size-3.5" />

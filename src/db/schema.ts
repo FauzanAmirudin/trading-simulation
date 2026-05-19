@@ -27,10 +27,17 @@ export const stocks = pgTable("stocks", {
 export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
   putaranKe: integer("putaran_ke").notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending | active | closed
+  periodeKe: integer("periode_ke").notNull().default(1),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
   startTime: timestamp("start_time"),
   endTime: timestamp("end_time"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const sessionStocks = pgTable("session_stocks", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").references(() => sessions.id).notNull(),
+  stockId: integer("stock_id").references(() => stocks.id).notNull(),
 });
 
 export const predictions = pgTable("predictions", {
@@ -58,6 +65,7 @@ export const portfolios = pgTable("portfolios", {
   userId: integer("user_id").references(() => users.id).notNull(),
   stockId: integer("stock_id").references(() => stocks.id).notNull(),
   jumlahLot: integer("jumlah_lot").notNull().default(0),
+  averagePrice: decimal("average_price", { precision: 15, scale: 2 }).default("0"),
 });
 
 export const transactionsHistory = pgTable("transactions_history", {

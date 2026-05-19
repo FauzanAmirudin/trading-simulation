@@ -7,7 +7,8 @@ import { motion } from "framer-motion";
 import {
   TrendingUp,
   ArrowRight,
-  CircleDot,
+  Activity,
+  RadioTower,
   BarChart3,
   Users,
   Timer,
@@ -18,36 +19,12 @@ import {
 } from "lucide-react";
 
 const features = [
-  {
-    icon: DollarSign,
-    title: "Modal Virtual Rp 100 Juta",
-    desc: "Setiap responden mendapatkan dana virtual untuk bertransaksi tanpa risiko finansial nyata.",
-  },
-  {
-    icon: Timer,
-    title: "6 Sesi Perdagangan",
-    desc: "Eksperimen terdiri dari 6 putaran sesi yang dikontrol penuh oleh peneliti melalui panel admin.",
-  },
-  {
-    icon: BarChart3,
-    title: "Order Book Real-time",
-    desc: "Mekanisme lelang saham dengan antrean Bid dan Ask yang dapat dipantau secara langsung.",
-  },
-  {
-    icon: Layers,
-    title: "3 Saham Per Sesi",
-    desc: "Setiap sesi menyajikan 3 saham pilihan untuk diprediksi dan diperdagangkan oleh responden.",
-  },
-  {
-    icon: BookOpen,
-    title: "Prediksi Harga",
-    desc: "Responden memasukkan tebakan harga sebelum sesi dimulai sebagai data riset perilaku.",
-  },
-  {
-    icon: Users,
-    title: "Multi Responden",
-    desc: "Hingga 60 responden berpartisipasi bersamaan dalam satu lingkungan pasar eksperimental.",
-  },
+  { icon: DollarSign, title: "Modal Virtual Rp 100 Juta", desc: "Setiap responden mendapatkan dana virtual untuk bertransaksi tanpa risiko finansial nyata." },
+  { icon: Timer, title: "6 Sesi Perdagangan", desc: "Eksperimen terdiri dari 6 putaran sesi yang dikontrol penuh oleh peneliti melalui panel admin." },
+  { icon: BarChart3, title: "Order Book Real-time", desc: "Mekanisme lelang saham dengan antrean Bid dan Ask yang dapat dipantau secara langsung." },
+  { icon: Layers, title: "3 Saham Per Sesi", desc: "Setiap sesi menyajikan 3 saham pilihan untuk diprediksi dan diperdagangkan oleh responden." },
+  { icon: BookOpen, title: "Prediksi Harga", desc: "Responden memasukkan tebakan harga sebelum sesi dimulai sebagai data riset perilaku." },
+  { icon: Users, title: "Multi Responden", desc: "Hingga 60 responden berpartisipasi bersamaan dalam satu lingkungan pasar eksperimental." },
 ];
 
 export default function Home() {
@@ -56,7 +33,17 @@ export default function Home() {
   return (
     <div className="flex flex-col">
       <section className="relative overflow-hidden py-28">
-        <div className="mx-auto max-w-5xl px-4 text-center">
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 0%, rgba(16,185,129,0.08) 0%, transparent 60%)",
+          }}
+        />
+        <TrendingUp className="pointer-events-none absolute -left-12 top-20 size-48 text-emerald-500/5 rotate-12" />
+        <Activity className="pointer-events-none absolute -right-8 bottom-20 size-40 text-emerald-500/5 -rotate-12" />
+
+        <div className="mx-auto max-w-5xl px-4 text-center relative">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
@@ -67,8 +54,10 @@ export default function Home() {
             </div>
 
             <div className="mb-4 flex items-center justify-center gap-2 text-xs text-zinc-500">
-              <CircleDot className="size-3 text-rose-500 animate-ping absolute" />
-              <CircleDot className="size-3 text-rose-500 relative" />
+              <span className="relative flex size-3">
+                <RadioTower className="size-3 text-rose-500 animate-ping absolute" />
+                <RadioTower className="size-3 text-rose-500 relative" />
+              </span>
               <span>Sesi perdagangan <span className="text-zinc-400 font-medium">tidak aktif</span></span>
             </div>
 
@@ -87,11 +76,11 @@ export default function Home() {
               <Link href="/login">
                 <Button
                   size="lg"
-                  className="gap-2 px-6 text-sm"
+                  className="gap-2 px-6 text-sm transition-all duration-300 hover:shadow-[0_0_20px_-5px] hover:shadow-emerald-500/20 hover:translate-x-[-2px] group"
                   disabled={!sessionActive}
                 >
                   Masuk ke Panel Responden
-                  <ArrowRight className="size-4" />
+                  <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
                 </Button>
               </Link>
               <Link href="/login">
@@ -118,9 +107,7 @@ export default function Home() {
             className="mb-12 text-center"
           >
             <h2 className="text-2xl font-bold tracking-tight">Mekanisme Simulasi</h2>
-            <p className="mt-1.5 text-sm text-zinc-500">
-              Pahami alur eksperimen sebelum memulai
-            </p>
+            <p className="mt-1.5 text-sm text-zinc-500">Pahami alur eksperimen sebelum memulai</p>
           </motion.div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

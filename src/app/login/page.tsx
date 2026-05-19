@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth-context";
 import { motion } from "framer-motion";
-import { LogIn } from "lucide-react";
+import { ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function LoginPage() {
@@ -62,12 +62,10 @@ export default function LoginPage() {
         <Card className="border-white/5 bg-zinc-900">
           <CardHeader className="text-center">
             <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-emerald-500/10">
-              <LogIn className="size-5 text-emerald-500" />
+              <ShieldCheck className="size-5 text-emerald-500" />
             </div>
             <CardTitle className="text-base">Akses Responden</CardTitle>
-            <CardDescription className="text-xs">
-              Masukkan kredensial Anda
-            </CardDescription>
+            <CardDescription className="text-xs">Masukkan kredensial Anda</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -78,6 +76,7 @@ export default function LoginPage() {
                   value={nama}
                   onChange={(e) => setNama(e.target.value)}
                   disabled={loading}
+                  className="focus-visible:ring-emerald-500"
                 />
               </div>
               <div className="space-y-1.5">
@@ -88,11 +87,16 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
+                  className="focus-visible:ring-emerald-500"
                 />
               </div>
               <Button type="submit" disabled={loading} className="gap-2">
-                <LogIn className="size-4" />
-                {loading ? "Memproses..." : "Masuk"}
+                {loading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="size-4" />
+                )}
+                {loading ? "Memverifikasi..." : "Masuk"}
               </Button>
             </form>
           </CardContent>
