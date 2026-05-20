@@ -8,13 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-
 import { cn } from "@/lib/utils";
 import {
   TrendingUp, TrendingDown, Timer, ArrowDownToLine, ArrowUpFromLine,
-  DollarSign, ArrowLeft, Building2,
+  DollarSign, ArrowLeft, Building2, Zap, AlertTriangle, TrendingDown as TrendingDownIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
 
 type Stock = { id: number; kodeSaham: string; namaSaham: string; basePrice: number };
 type Order = { id: number; userId: number; harga: number; jumlah: number };
@@ -180,23 +180,54 @@ function TradingPageContent() {
   const [sessionTimer, setSessionTimer] = useState(120);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // New experimental state
+  const [roundNumber, setRoundNumber] = useState<number | null>(null);
+  const [period, setPeriod] = useState<number | null>(null);
+  const [subSession, setSubSession] = useState<number | null>(null);
+  const [phase, setPhase] = useState<SubSessionPhase>("PENDING");
+  const [openingPrices, setOpeningPrices] = useState<Record<number, number>>({});
+  const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
+  const [predictionInput, setPredictionInput] = useState<Record<number, string>>({});
+  const [showPredictionUI, setShowPredictionUI] = useState(false);
+  const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
+
   useEffect(() => {
     if (!hydrated) return;
     if (!user) { router.push("/login"); return; }
-    fetch("/api/session/active").then(r => r.json()).then(res => {
-      if (res.session && res.stocks.length > 0) {
-        setStocks(res.stocks);
-        setSessionActive(true);
-        setSessionStatus(res.session.status);
-      } else {
-        setStocks([]);
-        setSessionActive(false);
-        setSessionStatus(null);
-      }
-      setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
+    // Try new rounds API first, fall back to session API
+    fetch("/api/rounds")
+      .then(r => r.json())
+      .then(res => {
+        if (res.rounds && res.rounds.length > 0) {
+          // Use rounds data
+          const activeRoundData = res.rounds.find((r: any) => r.status === "active");
+          if (activeRoundData) {
+            const stockList = activeRoundData.stocks || [];
+            if (stockList.length > 0) {
+              setStocks(stockList.map((s: any) => ({
+                id: s.id,
+                kodeSaham: s.kodeSaham,
+                namaSaham: s.namaSaham,
+                basePrice: Number(s.basePrice),
+              })));
+              setSessionActive(true);
+              setRoundNumber(activeRoundData.roundNumber);
+              setPhase((activeRoundData.subSessionStatus as SubSessionPhase) || "PENDING");
+            }
+          }
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        // Fallback to session API
+        fetch("/api/session/active").then(r => r.json()).then(res => {
+          if (res.session && res.stocks && res.stocks.length > 0) {
+            setStocks(res.stocks);
+            setSessionActive(true);
+          }
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      });
   }, [user, router]); // eslint-disable-line
 
   // Poll session status every 5s — auto-clear stocks when session ends
@@ -225,9 +256,10 @@ function TradingPageContent() {
 
   useEffect(() => {
     if (!stock) return;
-    const base = Number(stock.basePrice);
+    const base = openingPrices[stock.id] || Number(stock.basePrice);
     setCurrentPrice(base);
     setPriceHistory(generateRandomWalk(base, 40));
+    if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       setPriceHistory(prev => {
         const last = prev[prev.length - 1];
@@ -236,36 +268,112 @@ function TradingPageContent() {
         const t = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         const upd = [...prev.slice(-40), { time: t, price: np }];
         setCurrentPrice(np);
-        setPriceChange(((np - Number(stock.basePrice)) / Number(stock.basePrice)) * 100);
+        setPriceChange(((np - base) / base) * 100);
         return upd;
       });
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [stock]);
+  }, [stock, openingPrices[stock?.id]]);
 
   useEffect(() => {
     if (!user || !stock) return;
     const socket = getSocket();
-    const onConnect = () => { socket.emit("authenticate", { userId: user.id }); socket.emit("join-stock", stock.kodeSaham); };
+    const onConnect = () => { socket.emit("authenticate", { userId: user.id }); if (stock) socket.emit("join-stock", stock.kodeSaham); };
     if (socket.connected) onConnect(); else socket.on("connect", onConnect);
+
+    socket.on("round-started", (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
+      setRoundNumber(data.roundNumber);
+      setPeriod(data.period);
+      setSessionActive(true);
+      setStocks(data.stocks);
+    });
+
+    socket.on("sub-session-started", (data: {
+      roundNumber: number;
+      sessionNumber: number;
+      phase: SubSessionPhase;
+      duration: number;
+      intervention: InterventionType;
+    }) => {
+      setSubSession(data.sessionNumber);
+      setPhase(data.phase);
+      setSessionTimer(data.duration);
+      setActiveIntervention(data.intervention);
+      if (data.phase === "PRE_OPENING") {
+        setShowPredictionUI(true);
+        setPredictionInput({});
+      } else {
+        setShowPredictionUI(false);
+      }
+    });
+
+    socket.on("timer-tick", (data: { roundNumber: number; sessionNumber: number; timeLeft: number }) => {
+      setSessionTimer(data.timeLeft);
+    });
+
+    socket.on("opening-prices-calculated", (data: { roundNumber: number; prices: { stockId: number; price: number }[] }) => {
+      const prices: Record<number, number> = {};
+      data.prices.forEach(p => { prices[p.stockId] = p.price; });
+      setOpeningPrices(prices);
+      setCurrentPrice(prices[stock?.id] || currentPrice);
+    });
+
+    socket.on("intervention-triggered", (data: {
+      type: InterventionType;
+      title: string;
+      content: string;
+      roundNumber: number;
+      sessionNumber: number;
+    }) => {
+      setActiveIntervention(data.type);
+      setInterventionContent({ title: data.title, content: data.content });
+      toast.warning(data.title, { description: data.content });
+    });
+
     socket.on("order-book-update", (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
       if (data.stockId === stock.id) { setBids(data.bids); setAsks(data.asks); }
     });
+
     socket.on("balance-update", (data: { userId: number; balance: number }) => {
       if (data.userId === user.id) setBalance(data.balance);
     });
+
     socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
       if (data.stockId === stock.id) setPortfolio({ lot: data.jumlahLot });
     });
-    socket.on("session-info", (data: { timeLeft: number }) => {
-      if (data.timeLeft !== undefined) setSessionTimer(data.timeLeft);
+
+    socket.on("prediction-saved", () => {
+      toast.success("Prediksi tersimpan");
     });
-    socket.emit("get-session-info");
+
+    socket.on("round-ended", () => {
+      setSessionActive(false);
+      setRoundNumber(null);
+      setPhase("PENDING");
+      setSubSession(null);
+    });
+
+    socket.on("experiment-ended", () => {
+      toast.success("Eksperimen selesai!");
+    });
+
+    socket.emit("get-scheduler-state");
+
     return () => {
-      socket.off("connect", onConnect); socket.off("order-book-update");
-      socket.off("balance-update"); socket.off("portfolio-update"); socket.off("session-info");
+      socket.off("connect", onConnect);
+      socket.off("round-started");
+      socket.off("sub-session-started");
+      socket.off("timer-tick");
+      socket.off("opening-prices-calculated");
+      socket.off("intervention-triggered");
+      socket.off("order-book-update");
+      socket.off("balance-update");
+      socket.off("portfolio-update");
+      socket.off("prediction-saved");
+      socket.off("round-ended");
+      socket.off("experiment-ended");
     };
-    }, [hydrated, user, stock]);
+  }, [hydrated, user, stock]);
 
   const handlePlaceOrder = useCallback(() => {
     if (!user || !stock) return;
@@ -280,6 +388,18 @@ function TradingPageContent() {
     });
     socket.once("order-error", (data: { message: string }) => toast.error(data.message));
   }, [user, stock, orderType, orderPrice, orderLot]);
+
+  const handleSubmitPrediction = useCallback((stockId: number) => {
+    if (!user) return;
+    const price = parseInt(predictionInput[stockId]);
+    if (!price) { toast.error("Masukkan harga prediksi"); return; }
+    const socket = getSocket();
+    socket.emit("submit-prediction", { stockId, predictedPrice: price, userId: user.id });
+    socket.once("prediction-saved", () => {
+      toast.success("Prediksi tersimpan");
+    });
+    socket.once("prediction-error", (data: { message: string }) => toast.error(data.message));
+  }, [user, predictionInput]);
 
   const selectStock = (s: Stock) => {
     setSelectedId(s.id);
@@ -311,9 +431,9 @@ function TradingPageContent() {
   }
 
   return (
-    <div className="p-4 sm:p-6">
+    <div className="p-4 sm:p-6 space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 sm:mb-6">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           {stock ? (
             <button onClick={() => { setStock(null); setSelectedId(null); router.replace("/dashboard/trading"); }}
@@ -330,6 +450,24 @@ function TradingPageContent() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          {/* Round + Session indicator */}
+          {roundNumber && (
+            <div className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1">
+              <span className="text-[10px] font-medium text-zinc-400">R{roundNumber}</span>
+              {subSession && (
+                <>
+                  <span className="text-[10px] text-zinc-700">·</span>
+                  <span className="text-[10px] font-medium text-emerald-400">Sesi {subSession}</span>
+                </>
+              )}
+            </div>
+          )}
+          {/* Phase badge */}
+          {phase && phase !== "PENDING" && (
+            <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+              {getPhaseLabel(phase)}
+            </span>
+          )}
           {stock && (
             <span className="text-xs text-zinc-600 font-mono hidden sm:block">
               Rp {currentPrice.toLocaleString("id-ID")}
@@ -342,12 +480,79 @@ function TradingPageContent() {
         </div>
       </div>
 
+      {/* Active Intervention Banner */}
+      {activeIntervention !== "NONE" && interventionContent && (
+        <div className={cn(
+          "flex items-start gap-3 rounded-lg border p-4",
+          activeIntervention === "BERITA_BAIK" ? "bg-emerald-500/10 border-emerald-500/30" :
+          activeIntervention === "BERITA_BURUK" ? "bg-rose-500/10 border-rose-500/30" :
+          "bg-amber-500/10 border-amber-500/30"
+        )}>
+          <Zap className={cn(
+            "size-5 mt-0.5 shrink-0",
+            activeIntervention === "BERITA_BAIK" ? "text-emerald-400" :
+            activeIntervention === "BERITA_BURUK" ? "text-rose-400" :
+            "text-amber-400"
+          )} />
+          <div>
+            <div className={cn(
+              "text-sm font-bold",
+              activeIntervention === "BERITA_BAIK" ? "text-emerald-400" :
+              activeIntervention === "BERITA_BURUK" ? "text-rose-400" :
+              "text-amber-400"
+            )}>
+              {getInterventionLabel(activeIntervention)}
+            </div>
+            <div className="text-xs text-zinc-400 mt-0.5">{interventionContent.content}</div>
+          </div>
+        </div>
+      )}
+
+      {/* PRE_OPENING: Prediction Input UI */}
+      {showPredictionUI && stocks.length > 0 && (
+        <Card className="border-white/5 bg-zinc-900">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-500" />
+              Pra Pembukaan — Masukkan Prediksi Harga
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-zinc-500">Prediksi harga Equilibrium untuk setiap saham sebelum sesi trading dimulai.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {stocks.map(s => (
+                <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
+                  <div className="text-xs font-medium text-zinc-300 mb-2">{s.kode} — {s.nama}</div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Harga prediksi"
+                      value={predictionInput[s.id] || ""}
+                      onChange={e => setPredictionInput(prev => ({ ...prev, [s.id]: e.target.value }))}
+                      className="text-xs font-mono flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-8 px-3"
+                      onClick={() => handleSubmitPrediction(s.id)}
+                    >
+                      Kirim
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {!sessionActive ? (
         /* ── Empty State ── */
         <div className="flex flex-col items-center justify-center py-24 text-zinc-600">
           <Timer className="size-12 mb-4 text-zinc-700" />
           <p className="text-sm font-medium text-zinc-500">Belum Ada Sesi Aktif</p>
-          <p className="text-xs text-zinc-700 mt-1">Tunggu admin memulai sesi trading</p>
+          <p className="text-xs text-zinc-700 mt-1">Tunggu admin memulai eksperimen</p>
         </div>
       ) : !stock ? (
         /* ── Stock Cards Grid ── */

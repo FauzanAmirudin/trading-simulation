@@ -11,7 +11,14 @@ import { motion } from "framer-motion";
 import {
   TrendingUp, TrendingDown, BarChart3, DollarSign, Briefcase,
   Activity, Timer, ArrowRight, ScrollText, Clock, Wallet,
+  Zap, AlertTriangle, TrendingDown as TrendingDownIcon,
 } from "lucide-react";
+import {
+  InterventionType,
+  SubSessionPhase,
+  getPhaseLabel,
+  getInterventionLabel,
+} from "@/lib/experimental-matrix";
 
 const MOCK_TX = [
   { time: "10:01:15", stock: "BBCA", tipe: "BID" as const, harga: 10200, jumlah: 2 },
@@ -27,6 +34,13 @@ export default function DashboardPage() {
   const [session, setSession] = useState<{ sessionId: number; status: string; timeLeft: number } | null>(null);
   const [balance, setBalance] = useState(100_000_000);
   const [portfolio, setPortfolio] = useState<{ stock: string; lot: number; value: number }[]>([]);
+  // New experimental state
+  const [roundNumber, setRoundNumber] = useState<number | null>(null);
+  const [period, setPeriod] = useState<number | null>(null);
+  const [subSession, setSubSession] = useState<number | null>(null);
+  const [phase, setPhase] = useState<SubSessionPhase>("PENDING");
+  const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
+  const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -40,7 +54,40 @@ export default function DashboardPage() {
 
     socket.on("connect", () => socket.emit("authenticate", { userId: user.id }));
     socket.on("session-state", (data: any) => setSession(data));
-    socket.on("trading-phase-started", () => setSession({ sessionId: 1, status: "active", timeLeft: 120 }));
+    socket.on("round-started", (data: { roundNumber: number; period: number }) => {
+      setRoundNumber(data.roundNumber);
+      setPeriod(data.period);
+      setSession({ sessionId: 1, status: "active", timeLeft: 60 });
+    });
+    socket.on("sub-session-started", (data: {
+      roundNumber: number;
+      sessionNumber: number;
+      phase: SubSessionPhase;
+      duration: number;
+      intervention: InterventionType;
+    }) => {
+      setSubSession(data.sessionNumber);
+      setPhase(data.phase);
+      setSession({ sessionId: 1, status: "active", timeLeft: data.duration });
+      setActiveIntervention(data.intervention);
+    });
+    socket.on("timer-tick", (data: { timeLeft: number }) => {
+      setSession(prev => prev ? { ...prev, timeLeft: data.timeLeft } : prev);
+    });
+    socket.on("intervention-triggered", (data: {
+      type: InterventionType;
+      title: string;
+      content: string;
+    }) => {
+      setActiveIntervention(data.type);
+      setInterventionContent({ title: data.title, content: data.content });
+    });
+    socket.on("round-ended", () => {
+      setSession(null);
+      setRoundNumber(null);
+      setPhase("PENDING");
+      setSubSession(null);
+    });
     socket.on("balance-update", (data: { userId: number; balance: number }) => {
       if (data.userId === user.id) setBalance(data.balance);
     });
@@ -53,7 +100,9 @@ export default function DashboardPage() {
 
     return () => {
       socket.off("connect"); socket.off("session-state");
-      socket.off("trading-phase-started"); socket.off("balance-update"); socket.off("portfolio-data");
+      socket.off("round-started"); socket.off("sub-session-started");
+      socket.off("timer-tick"); socket.off("intervention-triggered");
+      socket.off("round-ended"); socket.off("balance-update"); socket.off("portfolio-data");
     };
   }, [hydrated, user]);
 
@@ -78,7 +127,7 @@ export default function DashboardPage() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-6 space-y-6">
-      {/* Header */}
+      {/* Header with Round/Session info */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-zinc-200">
@@ -86,11 +135,37 @@ export default function DashboardPage() {
           </h1>
           <p className="text-sm text-zinc-500">Ringkasan akun dan aktivitas kamu</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Wallet className="size-4 text-emerald-500" />
-          <span className="font-mono text-sm text-zinc-400">
-            Rp {balance.toLocaleString("id-ID")}
-          </span>
+        <div className="flex items-center gap-3">
+          {/* Round + Session indicator */}
+          {roundNumber && (
+            <div className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1">
+              <span className="text-[10px] font-medium text-zinc-400">Round {roundNumber}</span>
+              {subSession && (
+                <>
+                  <span className="text-[10px] text-zinc-700">·</span>
+                  <span className="text-[10px] font-medium text-emerald-400">Sesi {subSession}</span>
+                </>
+              )}
+            </div>
+          )}
+          {/* Active intervention indicator */}
+          {activeIntervention !== "NONE" && (
+            <div className={cn(
+              "flex items-center gap-1.5 rounded-full px-3 py-1",
+              activeIntervention === "BERITA_BAIK" ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" :
+              activeIntervention === "BERITA_BURUK" ? "bg-rose-500/10 border border-rose-500/20 text-rose-400" :
+              "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+            )}>
+              <Zap className="size-3" />
+              <span className="text-[10px] font-medium">{getInterventionLabel(activeIntervention)}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Wallet className="size-4 text-emerald-500" />
+            <span className="font-mono text-sm text-zinc-400">
+              Rp {balance.toLocaleString("id-ID")}
+            </span>
+          </div>
         </div>
       </div>
 
