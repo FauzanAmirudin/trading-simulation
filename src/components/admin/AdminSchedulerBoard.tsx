@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useAuth } from "@/lib/auth-context";
 import { getSocket } from "@/lib/socket";
 import {
   EXPERIMENTAL_MATRIX,
@@ -45,13 +46,12 @@ type SchedulerState = {
   openingPrices: Record<number, number>;
   stocks: Stock[];
   interventionCache: Record<string, { title: string; content: string }>;
+  completedRounds: number[];
+  usedStockIds: number[];
 };
 
 type InterventionContent = {
-  BERITA_BAIK: { title: string; content: string };
-  BERITA_BURUK: { title: string; content: string };
-  TMNP_1: { title: string; content: string };
-  TMNP_2: { title: string; content: string };
+  [K in InterventionType]: { title: string; content: string };
 };
 
 // ─────────────────────────────────────────────
@@ -62,7 +62,7 @@ function InterventionContentForm({
 }: {
   onSaved?: (key: string, data: { title: string; content: string }) => void;
 }) {
-  const [form, setForm] = useState<InterventionContent>({
+  const [form, setForm] = useState<Omit<InterventionContent, "NONE">>({
     BERITA_BAIK: { title: "Berita Baik: Saham X Laba Naik 20%", content: "" },
     BERITA_BURUK: { title: "Berita Buruk: Saham X Terdampak Regulasi", content: "" },
     TMNP_1: { title: "Trading Halt — Pengumuman Antrian", content: "Trading dihentikan sementara. Harap tunggu pengumuman selanjutnya." },
@@ -89,7 +89,7 @@ function InterventionContentForm({
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (key: InterventionType) => {
+  const handleSave = async (key: "BERITA_BAIK" | "BERITA_BURUK" | "TMNP_1" | "TMNP_2") => {
     setSaving(key);
     try {
       const res = await fetch("/api/intervention", {
@@ -100,6 +100,8 @@ function InterventionContentForm({
       if (res.ok) {
         toast.success(`${getInterventionLabel(key)} saved`);
         onSaved?.(key, form[key]);
+        // Reload cache so the server picks up the new content
+        await fetch("/api/intervention", { method: "GET" });
       } else {
         toast.error("Failed to save");
       }
@@ -130,7 +132,7 @@ function InterventionContentForm({
 
   return (
     <div className="space-y-4">
-      {(INTERVENTION_KEYS as InterventionType[]).map(key => (
+      {(["BERITA_BAIK", "BERITA_BURUK", "TMNP_1", "TMNP_2"] as (keyof Omit<InterventionContent, "NONE">)[]).map(key => (
         <div key={key} className="space-y-2 rounded-lg border border-white/5 bg-zinc-800/30 p-3">
           <div className={`flex items-center gap-2 text-xs font-medium ${interventionColors[key]}`}>
             {interventionIcons[key]}
@@ -296,6 +298,8 @@ function SchedulerPanel({
     );
   };
 
+
+
   const roundConfig = EXPERIMENTAL_MATRIX[selectedRound - 1];
 
   return (
@@ -387,22 +391,28 @@ function SchedulerPanel({
 
           {/* Round selector */}
           <div className="grid grid-cols-4 gap-1">
-            {EXPERIMENTAL_MATRIX.map((round: RoundConfig) => (
-              <button
-                key={round.roundNumber}
-                onClick={() => {
-                  setSelectedRound(round.roundNumber);
-                  setSelectedStockIds([]);
-                }}
-                className={`rounded border px-2 py-1.5 text-[10px] font-medium transition-all ${
-                  selectedRound === round.roundNumber
-                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-                    : "border-white/5 bg-zinc-800/50 text-zinc-500 hover:border-white/10 hover:text-zinc-300"
-                }`}
-              >
-                R{round.roundNumber}
-              </button>
-            ))}
+            {EXPERIMENTAL_MATRIX.map((round: RoundConfig) => {
+              const isCompleted = (state.completedRounds || []).includes(round.roundNumber);
+              return (
+                <button
+                  key={round.roundNumber}
+                  onClick={() => {
+                    setSelectedRound(round.roundNumber);
+                    setSelectedStockIds([]);
+                  }}
+                  disabled={isCompleted}
+                  className={`rounded border px-2 py-1.5 text-[10px] font-medium transition-all ${
+                    selectedRound === round.roundNumber
+                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                      : isCompleted
+                      ? "border-white/5 bg-zinc-800/20 text-zinc-600 opacity-50 cursor-not-allowed"
+                      : "border-white/5 bg-zinc-800/50 text-zinc-500 hover:border-white/10 hover:text-zinc-300"
+                  }`}
+                >
+                  R{round.roundNumber} {isCompleted && "✓"}
+                </button>
+              );
+            })}
           </div>
 
           {/* Selected round intervention preview */}
@@ -428,28 +438,34 @@ function SchedulerPanel({
           <div className="grid grid-cols-2 gap-1">
             {allStocks.map(stock => {
               const sel = selectedStockIds.includes(stock.id);
+              const isUsed = (state.usedStockIds || []).includes(stock.id);
               return (
                 <button
                   key={stock.id}
                   onClick={() => toggleStock(stock.id)}
-                  disabled={selectedStockIds.length >= 3 && !sel}
+                  disabled={(selectedStockIds.length >= 3 && !sel) || isUsed}
                   className={`rounded border px-2 py-1.5 text-left text-xs transition-all ${
                     sel
                       ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                      : isUsed
+                      ? "border-rose-500/20 bg-rose-500/5 text-rose-400/50 cursor-not-allowed"
                       : selectedStockIds.length >= 3
                       ? "border-white/5 bg-zinc-800/30 text-zinc-600 opacity-40 cursor-not-allowed"
                       : "border-white/5 bg-zinc-800/50 text-zinc-400 hover:border-white/10 hover:text-zinc-200"
                   }`}
                 >
                   <span className="font-medium">{stock.kode}</span>
-                  <span className="ml-1 text-[10px] text-zinc-600">{stock.nama}</span>
+                  <span className="ml-1 text-[10px] opacity-70">{stock.nama}</span>
+                  {isUsed && <span className="ml-2 text-[8px] text-rose-500/80 uppercase">Digunakan</span>}
                 </button>
               );
             })}
           </div>
 
+
           <Button
             size="sm"
+            variant="outline"
             className="w-full gap-1.5"
             onClick={handleStart}
             disabled={selectedStockIds.length !== 3 || starting}
@@ -457,9 +473,23 @@ function SchedulerPanel({
             {starting ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <PlayCircle className="size-3.5" />
+              <SkipForward className="size-3.5" />
             )}
-            {starting ? "Memulai..." : `Mulai Round ${selectedRound}`}
+            {starting ? "Memulai..." : `Mulai Round ${selectedRound} Saja`}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full gap-1.5 border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
+            onClick={() => {
+              if (confirm("Reset semua sesi? Semua data round akan dihapus dan saham bisa dipilih ulang.")) {
+                const socket = getSocket();
+                socket.emit("admin-reset-experiment");
+              }
+            }}
+          >
+            <RefreshCw className="size-3.5" />
+            Reset Semua Sesi
           </Button>
         </div>
       )}
@@ -471,6 +501,7 @@ function SchedulerPanel({
 // Main AdminSchedulerBoard component
 // ─────────────────────────────────────────────
 export default function AdminSchedulerBoard() {
+  const { user } = useAuth();
   const [state, setState] = useState<SchedulerState>({
     activeRound: null,
     activeSubSession: null,
@@ -481,15 +512,36 @@ export default function AdminSchedulerBoard() {
     openingPrices: {},
     stocks: [],
     interventionCache: {},
+    completedRounds: [],
+    usedStockIds: [],
   });
   const [allStocks, setAllStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"scheduler" | "intervention" | "matrix" | "export">("scheduler");
+  const [socketConnected, setSocketConnected] = useState(false);
+
+  // Auto authenticate socket whenever it connects
+  useEffect(() => {
+    if (!user || user.role !== "admin") return;
+    const socket = getSocket();
+    const auth = () => socket.emit("authenticate", { userId: user.id });
+    
+    if (socket.connected) auth();
+    socket.on("connect", auth);
+    return () => { socket.off("connect", auth); };
+  }, [user]);
 
   useEffect(() => {
     fetch("/api/stocks")
       .then(r => r.json())
-      .then(data => setAllStocks(data.stocks || []))
+      .then(data => setAllStocks(
+        (data.stocks || []).map((s: any) => ({
+          id: s.id,
+          kode: s.kodeSaham,
+          nama: s.namaSaham,
+          basePrice: s.basePrice
+        }))
+      ))
       .catch(() => {});
 
     // Request initial scheduler state
@@ -502,8 +554,19 @@ export default function AdminSchedulerBoard() {
   useEffect(() => {
     const socket = getSocket();
 
+    // Track socket connection
+    const onConnect = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+    setSocketConnected(socket.connected);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+
     socket.on("scheduler-state", (data: SchedulerState) => {
-      setState(data);
+      setState({
+        ...data,
+        completedRounds: data.completedRounds || [],
+        usedStockIds: data.usedStockIds || [],
+      });
     });
 
     socket.on("round-started", (data: { roundNumber: number; stocks: Stock[] }) => {
@@ -515,6 +578,8 @@ export default function AdminSchedulerBoard() {
         timeLeft: 60,
         currentIntervention: "NONE",
       }));
+      toast.dismiss("start-round");
+      toast.success(`Round ${data.roundNumber} berhasil dimulai! Fase: Pra Pembukaan (60 detik)`);
     });
 
     socket.on("sub-session-started", (data: {
@@ -555,10 +620,44 @@ export default function AdminSchedulerBoard() {
         currentIntervention: "NONE",
         openingPrices: {},
       }));
+      // Fetch updated scheduler state to get the new completedRounds and usedStockIds
+      socket.emit("get-scheduler-state");
+      toast.success("Ronde selesai.");
     });
 
     socket.on("experiment-ended", () => {
       toast.success("Eksperimen selesai! Semua 12 ronde telah selesai.");
+    });
+
+    socket.on("experiment-reset", () => {
+      setState({
+        activeRound: null,
+        activeSubSession: null,
+        phase: null,
+        timeLeft: 0,
+        currentIntervention: "NONE",
+        isPaused: false,
+        openingPrices: {},
+        stocks: [],
+        interventionCache: {},
+        completedRounds: [],
+        usedStockIds: [],
+      });
+      toast.info("Semua sesi telah direset.");
+    });
+
+    socket.on("experiment-stopped", () => {
+      setState(prev => ({
+        ...prev,
+        activeRound: null,
+        activeSubSession: null,
+        phase: null,
+        timeLeft: 0,
+        currentIntervention: "NONE",
+        openingPrices: {},
+        stocks: [],
+      }));
+      toast.info("Eksperimen dihentikan.");
     });
 
     socket.on("round-cooldown-started", (data: { nextRound: number; cooldownSeconds: number }) => {
@@ -569,7 +668,28 @@ export default function AdminSchedulerBoard() {
       setState(prev => ({ ...prev, interventionCache: data }));
     });
 
+
+    socket.on("admin-error", (data: { message: string }) => {
+      toast.error(`Error: ${data.message}`);
+    });
+
+    socket.on("admin-warning", (data: { message: string; missingInterventions?: string[] }) => {
+      toast.warning(data.message);
+    });
+
+    socket.on("intervention-config-status", (data: {
+      roundNumber: number;
+      available: string[];
+      missing: string[];
+    }) => {
+      if (data.missing.length > 0) {
+        toast.warning(`Round ${data.roundNumber} butuh intervensi: ${data.missing.join(", ")}`);
+      }
+    });
+
     return () => {
+      socket.off("connect");
+      socket.off("disconnect");
       socket.off("scheduler-state");
       socket.off("round-started");
       socket.off("sub-session-started");
@@ -577,25 +697,38 @@ export default function AdminSchedulerBoard() {
       socket.off("intervention-triggered");
       socket.off("round-ended");
       socket.off("experiment-ended");
+      socket.off("experiment-reset");
+      socket.off("experiment-stopped");
       socket.off("round-cooldown-started");
       socket.off("intervention-cache-loaded");
+      socket.off("admin-warning");
+      socket.off("admin-error");
+      socket.off("intervention-config-status");
     };
   }, []);
 
   const handleStartRound = useCallback((roundNumber: number, stockIds: number[]) => {
     const socket = getSocket();
-    socket.emit("admin-start-round", { roundNumber, stockIds });
-  }, []);
+    if (!socket.connected) {
+      toast.error("Server WebSocket tidak terhubung! Jalankan: npm run dev:server", {
+        description: "Hentikan 'npm run dev' lalu jalankan 'npm run dev:server'",
+        duration: 8000,
+      });
+      return;
+    }
+    toast.loading(`Memulai Round ${roundNumber}...`, { id: "start-round" });
+    socket.emit("admin-start-round", { roundNumber, stockIds, userId: user?.id });
+  }, [user]);
 
   const handlePause = useCallback(() => {
     const socket = getSocket();
-    socket.emit("admin-pause");
-  }, []);
+    socket.emit("admin-pause", { userId: user?.id });
+  }, [user]);
 
   const handleResume = useCallback(() => {
     const socket = getSocket();
-    socket.emit("admin-resume");
-  }, []);
+    socket.emit("admin-resume", { userId: user?.id });
+  }, [user]);
 
   const handleExport = async () => {
     const res = await fetch("/api/export?format=csv");
@@ -618,6 +751,18 @@ export default function AdminSchedulerBoard() {
 
   return (
     <div className="space-y-4">
+      {/* Socket Connection Status */}
+      <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${
+        socketConnected
+          ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+          : "bg-rose-500/10 border border-rose-500/20 text-rose-400"
+      }`}>
+        <span className={`size-2 rounded-full ${socketConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+        {socketConnected
+          ? "Server WebSocket terhubung — Siap memulai sesi"
+          : "Server WebSocket tidak terhubung — Jalankan: npm run dev:server (bukan npm run dev)"}
+      </div>
+
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-white/5 pb-1">
         {tabs.map(tab => (

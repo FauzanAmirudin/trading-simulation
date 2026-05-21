@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 const INITIAL_TX: { id: number; user: string; saham: string; tipe: string; harga: number; jumlah: number; waktu: string }[] = [];
 
 export default function AdminPage() {
-  const { user, hydrated } = useAuth();
+  const { user, hydrated, logout } = useAuth();
   const router = useRouter();
   const [txLog, setTxLog] = useState<typeof INITIAL_TX>([]);
   const [exporting, setExporting] = useState(false);
@@ -33,6 +33,33 @@ export default function AdminPage() {
     if (!user) router.push("/login");
     else if (user.role !== "admin") router.push("/dashboard");
   }, [hydrated, user, router]);
+
+  // Authenticate socket for admin
+  useEffect(() => {
+    if (!hydrated || !user || user.role !== "admin") return;
+    const socket = getSocket();
+    
+    const authenticate = () => {
+      socket.emit("authenticate", { userId: user.id });
+    };
+
+    if (socket.connected) {
+      authenticate();
+    }
+    
+    socket.on("connect", authenticate);
+
+    const handleAuthError = () => {
+      logout();
+      router.push("/login");
+    };
+    socket.on("auth-error", handleAuthError);
+    
+    return () => {
+      socket.off("connect", authenticate);
+      socket.off("auth-error", handleAuthError);
+    };
+  }, [hydrated, user, logout, router]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });

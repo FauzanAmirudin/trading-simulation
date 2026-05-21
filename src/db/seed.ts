@@ -1,5 +1,5 @@
 import { db } from "./index";
-import { users, stocks, sessions } from "./schema";
+import { users, stocks } from "./schema";
 import { eq, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
@@ -70,13 +70,6 @@ async function seed() {
   });
 
   console.log("Admin user created.");
-
-  await db.insert(sessions).values({
-    putaranKe: 1,
-    status: "pending",
-  });
-
-  console.log("Initial session created.");
   console.log("Seeding complete!");
   process.exit(0);
 }

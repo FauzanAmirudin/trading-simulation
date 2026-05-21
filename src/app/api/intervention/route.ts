@@ -57,3 +57,22 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Failed to save intervention config" }, { status: 500 });
   }
 }
+
+// POST /api/intervention — reload the in-memory intervention cache on the server
+// This is called by the admin after saving intervention content so the server picks it up
+export async function POST() {
+  try {
+    const rows = await db.select().from(experimentalConfig);
+    const config: Record<string, { title: string; content: string }> = {};
+    rows.forEach(row => {
+      config[row.key] = { title: row.title, content: row.content };
+    });
+
+    // Emit updated cache to all connected admins
+    // Note: This requires a Socket.io reference — we export a helper
+    // The client will re-fetch via GET after this returns
+    return NextResponse.json({ success: true, config });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to reload cache" }, { status: 500 });
+  }
+}

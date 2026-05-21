@@ -16,7 +16,12 @@ import {
 import { toast } from "sonner";
 import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
 
-type Stock = { id: number; kodeSaham: string; namaSaham: string; basePrice: number };
+type Stock = {
+  id: number;
+  kodeSaham: string;
+  namaSaham: string;
+  basePrice: number | string;
+};
 type Order = { id: number; userId: number; harga: number; jumlah: number };
 type PricePoint = { time: string; price: number };
 
@@ -88,7 +93,7 @@ function generateRandomWalk(basePrice: number, steps: number): PricePoint[] {
       time: t.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       price: Math.round(price),
     });
-    const change = price * (Math.random() - 0.5) * 0.004;
+    const change = price * (Math.random() - 0.5) * 0.001; // reduced for smoother chart
     price += change;
   }
   return data;
@@ -97,7 +102,7 @@ function generateRandomWalk(basePrice: number, steps: number): PricePoint[] {
 function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
   const w = 600, h = 220;
   const pad = { top: 16, right: 16, bottom: 28, left: 72 };
-  if (data.length < 2) return <div className="flex items-center justify-center h-56 text-zinc-600 text-xs">Memuat data...</div>;
+  if (data.length < 2 || data.some(d => isNaN(d.price))) return <div className="flex items-center justify-center h-56 text-zinc-600 text-xs">Memuat data...</div>;
 
   const prices = data.map(d => d.price);
   const min = Math.min(...prices) - 50;
@@ -127,8 +132,8 @@ function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
           </text>
         </g>
       ))}
-      <path d={areaD} fill="url(#cg)" />
-      <path d={pathD} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={areaD} fill="url(#cg)" style={{ transition: "all 0.5s ease-in-out" }} />
+      <path d={pathD} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ transition: "all 0.5s ease-in-out" }} />
       {xLab.map((d, i) => (
         <text key={i} x={xS(data.indexOf(d))} y={h - 6} textAnchor="middle" fill="#71717a" fontSize={10}>
           {d.time}
@@ -230,55 +235,12 @@ function TradingPageContent() {
       });
   }, [user, router]); // eslint-disable-line
 
-  // Poll session status every 5s — auto-clear stocks when session ends
+  // ── Global socket: handles round/session events regardless of which stock is selected ──
   useEffect(() => {
-    if (!sessionActive) return;
-    const interval = setInterval(() => {
-      fetch("/api/session/active").then(r => r.json()).then(res => {
-        if (!res.session || res.stocks.length === 0) {
-          setSessionActive(false);
-          setSessionStatus(null);
-          setStocks([]);
-          setStock(null);
-          setSelectedId(null);
-          router.replace("/dashboard/trading");
-        }
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [sessionActive]); // eslint-disable-line
-
-  useEffect(() => {
-    if (!stocks.length || !stockParam) return;
-    const found = stocks.find(s => s.id === Number(stockParam));
-    if (found) { setStock(found); setSelectedId(found.id); }
-  }, [stockParam, stocks]);
-
-  useEffect(() => {
-    if (!stock) return;
-    const base = openingPrices[stock.id] || Number(stock.basePrice);
-    setCurrentPrice(base);
-    setPriceHistory(generateRandomWalk(base, 40));
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      setPriceHistory(prev => {
-        const last = prev[prev.length - 1];
-        const change = last.price * (Math.random() - 0.5) * 0.004;
-        const np = Math.round(last.price + change);
-        const t = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        const upd = [...prev.slice(-40), { time: t, price: np }];
-        setCurrentPrice(np);
-        setPriceChange(((np - base) / base) * 100);
-        return upd;
-      });
-    }, 1000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [stock, openingPrices[stock?.id]]);
-
-  useEffect(() => {
-    if (!user || !stock) return;
+    if (!user || !hydrated) return;
     const socket = getSocket();
-    const onConnect = () => { socket.emit("authenticate", { userId: user.id }); if (stock) socket.emit("join-stock", stock.kodeSaham); };
+
+    const onConnect = () => { socket.emit("authenticate", { userId: user.id }); };
     if (socket.connected) onConnect(); else socket.on("connect", onConnect);
 
     socket.on("round-started", (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
@@ -286,6 +248,11 @@ function TradingPageContent() {
       setPeriod(data.period);
       setSessionActive(true);
       setStocks(data.stocks);
+      // Auto-select first stock if none selected
+      if (data.stocks.length > 0) {
+        setStock(prev => prev ?? data.stocks[0]);
+        setSelectedId(prev => prev ?? data.stocks[0].id);
+      }
     });
 
     socket.on("sub-session-started", (data: {
@@ -307,6 +274,12 @@ function TradingPageContent() {
       }
     });
 
+    socket.on("sub-session-ended", (data: { roundNumber: number; sessionNumber: number }) => {
+      if (data.sessionNumber === 1) {
+        // PRE_OPENING ended — wait for sub-session-started (TRADING) event
+      }
+    });
+
     socket.on("timer-tick", (data: { roundNumber: number; sessionNumber: number; timeLeft: number }) => {
       setSessionTimer(data.timeLeft);
     });
@@ -315,20 +288,106 @@ function TradingPageContent() {
       const prices: Record<number, number> = {};
       data.prices.forEach(p => { prices[p.stockId] = p.price; });
       setOpeningPrices(prices);
-      setCurrentPrice(prices[stock?.id] || currentPrice);
+    });
+
+    socket.on("round-ended", () => {
+      setSessionActive(false);
+      setRoundNumber(null);
+      setPhase("PENDING");
+      setSubSession(null);
+      setStocks([]);
+      setStock(null);
+      setSelectedId(null);
+      setOpeningPrices({});
+      setPriceHistory([]);
+      setCurrentPrice(0);
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    });
+
+    socket.on("experiment-ended", () => {
+      toast.success("Eksperimen selesai! Terima kasih.");
     });
 
     socket.on("intervention-triggered", (data: {
       type: InterventionType;
       title: string;
       content: string;
-      roundNumber: number;
-      sessionNumber: number;
     }) => {
       setActiveIntervention(data.type);
       setInterventionContent({ title: data.title, content: data.content });
       toast.warning(data.title, { description: data.content });
     });
+
+    socket.on("scheduler-state", (data: any) => {
+      // Restore state if user reconnects mid-session
+      if (data.activeRound !== null && data.stocks && data.stocks.length > 0) {
+        setRoundNumber(data.activeRound);
+        setSessionActive(true);
+        setStocks(data.stocks);
+        setPhase(data.phase || "PENDING");
+        setSubSession(data.activeSubSession);
+        setSessionTimer(data.timeLeft || 0);
+        if (data.stocks.length > 0) {
+          setStock(prev => prev ?? data.stocks[0]);
+          setSelectedId(prev => prev ?? data.stocks[0].id);
+        }
+      }
+    });
+
+    socket.emit("get-scheduler-state");
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("round-started");
+      socket.off("sub-session-started");
+      socket.off("sub-session-ended");
+      socket.off("timer-tick");
+      socket.off("opening-prices-calculated");
+      socket.off("round-ended");
+      socket.off("experiment-ended");
+      socket.off("intervention-triggered");
+      socket.off("scheduler-state");
+    };
+  }, [user, hydrated]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!stocks.length || !stockParam) return;
+    const found = stocks.find(s => s.id === Number(stockParam));
+    if (found) { setStock(found); setSelectedId(found.id); }
+  }, [stockParam, stocks]);
+
+  useEffect(() => {
+    if (!stock) return;
+    const base = openingPrices[stock.id] || Number(stock.basePrice) || 1000;
+    setCurrentPrice(base);
+    setPriceHistory(generateRandomWalk(base, 40));
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      setPriceHistory(prev => {
+        const last = prev[prev.length - 1];
+        const change = last.price * (Math.random() - 0.5) * 0.001; // reduced for smoother chart
+        const np = Math.round(last.price + change);
+        const t = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const upd = [...prev.slice(-40), { time: t, price: np }];
+        setCurrentPrice(np);
+        setPriceChange(((np - base) / base) * 100);
+        return upd;
+      });
+    }, 2000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [stock, stock ? openingPrices[stock.id] : undefined]);
+
+  // ── Stock-specific socket: join-stock room + order book/balance/portfolio ──
+  useEffect(() => {
+    if (!user || !stock) return;
+    const socket = getSocket();
+
+    // Join this stock's room for real-time updates
+    if (socket.connected) {
+      socket.emit("join-stock", stock.kodeSaham);
+    } else {
+      socket.once("connect", () => socket.emit("join-stock", stock.kodeSaham));
+    }
 
     socket.on("order-book-update", (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
       if (data.stockId === stock.id) { setBids(data.bids); setAsks(data.asks); }
@@ -346,34 +405,13 @@ function TradingPageContent() {
       toast.success("Prediksi tersimpan");
     });
 
-    socket.on("round-ended", () => {
-      setSessionActive(false);
-      setRoundNumber(null);
-      setPhase("PENDING");
-      setSubSession(null);
-    });
-
-    socket.on("experiment-ended", () => {
-      toast.success("Eksperimen selesai!");
-    });
-
-    socket.emit("get-scheduler-state");
-
     return () => {
-      socket.off("connect", onConnect);
-      socket.off("round-started");
-      socket.off("sub-session-started");
-      socket.off("timer-tick");
-      socket.off("opening-prices-calculated");
-      socket.off("intervention-triggered");
       socket.off("order-book-update");
       socket.off("balance-update");
       socket.off("portfolio-update");
       socket.off("prediction-saved");
-      socket.off("round-ended");
-      socket.off("experiment-ended");
     };
-  }, [hydrated, user, stock]);
+  }, [user, stock]);
 
   const handlePlaceOrder = useCallback(() => {
     if (!user || !stock) return;
@@ -522,7 +560,7 @@ function TradingPageContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks.map(s => (
                 <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
-                  <div className="text-xs font-medium text-zinc-300 mb-2">{s.kode} — {s.nama}</div>
+                  <div className="text-xs font-medium text-zinc-300 mb-2">{s.kodeSaham} — {s.namaSaham}</div>
                   <div className="flex gap-2">
                     <Input
                       type="number"

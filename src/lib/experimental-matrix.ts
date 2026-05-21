@@ -1,8 +1,9 @@
 // ============================================================
 // EXPERIMENTAL DESIGN MATRIX — Type-Safe Configuration
 // ============================================================
-// Structure: 3 Periods → 12 Rounds → 4 Sub-Sessions each
-// Sub-Sessions: Sesi 1 (PRE_OPENING), Sesi 2-4 (TRADING)
+// Structure: 3 Periods → 12 Rounds → 2 Sub-Sessions each
+// Sub-Sessions: Sesi 1 (PRE_OPENING 60s), Sesi 2 (TRADING 120s)
+// Round ends after Sesi 2 completes
 // ============================================================
 
 // === INTERVENTION TYPES ===
@@ -17,21 +18,19 @@ export type InterventionType =
 export type SubSessionPhase =
   | "PENDING"
   | "PRE_OPENING"   // Sesi 1: Prediction input (60s)
-  | "TRADING_S2"     // Sesi 2: Main trading 1 (120s)
-  | "TRADING_S3"     // Sesi 3: Main trading 2 (120s)
-  | "TRADING_S4"     // Sesi 4: Main trading 3 (120s)
+  | "TRADING"        // Sesi 2: Main trading (120s) — replaces TRADING_S2/S3/S4
   | "CLOSED";        // Round complete
 
 // === SESSION CONFIG — config for one sub-session within a round ===
 export interface SessionConfig {
-  sessionNumber: 1 | 2 | 3 | 4;
+  sessionNumber: 1 | 2;
   phase: SubSessionPhase;
   durationSeconds: number;
   intervention: InterventionType;
   label: string;
 }
 
-// === ROUND CONFIG — full config for one round (all 4 sub-sessions) ===
+// === ROUND CONFIG — full config for one round (2 sub-sessions) ===
 export interface RoundConfig {
   roundNumber: number;
   period: 1 | 2 | 3;
@@ -40,6 +39,19 @@ export interface RoundConfig {
 }
 
 // === FULL EXPERIMENTAL MATRIX ===
+// Intervention mapping (new 2-session structure):
+// Period I (R1-4): Control — Sesi 2 = NONE
+// Period II (R5-8):
+//   R5: Sesi 2 = BERITA_BAIK
+//   R6: Sesi 2 = TMNP_1
+//   R7: Sesi 2 = BERITA_BAIK
+//   R8: Sesi 2 = TMNP_1
+// Period III (R9-12):
+//   R9:  Sesi 2 = BERITA_BURUK
+//   R10: Sesi 2 = TMNP_2
+//   R11: Sesi 2 = BERITA_BURUK
+//   R12: Sesi 2 = TMNP_2
+// ============================================================
 export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
   // ============================================================
   // PERIOD I (Rounds 1-4): Control group — no interventions
@@ -49,10 +61,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 1,
     periodLabel: "I",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60, intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
     ],
   },
   {
@@ -60,10 +70,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 1,
     periodLabel: "I",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60, intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
     ],
   },
   {
@@ -71,10 +79,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 1,
     periodLabel: "I",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60, intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
     ],
   },
   {
@@ -82,10 +88,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 1,
     periodLabel: "I",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60, intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",    label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
     ],
   },
 
@@ -98,9 +102,7 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     periodLabel: "II",
     sessions: [
       { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "BERITA_BAIK", label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_1",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",       label: "Perdagangan 3" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BAIK",   label: "Perdagangan" },
     ],
   },
   {
@@ -108,10 +110,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 2,
     periodLabel: "II",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",          label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",       label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_1",     label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",      label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_1",   label: "Perdagangan" },
     ],
   },
   {
@@ -120,9 +120,7 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     periodLabel: "II",
     sessions: [
       { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "BERITA_BAIK", label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_1",    label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",       label: "Perdagangan 3" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BAIK",   label: "Perdagangan" },
     ],
   },
   {
@@ -130,10 +128,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 2,
     periodLabel: "II",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",          label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",       label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_1",     label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdfunding 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",      label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_1",   label: "Perdagangan" },
     ],
   },
 
@@ -146,9 +142,7 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     periodLabel: "III",
     sessions: [
       { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",           label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_2",      label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",        label: "Perdagangan 3" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan" },
     ],
   },
   {
@@ -156,10 +150,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 3,
     periodLabel: "III",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",         label: "Perdagangan 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_2",       label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "BERITA_BAIK",  label: "Perdagangan 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",       label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_2",   label: "Perdagangan" },
     ],
   },
   {
@@ -168,9 +160,7 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     periodLabel: "III",
     sessions: [
       { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",           label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "BERITA_BURUK",  label: "Perdfunding 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_2",       label: "Perdagangan 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "NONE",         label: "Perdagang 3" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan" },
     ],
   },
   {
@@ -178,10 +168,8 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
     period: 3,
     periodLabel: "III",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING_S2",  durationSeconds: 120, intervention: "NONE",         label: "Perdagang 1" },
-      { sessionNumber: 3, phase: "TRADING_S3",  durationSeconds: 120, intervention: "TMNP_2",       label: "Perdagang 2" },
-      { sessionNumber: 4, phase: "TRADING_S4",  durationSeconds: 120, intervention: "BERITA_BAIK",  label: "Perdagang 3" },
+      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",       label: "Pra Pembukaan" },
+      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_2",   label: "Perdagangan" },
     ],
   },
 ];
@@ -217,9 +205,7 @@ export function getPhaseLabel(phase: SubSessionPhase): string {
   const labels: Record<SubSessionPhase, string> = {
     PENDING: "Menunggu",
     PRE_OPENING: "Pra Pembukaan",
-    TRADING_S2: "Perdagangan 1",
-    TRADING_S3: "Perdagangan 2",
-    TRADING_S4: "Perdagang 3",
+    TRADING: "Perdagangan",
     CLOSED: "Selesai",
   };
   return labels[phase];

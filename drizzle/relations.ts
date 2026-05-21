@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, orderBook, stocks, portfolios, predictions, sessions, transactionsHistory } from "./schema";
+import { users, orderBook, stocks, portfolios, predictions, sessions, transactionsHistory } from "../src/db/schema";
 
 export const orderBookRelations = relations(orderBook, ({one, many}) => ({
 	user: one(users, {
@@ -50,10 +50,6 @@ export const predictionsRelations = relations(predictions, ({one}) => ({
 	stock: one(stocks, {
 		fields: [predictions.stockId],
 		references: [stocks.id]
-	}),
-	session: one(sessions, {
-		fields: [predictions.sessionId],
-		references: [sessions.id]
 	}),
 }));
 

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:server": "tsx server.ts",
+    "start:dev": "node -e \"const {execSync}=require('child_process');try{const pid=require('fs').readFileSync('.next/dev/pid','utf8').trim();if(pid){try{execSync('taskkill /PID '+pid+' /F /T 2>nul');console.log('Stopped Next.js PID:',pid);}catch(e){}}}catch(e){}\" && tsx server.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

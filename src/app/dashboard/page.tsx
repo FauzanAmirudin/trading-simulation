@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 import {
   TrendingUp, TrendingDown, BarChart3, DollarSign, Briefcase,
   Activity, Timer, ArrowRight, ScrollText, Clock, Wallet,

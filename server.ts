@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import next from "next";
@@ -30,6 +31,39 @@ import {
 } from "./src/lib/experimental-matrix";
 
 // ============================================================
+// ROUND SEEDING — ensure all 12 rounds exist in DB at startup
+// ============================================================
+async function seedRoundsIfNeeded() {
+  const existing = await db.select().from(rounds);
+  if (existing.length >= 12) {
+    console.log("[Scheduler] All 12 rounds already seeded");
+    return;
+  }
+
+  console.log("[Scheduler] Seeding 12 experimental rounds...");
+  for (let i = 1; i <= 12; i++) {
+    const period = Math.ceil(i / 4) as 1 | 2 | 3;
+    const existingRound = await db
+      .select()
+      .from(rounds)
+      .where(eq(rounds.roundNumber, i))
+      .limit(1);
+
+    if (existingRound.length === 0) {
+      await db.insert(rounds).values({
+        roundNumber: i,
+        period,
+        status: "pending",
+        subSessionStatus: "PENDING",
+        activeSubSession: 1,
+      });
+      console.log(`[Scheduler] Round ${i} created (Period ${period})`);
+    }
+  }
+  console.log("[Scheduler] 12 rounds seeded.");
+}
+
+// ============================================================
 // SERVER SETUP
 // ============================================================
 let io: import("socket.io").Server;
@@ -58,13 +92,17 @@ type OrderType = {
 
 // --- Round-level state ---
 let activeRound: number | null = null;
-let activeSubSession: 1 | 2 | 3 | 4 = 1;
+let activeSubSession: 1 | 2 = 1;
 let currentIntervention: InterventionType = "NONE";
 let isPaused = false;
 
 // --- Scheduler timers ---
 let schedulerTimeout: NodeJS.Timeout | null = null;
 let tickInterval: NodeJS.Timeout | null = null;
+let matchingInterval: NodeJS.Timeout | null = null;
+
+// --- Stock duplication prevention ---
+let usedStockIds: number[] = [];
 
 // --- Intervention content cache (loaded from DB at startup) ---
 let interventionCache: Record<string, { title: string; content: string }> = {};
@@ -72,16 +110,39 @@ let interventionCache: Record<string, { title: string; content: string }> = {};
 // --- Per-round in-memory data ---
 interface RoundData {
   roundId: number;
-  stocks: { id: number; kodeSaham: string; namaSaham: string; basePrice: number }[];
+  stocks: { id: number; kodeSaham: string; namaSaham: string; basePrice: number | string }[];
   openingPrices: Record<number, number>; // stockId -> equilibrium price
   orderBooks: Record<number, { bids: OrderType[]; asks: OrderType[] }>;
   timer: number; // seconds remaining
-  subSession: 1 | 2 | 3 | 4;
+  subSession: 1 | 2;
   phase: SubSessionPhase;
   pendingPredictions: Record<number, { userId: number; predictedPrice: number }[]>;
 }
 
 let roundData: Record<number, RoundData> = {};
+
+// ============================================================
+// HELPERS
+// ============================================================
+async function assignStocksToRound(roundNumber: number, stockIds: number[]) {
+  const [roundRow] = await db
+    .select()
+    .from(rounds)
+    .where(eq(rounds.roundNumber, roundNumber))
+    .limit(1);
+
+  if (!roundRow) return;
+
+  await db.delete(roundStocks).where(eq(roundStocks.roundId, roundRow.id));
+
+  for (let i = 0; i < Math.min(stockIds.length, 3); i++) {
+    await db.insert(roundStocks).values({
+      roundId: roundRow.id,
+      stockId: stockIds[i],
+      slot: i + 1,
+    });
+  }
+}
 
 // ============================================================
 // INTERVENTION CACHE
@@ -117,7 +178,19 @@ async function startRound(roundNumber: number) {
     const missing = neededKeys.filter(k => !interventionCache[k]);
     if (missing.length > 0) {
       console.warn(`[Scheduler] Round ${roundNumber} needs interventions: ${missing.join(", ")} — not configured yet`);
+      io.emit("admin-warning", {
+        message: `Round ${roundNumber} membutuhkan intervensi: ${missing.join(", ")}. Silakan konfigurasi konten di panel Intervensi sebelum melanjutkan.`,
+        missingInterventions: missing,
+      });
+      // Still allow start but warn — admin can configure and continue
     }
+
+    // Emit intervention availability status
+    io.emit("intervention-config-status", {
+      roundNumber,
+      available: neededKeys.filter(k => interventionCache[k]),
+      missing: neededKeys.filter(k => !interventionCache[k]),
+    });
   }
 
   // Load round from DB
@@ -187,7 +260,12 @@ async function startRound(roundNumber: number) {
     roundNumber,
     period: config.period,
     periodLabel: config.periodLabel,
-    stocks: stockRows.map(s => ({ id: s.id, kode: s.kodeSaham, nama: s.namaSaham })),
+    stocks: stockRows.map(s => ({
+      id: s.id,
+      kodeSaham: s.kodeSaham,
+      namaSaham: s.namaSaham,
+      basePrice: Number(s.basePrice)
+    })),
   });
 
   // Start Sesi 1: PRE_OPENING
@@ -199,7 +277,7 @@ async function startRound(roundNumber: number) {
 /**
  * Start a specific sub-session within the current active round.
  */
-async function startSubSession(roundNumber: number, sessionNumber: 1 | 2 | 3 | 4) {
+async function startSubSession(roundNumber: number, sessionNumber: 1 | 2) {
   const config = getCurrentSessionConfig(roundNumber, sessionNumber);
 
   // Update round data
@@ -241,12 +319,20 @@ async function startSubSession(roundNumber: number, sessionNumber: 1 | 2 | 3 | 4
   if (config.intervention !== "NONE") {
     await triggerIntervention(config.intervention, roundNumber);
   }
+
+  // Ensure timers and matching engine are running for the new sub-session
+  startTickInterval();
+  if (sessionNumber > 1) {
+    runMatchingEngine();
+  } else {
+    stopMatchingEngine();
+  }
 }
 
 /**
  * Called when a sub-session timer expires. Advances to next sub-session or ends round.
  */
-async function onSubSessionExpiry(roundNumber: number, sessionNumber: 1 | 2 | 3 | 4) {
+async function onSubSessionExpiry(roundNumber: number, sessionNumber: 1 | 2) {
   const config = getCurrentSessionConfig(roundNumber, sessionNumber);
 
   // Emit sub-session ended
@@ -255,14 +341,11 @@ async function onSubSessionExpiry(roundNumber: number, sessionNumber: 1 | 2 | 3 
   console.log(`[Scheduler] Round ${roundNumber} Sesi ${sessionNumber} ended`);
 
   if (sessionNumber === 1) {
-    // PRE_OPENING ended — calculate opening prices, then start TRADING_S2
+    // PRE_OPENING ended — calculate opening prices, then start TRADING
     await calculateOpeningPrices(roundNumber);
     await startSubSession(roundNumber, 2);
-  } else if (sessionNumber < 4) {
-    // Close order book for current trading session, move to next
-    await startSubSession(roundNumber, (sessionNumber + 1) as 2 | 3 | 4);
   } else {
-    // Sesi 4 ended — end the round
+    // Sesi 2 (TRADING) ended — round complete
     await endRound(roundNumber);
   }
 }
@@ -323,6 +406,7 @@ async function endRound(roundNumber: number) {
   currentIntervention = "NONE";
 
   stopTickInterval();
+  stopMatchingEngine();
 
   // Update DB
   const [roundRow] = await db
@@ -363,16 +447,8 @@ async function endRound(roundNumber: number) {
   console.log(`[Scheduler] Round ${roundNumber} ended`);
 
   if (roundNumber < 12) {
-    // Schedule next round after cooldown
-    console.log(`[Scheduler] Next round in ${DURATIONS.ROUND_COOLDOWN}s...`);
-    io.emit("round-cooldown-started", {
-      nextRound: roundNumber + 1,
-      cooldownSeconds: DURATIONS.ROUND_COOLDOWN,
-    });
-
-    schedulerTimeout = setTimeout(() => {
-      startRound(roundNumber + 1);
-    }, DURATIONS.ROUND_COOLDOWN * 1000);
+    console.log(`[Scheduler] Single round finished. Waiting for admin to start next round manually.`);
+    io.emit("experiment-stopped", {});
   } else {
     // Experiment complete
     io.emit("experiment-ended", {});
@@ -418,6 +494,32 @@ async function calculateOpeningPrices(roundNumber: number) {
     .update(rounds)
     .set({ openingPrices: JSON.parse(JSON.stringify(openingPrices)) })
     .where(eq(rounds.id, roundRow.id));
+
+  // Calculate and save accuracy_score for predictions
+  for (const stock of rd.stocks) {
+    const eqPrice = openingPrices[stock.id];
+    if (!eqPrice) continue;
+
+    // Get all predictions for this stock in this round
+    const preds = await db
+      .select()
+      .from(predictions)
+      .where(and(
+        eq(predictions.roundId, roundRow.id),
+        eq(predictions.stockId, stock.id)
+      ));
+
+    for (const pred of preds) {
+      const predPrice = Number(pred.tebakanHarga);
+      // Accuracy score: 1 - (|predicted - equilibrium| / equilibrium)
+      // Score range: -infinity to 1, where 1 = perfect prediction
+      const accuracy = Math.max(0, 1 - Math.abs(predPrice - eqPrice) / eqPrice);
+      await db
+        .update(predictions)
+        .set({ accuracyScore: String(accuracy.toFixed(4)) })
+        .where(eq(predictions.id, pred.id));
+    }
+  }
 
   // Emit opening prices
   io.emit("opening-prices-calculated", {
@@ -472,13 +574,21 @@ function stopTickInterval() {
   }
 }
 
+function stopMatchingEngine() {
+  if (matchingInterval) {
+    clearInterval(matchingInterval);
+    matchingInterval = null;
+  }
+}
+
 // ============================================================
 // MATCHING ENGINE — processes BID/ASK matches every 500ms
 // ============================================================
 const MATCHING_ENGINE_INTERVAL = 500;
 
 async function runMatchingEngine() {
-  setInterval(async () => {
+  if (matchingInterval) clearInterval(matchingInterval);
+  matchingInterval = setInterval(async () => {
     if (activeRound === null || isPaused) return;
 
     const rd = roundData[activeRound];
@@ -677,7 +787,7 @@ async function emitBalanceUpdate(userId: number) {
 // ============================================================
 // SOCKET.IO CONNECTION HANDLER
 // ============================================================
-app.prepare().then(() => {
+app.prepare().then(async () => {
   const httpServer = createServer(handler);
   io = new Server(httpServer, {
     cors: {
@@ -687,13 +797,17 @@ app.prepare().then(() => {
   });
 
   // Load intervention cache at startup
-  loadInterventionCache();
+  await loadInterventionCache();
+
+  // Seed 12 rounds in DB if not already present
+  await seedRoundsIfNeeded();
 
   io.on("connection", (socket) => {
     console.log("[Socket] Client connected:", socket.id);
 
     // ── Authentication ─────────────────────────────────────
     socket.on("authenticate", async (data: { nama?: string; password?: string; userId?: number }) => {
+      console.log(`[Socket] Authenticating socket ${socket.id} with data:`, data);
       const { nama, password, userId } = data;
 
       try {
@@ -711,9 +825,12 @@ app.prepare().then(() => {
         }
 
         if (!user) {
+          console.warn(`[Socket] Auth failed for socket ${socket.id} — user not found in DB`);
           socket.emit("auth-error", { message: "Invalid credentials" });
           return;
         }
+
+        console.log(`[Socket] Auth SUCCESS for socket ${socket.id} — User ID: ${user.id}, Role: ${user.role}`);
 
         socket.data.userId = user.id;
         socket.data.userRole = user.role;
@@ -768,9 +885,22 @@ app.prepare().then(() => {
     });
 
     // ── Admin: Start Round ──────────────────────────────────
-    socket.on("admin-start-round", async (data: { roundNumber: number; stockIds: number[] }) => {
+    socket.on("admin-start-round", async (data: { roundNumber: number; stockIds: number[]; userId?: number }) => {
+      console.log(`[Admin] Start Round requested by socket ${socket.id}, socket.data:`, socket.data);
+      
+      // Inline auth fallback
+      if (socket.data.userRole !== "admin" && data.userId) {
+        console.log(`[Admin] Socket not authenticated, attempting inline fallback for userId: ${data.userId}`);
+        const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
+        if (u && u.role === "admin") {
+          socket.data.userId = u.id;
+          socket.data.userRole = u.role;
+        }
+      }
+
       if (socket.data.userRole !== "admin") {
-        socket.emit("admin-error", { message: "Unauthorized" });
+        console.warn(`[Admin] Start Round rejected: Unauthorized for socket ${socket.id}`);
+        socket.emit("admin-error", { message: "Unauthorized — socket belum terauthentikasi sebagai admin" });
         return;
       }
 
@@ -778,47 +908,138 @@ app.prepare().then(() => {
 
       // Validate round number
       if (roundNumber < 1 || roundNumber > 12) {
-        socket.emit("admin-error", { message: "Invalid round number" });
+        socket.emit("admin-error", { message: "Nomor round tidak valid (harus 1-12)" });
         return;
       }
 
-      // Assign stocks to round in DB (3 stocks required)
-      if (stockIds && stockIds.length > 0) {
-        const [roundRow] = await db
-          .select()
-          .from(rounds)
-          .where(eq(rounds.roundNumber, roundNumber))
-          .limit(1);
-
-        if (roundRow) {
-          // Remove existing stock assignments
-          await db.delete(roundStocks).where(eq(roundStocks.roundId, roundRow.id));
-
-          // Assign new stocks
-          for (let i = 0; i < Math.min(stockIds.length, 3); i++) {
-            await db.insert(roundStocks).values({
-              roundId: roundRow.id,
-              stockId: stockIds[i],
-              slot: i + 1,
-            });
-          }
-        }
+      if (!stockIds || stockIds.length < 3) {
+        socket.emit("admin-error", { message: "Pilih tepat 3 saham sebelum memulai round" });
+        return;
       }
 
-      await startRound(roundNumber);
+      // Validate: no duplicate stocks within the batch
+      const uniqueBatch = [...new Set(stockIds)];
+      if (uniqueBatch.length !== stockIds.length) {
+        socket.emit("admin-error", { message: "Pilih 3 saham yang berbeda — tidak boleh ada duplikasi." });
+        return;
+      }
+
+      // Validate: stocks cannot be reused from previous rounds
+      const duplicateStocks = stockIds.filter(id => usedStockIds.includes(id));
+      if (duplicateStocks.length > 0) {
+        socket.emit("admin-error", {
+          message: `Saham sudah digunakan di round sebelumnya dan tidak bisa dipakai ulang. Pilih saham lain.`,
+          duplicateStockIds: duplicateStocks,
+        });
+        return;
+      }
+
+      try {
+        // Mark stocks as used
+        usedStockIds.push(...stockIds);
+        // Assign stocks to round in DB (3 stocks required)
+        await assignStocksToRound(roundNumber, stockIds);
+        await startRound(roundNumber);
+        console.log(`[Admin] Round ${roundNumber} started by admin ${socket.data.userId}`);
+      } catch (err: any) {
+        console.error(`[Admin] Failed to start round ${roundNumber}:`, err);
+        socket.emit("admin-error", { message: `Gagal memulai round: ${err.message || "Unknown error"}` });
+      }
     });
 
     // ── Admin: Pause ───────────────────────────────────────
-    socket.on("admin-pause", async () => {
-      if (socket.data.userRole !== "admin") return;
+    socket.on("admin-pause", async (data?: { userId?: number }) => {
+      // Inline auth fallback
+      if (socket.data.userRole !== "admin" && data?.userId) {
+        const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
+        if (u && u.role === "admin") {
+          socket.data.userId = u.id;
+          socket.data.userRole = u.role;
+        }
+      }
+
+      if (socket.data.userRole !== "admin") {
+        socket.emit("admin-error", { message: "Unauthorized" });
+        return;
+      }
       isPaused = true;
       io.emit("experiment-paused", {});
       console.log("[Scheduler] Experiment paused");
     });
 
-    // ── Admin: Resume ─────────────────────────────────────
-    socket.on("admin-resume", async () => {
+    // ── Admin: Stop Experiment ───────────────────────────
+    socket.on("admin-stop-experiment", async () => {
       if (socket.data.userRole !== "admin") return;
+
+      if (schedulerTimeout) {
+        clearTimeout(schedulerTimeout);
+        schedulerTimeout = null;
+      }
+
+      if (activeRound !== null) {
+        // End current round
+        await endRound(activeRound);
+      }
+
+      io.emit("experiment-stopped", {});
+      console.log("[Scheduler] Experiment manually stopped");
+    });
+
+    // ── Admin: Reset Full Experiment ─────────────────────
+    socket.on("admin-reset-experiment", async () => {
+      if (socket.data.userRole !== "admin") return;
+
+      // Stop active round
+      if (activeRound !== null) {
+        await endRound(activeRound);
+      }
+
+      // Clear all scheduled timers
+      if (schedulerTimeout) { clearTimeout(schedulerTimeout); schedulerTimeout = null; }
+      if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+      if (matchingInterval) { clearInterval(matchingInterval); matchingInterval = null; }
+
+      // Reset all rounds in DB
+      try {
+        const allRounds = await db.select().from(rounds);
+        for (const r of allRounds) {
+          await db.update(rounds).set({
+            status: "pending",
+            subSessionStatus: "PENDING",
+            activeSubSession: 1,
+            activeIntervention: "NONE",
+            startTime: null,
+            endTime: null,
+            openingPrices: {},
+          }).where(eq(rounds.id, r.id));
+          await db.delete(roundStocks).where(eq(roundStocks.roundId, r.id));
+        }
+      } catch (err) {
+        console.error("[Scheduler] Reset rounds DB error:", err);
+      }
+
+      // Reset in-memory state
+      usedStockIds = [];
+
+      io.emit("experiment-reset", {});
+      console.log("[Scheduler] Experiment fully reset by admin");
+    });
+
+    // ── Admin: Resume ─────────────────────────────────────
+    socket.on("admin-resume", async (data?: { userId?: number }) => {
+      // Inline auth fallback
+      if (socket.data.userRole !== "admin" && data?.userId) {
+        const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
+        if (u && u.role === "admin") {
+          socket.data.userId = u.id;
+          socket.data.userRole = u.role;
+        }
+      }
+
+      if (socket.data.userRole !== "admin") {
+        socket.emit("admin-error", { message: "Unauthorized" });
+        return;
+      }
       isPaused = false;
       io.emit("experiment-resumed", {});
       console.log("[Scheduler] Experiment resumed");
@@ -831,26 +1052,57 @@ app.prepare().then(() => {
       await triggerIntervention(data.type, activeRound);
     });
 
-    // ── Admin: Get Scheduler State ────────────────────────
-    socket.on("get-scheduler-state", async () => {
+
+    // ── Admin: Reload Intervention Cache ──────────────────
+    socket.on("reload-intervention-cache", async () => {
       if (socket.data.userRole !== "admin") return;
+      await loadInterventionCache();
+      io.emit("intervention-cache-loaded", interventionCache);
+      console.log("[Scheduler] Intervention cache reloaded by admin");
+    });
 
-      const rd = activeRound !== null ? roundData[activeRound] : null;
-      const [activeRoundRow] = activeRound !== null
-        ? await db.select().from(rounds).where(eq(rounds.roundNumber, activeRound)).limit(1)
-        : [null];
+    // ── Get Scheduler State (admin + user) ───────────────
+    socket.on("get-scheduler-state", async () => {
+      const allRoundsRows = await db.select().from(rounds);
+      const completedRounds = allRoundsRows
+        .filter(r => r.status === "closed")
+        .map(r => r.roundNumber);
+        
+      const roundStocksRows = await db.select().from(roundStocks);
+      const usedStockIds = roundStocksRows
+        .filter(rs => allRoundsRows.some(r => r.id === rs.roundId && (r.status === "closed" || r.status === "active")))
+        .map(rs => rs.stockId);
 
-      socket.emit("scheduler-state", {
-        activeRound,
-        activeSubSession: rd?.subSession || null,
-        phase: rd?.phase || null,
-        timeLeft: rd?.timer || 0,
-        currentIntervention,
-        isPaused,
-        openingPrices: rd?.openingPrices || {},
-        stocks: rd?.stocks || [],
-        interventionCache,
-      });
+      // Admin gets full state
+      if (socket.data.userRole === "admin") {
+        const rd = activeRound !== null ? roundData[activeRound] : null;
+
+        socket.emit("scheduler-state", {
+          activeRound,
+          activeSubSession: rd?.subSession || null,
+          phase: rd?.phase || null,
+          timeLeft: rd?.timer || 0,
+          currentIntervention,
+          isPaused,
+          openingPrices: rd?.openingPrices || {},
+          stocks: rd?.stocks || [],
+          interventionCache,
+          completedRounds,
+          usedStockIds,
+        });
+      } else {
+        // Regular user: send enough to restore trading UI
+        const rd = activeRound !== null ? roundData[activeRound] : null;
+        socket.emit("scheduler-state", {
+          activeRound,
+          activeSubSession: rd?.subSession || null,
+          phase: rd?.phase || null,
+          timeLeft: rd?.timer || 0,
+          currentIntervention,
+          stocks: rd?.stocks || [],
+          openingPrices: rd?.openingPrices || {},
+        });
+      }
     });
 
     // ── Submit Prediction (PRE_OPENING phase) ─────────────
@@ -928,7 +1180,7 @@ app.prepare().then(() => {
       }
 
       const rd = roundData[activeRound];
-      if (!["TRADING_S2", "TRADING_S3", "TRADING_S4"].includes(rd.phase)) {
+      if (rd.phase !== "PRE_OPENING" && rd.phase !== "PENDING" && rd.phase !== "CLOSED" && rd.phase !== undefined) {
         socket.emit("order-error", { message: "Trading is not open" });
         return;
       }
