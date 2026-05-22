@@ -102,21 +102,34 @@ function generateRandomWalk(basePrice: number, steps: number): PricePoint[] {
 function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
   const w = 600, h = 220;
   const pad = { top: 16, right: 16, bottom: 28, left: 72 };
-  if (data.length < 2 || data.some(d => isNaN(d.price))) return <div className="flex items-center justify-center h-56 text-zinc-600 text-xs">Memuat data...</div>;
 
-  const prices = data.map(d => d.price);
-  const min = Math.min(...prices) - 50;
-  const max = Math.max(...prices) + 50;
+  let chartData = data;
+  if (data.length === 1 && !isNaN(data[0].price)) {
+    chartData = [
+      { time: "Pra-Buka", price: data[0].price },
+      { time: "Mulai Sesi", price: data[0].price }
+    ];
+  }
+
+  if (chartData.length < 2 || chartData.some(d => isNaN(d.price))) {
+    return <div className="flex items-center justify-center h-56 text-zinc-600 text-xs">Memuat data...</div>;
+  }
+
+  const prices = chartData.map(d => d.price);
+  const dataMin = Math.min(...prices);
+  const dataMax = Math.max(...prices);
+  const min = Math.min(dataMin - 10, dataMin * 0.995);
+  const max = Math.max(dataMax + 10, dataMax * 1.005);
   const range = max - min || 1;
-  const xS = (i: number) => pad.left + (i / (data.length - 1)) * (w - pad.left - pad.right);
+  const xS = (i: number) => pad.left + (i / (chartData.length - 1)) * (w - pad.left - pad.right);
   const yS = (v: number) => pad.top + ((max - v) / range) * (h - pad.top - pad.bottom);
-  const pathD = data.map((d, i) => `${i === 0 ? "M" : "L"} ${xS(i)} ${yS(d.price)}`).join(" ");
-  const areaD = `${pathD} L ${xS(data.length - 1)} ${yS(min)} L ${xS(0)} ${yS(min)} Z`;
+  const pathD = chartData.map((d, i) => `${i === 0 ? "M" : "L"} ${xS(i)} ${yS(d.price)}`).join(" ");
+  const areaD = `${pathD} L ${xS(chartData.length - 1)} ${yS(min)} L ${xS(0)} ${yS(min)} Z`;
   const color = isUp ? "#10b981" : "#ef4444";
   const yTicks: number[] = [];
   for (let i = 0; i <= 4; i++) yTicks.push(min + (range * i) / 4);
-  const xInt = Math.max(1, Math.floor(data.length / 6));
-  const xLab = data.filter((_, i) => i % xInt === 0 || i === data.length - 1);
+  const xInt = Math.max(1, Math.floor(chartData.length / 6));
+  const xLab = chartData.filter((_, i) => i % xInt === 0 || i === chartData.length - 1);
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
@@ -134,8 +147,13 @@ function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
       ))}
       <path d={areaD} fill="url(#cg)" style={{ transition: "all 0.5s ease-in-out" }} />
       <path d={pathD} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ transition: "all 0.5s ease-in-out" }} />
+      {/* Live Pulsing Price Indicator Dot */}
+      <g>
+        <circle cx={xS(chartData.length - 1)} cy={yS(chartData[chartData.length - 1].price)} r={4} fill={color} style={{ transition: "all 0.5s ease-in-out" }} />
+        <circle cx={xS(chartData.length - 1)} cy={yS(chartData[chartData.length - 1].price)} r={10} fill={color} opacity={0.4} className="animate-ping" style={{ transition: "all 0.5s ease-in-out" }} />
+      </g>
       {xLab.map((d, i) => (
-        <text key={i} x={xS(data.indexOf(d))} y={h - 6} textAnchor="middle" fill="#71717a" fontSize={10}>
+        <text key={i} x={xS(chartData.indexOf(d))} y={h - 6} textAnchor="middle" fill="#71717a" fontSize={10}>
           {d.time}
         </text>
       ))}
@@ -185,6 +203,26 @@ function TradingPageContent() {
   const [sessionTimer, setSessionTimer] = useState(120);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Real-time portfolios map (stockId -> lot) and last prices (stockId -> lastPrice)
+  const [portfoliosMap, setPortfoliosMap] = useState<Record<number, number>>({});
+  const [lastPrices, setLastPrices] = useState<Record<number, number>>({});
+  // Initialize lastPrices when stocks list updates
+
+  // Initialize lastPrices when stocks list updates
+  useEffect(() => {
+    if (stocks.length > 0) {
+      setLastPrices(prev => {
+        const newPrices = { ...prev };
+        stocks.forEach(s => {
+          if (newPrices[s.id] === undefined) {
+            newPrices[s.id] = Number(s.basePrice) || 1000;
+          }
+        });
+        return newPrices;
+      });
+    }
+  }, [stocks]);
+
   // New experimental state
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [period, setPeriod] = useState<number | null>(null);
@@ -195,6 +233,23 @@ function TradingPageContent() {
   const [predictionInput, setPredictionInput] = useState<Record<number, string>>({});
   const [showPredictionUI, setShowPredictionUI] = useState(false);
   const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
+
+  // Refs to access the latest state in socket event listeners without re-subscribing
+  const selectedIdRef = useRef<number | null>(null);
+  const openingPricesRef = useRef<Record<number, number>>({});
+  const lastPricesRef = useRef<Record<number, number>>({});
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    openingPricesRef.current = openingPrices;
+  }, [openingPrices]);
+
+  useEffect(() => {
+    lastPricesRef.current = lastPrices;
+  }, [lastPrices]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -240,7 +295,10 @@ function TradingPageContent() {
     if (!user || !hydrated) return;
     const socket = getSocket();
 
-    const onConnect = () => { socket.emit("authenticate", { userId: user.id }); };
+    const onConnect = () => {
+      socket.emit("authenticate", { userId: user.id });
+      socket.emit("get-portfolio", { userId: user.id });
+    };
     if (socket.connected) onConnect(); else socket.on("connect", onConnect);
 
     socket.on("round-started", (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
@@ -288,6 +346,13 @@ function TradingPageContent() {
       const prices: Record<number, number> = {};
       data.prices.forEach(p => { prices[p.stockId] = p.price; });
       setOpeningPrices(prices);
+      setLastPrices(prev => {
+        const newPrices = { ...prev };
+        data.prices.forEach(p => {
+          newPrices[p.stockId] = p.price;
+        });
+        return newPrices;
+      });
     });
 
     socket.on("round-ended", () => {
@@ -334,7 +399,47 @@ function TradingPageContent() {
       }
     });
 
+    // Real-time portfolios map & trade monitoring
+    socket.on("portfolio-data", (data: { portfolio: { stockId: number; jumlahLot: number }[] }) => {
+      const initialMap: Record<number, number> = {};
+      data.portfolio.forEach(p => {
+        initialMap[p.stockId] = p.jumlahLot;
+      });
+      setPortfoliosMap(initialMap);
+    });
+
+    socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
+      setPortfoliosMap(prev => ({
+        ...prev,
+        [data.stockId]: data.jumlahLot
+      }));
+    });
+
+    socket.on("trade-executed", (data: { stockId: number; price: number; quantity: number; timestamp?: string }) => {
+      setLastPrices(prev => ({
+        ...prev,
+        [data.stockId]: data.price
+      }));
+
+      // Append trade to chart price history if it matches selected stock
+      if (selectedIdRef.current && data.stockId === selectedIdRef.current) {
+        const t = data.timestamp ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setCurrentPrice(data.price);
+        setPriceHistory(prev => {
+          const base = openingPricesRef.current[data.stockId] || lastPricesRef.current[data.stockId] || 1000;
+          const hasPraBuka = prev.length > 0 && prev[0].time === "Pra-Buka";
+          const basePoint = hasPraBuka ? prev[0] : { time: "Pra-Buka", price: base };
+          const otherPoints = hasPraBuka ? prev.slice(1) : prev;
+          
+          const upd = [basePoint, ...otherPoints, { time: t, price: data.price }];
+          setPriceChange(((data.price - base) / base) * 100);
+          return upd;
+        });
+      }
+    });
+
     socket.emit("get-scheduler-state");
+    socket.emit("get-portfolio", { userId: user.id });
 
     return () => {
       socket.off("connect", onConnect);
@@ -347,6 +452,9 @@ function TradingPageContent() {
       socket.off("experiment-ended");
       socket.off("intervention-triggered");
       socket.off("scheduler-state");
+      socket.off("portfolio-data");
+      socket.off("portfolio-update");
+      socket.off("trade-executed");
     };
   }, [user, hydrated]); // eslint-disable-line
 
@@ -356,37 +464,35 @@ function TradingPageContent() {
     if (found) { setStock(found); setSelectedId(found.id); }
   }, [stockParam, stocks]);
 
+  const stockId = stock?.id;
+  const baseStockPrice = stock ? Number(stock.basePrice || (stock as any).hargaDasar || 1000) : null;
+  const openingPrice = stockId ? openingPrices[stockId] : undefined;
+
+  // Initialize price when a stock is selected
   useEffect(() => {
-    if (!stock) return;
-    const base = openingPrices[stock.id] || Number(stock.basePrice) || 1000;
+    if (!stockId || baseStockPrice === null) return;
+    const base = openingPrice || baseStockPrice || 1000;
     setCurrentPrice(base);
-    setPriceHistory(generateRandomWalk(base, 40));
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      setPriceHistory(prev => {
-        const last = prev[prev.length - 1];
-        const change = last.price * (Math.random() - 0.5) * 0.001; // reduced for smoother chart
-        const np = Math.round(last.price + change);
-        const t = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        const upd = [...prev.slice(-40), { time: t, price: np }];
-        setCurrentPrice(np);
-        setPriceChange(((np - base) / base) * 100);
-        return upd;
-      });
-    }, 2000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [stock, stock ? openingPrices[stock.id] : undefined]);
+    setPriceHistory([{ time: "Pra-Buka", price: base }]);
+    setPriceChange(0);
+  }, [stockId, baseStockPrice, openingPrice]);
 
   // ── Stock-specific socket: join-stock room + order book/balance/portfolio ──
   useEffect(() => {
     if (!user || !stock) return;
     const socket = getSocket();
 
-    // Join this stock's room for real-time updates
+    // Join this stock's room for real-time updates + fetch initial stock portfolio + trade history
     if (socket.connected) {
       socket.emit("join-stock", stock.kodeSaham);
+      socket.emit("get-stock-portfolio", { userId: user.id, stockId: stock.id });
+      socket.emit("get-trade-history", { stockId: stock.id });
     } else {
-      socket.once("connect", () => socket.emit("join-stock", stock.kodeSaham));
+      socket.once("connect", () => {
+        socket.emit("join-stock", stock.kodeSaham);
+        socket.emit("get-stock-portfolio", { userId: user.id, stockId: stock.id });
+        socket.emit("get-trade-history", { stockId: stock.id });
+      });
     }
 
     socket.on("order-book-update", (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
@@ -399,6 +505,26 @@ function TradingPageContent() {
 
     socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
       if (data.stockId === stock.id) setPortfolio({ lot: data.jumlahLot });
+      setPortfoliosMap(prev => ({
+        ...prev,
+        [data.stockId]: data.jumlahLot
+      }));
+    });
+
+    socket.on("trade-history", (data: { stockId: number; trades: { time: string; price: number }[] }) => {
+      if (data.stockId === stock.id) {
+        const base = openingPrice || baseStockPrice || 1000;
+        if (data.trades.length === 0) {
+          setPriceHistory([{ time: "Pra-Buka", price: base }]);
+          setCurrentPrice(base);
+          setPriceChange(0);
+        } else {
+          setPriceHistory([{ time: "Pra-Buka", price: base }, ...data.trades]);
+          const lastPrice = data.trades[data.trades.length - 1].price;
+          setCurrentPrice(lastPrice);
+          setPriceChange(((lastPrice - base) / base) * 100);
+        }
+      }
     });
 
     socket.on("prediction-saved", () => {
@@ -409,9 +535,10 @@ function TradingPageContent() {
       socket.off("order-book-update");
       socket.off("balance-update");
       socket.off("portfolio-update");
+      socket.off("trade-history");
       socket.off("prediction-saved");
     };
-  }, [user, stock]);
+  }, [user, stock, openingPrice, baseStockPrice]);
 
   const handlePlaceOrder = useCallback(() => {
     if (!user || !stock) return;
@@ -468,8 +595,61 @@ function TradingPageContent() {
     );
   }
 
+  // ── NAV Floating Header Calculations ──
+  const totalStockValue = Object.entries(portfoliosMap).reduce((sum, [sIdStr, lot]) => {
+    const sId = Number(sIdStr);
+    const price = lastPrices[sId] || 1000;
+    return sum + (lot * 100 * price);
+  }, 0);
+
+  const netAssetValue = balance + totalStockValue;
+  const modalAwal = 100_000_000;
+  const floatingPnL = ((netAssetValue - modalAwal) / modalAwal) * 100;
+
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="p-4 sm:p-6 space-y-4 relative">
+      {/* Dynamic Floating NAV Header */}
+      {sessionActive && (
+        <div className="sticky top-0 z-50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 backdrop-blur-md bg-zinc-950/80 border-b border-white/5 shadow-md flex flex-wrap items-center justify-between gap-4 transition-all">
+          <div className="flex items-center gap-2">
+            <span className="inline-block size-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">Riset Portfolio Live</span>
+          </div>
+          <div className="flex items-center gap-6 flex-wrap sm:flex-nowrap">
+            <div>
+              <div className="text-[9px] text-zinc-500 uppercase">Kas Tersedia</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-zinc-200">
+                Rp {balance.toLocaleString("id-ID")}
+              </div>
+            </div>
+            <div className="h-6 w-px bg-zinc-800 hidden sm:block" />
+            <div>
+              <div className="text-[9px] text-zinc-500 uppercase">Nilai Portofolio</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-zinc-300">
+                Rp {totalStockValue.toLocaleString("id-ID")}
+              </div>
+            </div>
+            <div className="h-6 w-px bg-zinc-800 hidden sm:block" />
+            <div>
+              <div className="text-[9px] text-zinc-500 uppercase">Total Aset (NAV)</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-emerald-400">
+                Rp {netAssetValue.toLocaleString("id-ID")}
+              </div>
+            </div>
+            <div className="h-6 w-px bg-zinc-800" />
+            <div>
+              <div className="text-[9px] text-zinc-500 uppercase">Profit / Loss</div>
+              <div className={cn(
+                "font-mono text-xs sm:text-sm font-bold flex items-center gap-1",
+                floatingPnL >= 0 ? "text-emerald-500" : "text-rose-500"
+              )}>
+                {floatingPnL >= 0 ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                {floatingPnL >= 0 ? "+" : ""}{floatingPnL.toFixed(2)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
@@ -481,10 +661,10 @@ function TradingPageContent() {
             </button>
           ) : null}
           <h1 className="text-lg font-semibold text-zinc-200">
-            {stock ? stock.kodeSaham : "Trading"}
+            {stock ? (stock as any).kodeSaham || (stock as any).kode || "Trading" : "Trading"}
           </h1>
           {stock && (
-            <span className="hidden sm:inline text-xs text-zinc-600">{stock.namaSaham}</span>
+            <span className="hidden sm:inline text-xs text-zinc-600">{(stock as any).namaSaham || (stock as any).nama}</span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -560,7 +740,7 @@ function TradingPageContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks.map(s => (
                 <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
-                  <div className="text-xs font-medium text-zinc-300 mb-2">{s.kodeSaham} — {s.namaSaham}</div>
+                  <div className="text-xs font-medium text-zinc-300 mb-2">{(s as any).kodeSaham || (s as any).kode} — {(s as any).namaSaham || (s as any).nama}</div>
                   <div className="flex gap-2">
                     <Input
                       type="number"
@@ -604,7 +784,9 @@ function TradingPageContent() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {stocks.map(s => {
-              const meta = getMeta(s.kodeSaham);
+              const safeKode = (s as any).kodeSaham || (s as any).kode || "N/A";
+              const safeNama = (s as any).namaSaham || (s as any).nama || "Tidak ada data";
+              const meta = getMeta(safeKode);
               const warna = sektorWarna[meta.sektor] ?? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20";
               return (
                 <button key={s.id} onClick={() => selectStock(s)}
@@ -612,9 +794,9 @@ function TradingPageContent() {
                   <div className="flex items-start justify-between mb-2">
                     <div>
                       <div className="font-mono text-sm font-bold text-zinc-200 group-hover:text-emerald-500 transition-colors">
-                        {s.kodeSaham}
+                        {safeKode}
                       </div>
-                      <div className="text-[11px] text-zinc-500 mt-0.5 line-clamp-1">{s.namaSaham}</div>
+                      <div className="text-[11px] text-zinc-500 mt-0.5 line-clamp-1">{safeNama}</div>
                     </div>
                     <div className={cn("rounded-full px-2 py-0.5 text-[9px] font-medium border", warna)}>
                       {meta.sektor}
@@ -710,6 +892,12 @@ function TradingPageContent() {
                       <ArrowUpFromLine className="size-3.5" /> Jual
                     </button>
                   </div>
+                  {portfolio && portfolio.lot > 0 && (
+                    <div className="text-[11px] text-zinc-400 flex justify-between items-center bg-zinc-800/30 px-2 py-1 rounded">
+                      <span>Kepemilikan Anda:</span>
+                      <span className="text-emerald-400 font-mono font-bold">{portfolio.lot} lot</span>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Input type="number" placeholder="Harga" value={orderPrice} onChange={e => setOrderPrice(e.target.value)} className="text-xs" />
                     <Input type="number" placeholder="Jumlah (Lot)" value={orderLot} onChange={e => setOrderLot(e.target.value)} className="text-xs" />

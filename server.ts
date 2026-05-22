@@ -160,6 +160,37 @@ async function loadInterventionCache() {
 }
 
 // ============================================================
+// PORTFOLIO SEEDING — allocate 10 lots of active stocks to respondents
+// ============================================================
+async function seedInitialPortfolios(roundId: number, stockRows: { id: number; kodeSaham: string; namaSaham: string; basePrice: number | string }[], initialLot: number = 10) {
+  // Ambil semua user responden dari DB
+  const allUsers = await db.select().from(users).where(eq(users.role, "responden"));
+  
+  for (const user of allUsers) {
+    for (const stock of stockRows) {
+      // Cek apakah sudah ada portofolio (hindari duplikasi jika ronde di-restart/di-start ulang)
+      const [existing] = await db.select().from(portfolios)
+        .where(and(
+          eq(portfolios.userId, user.id),
+          eq(portfolios.stockId, stock.id),
+          eq(portfolios.roundId, roundId)
+        )).limit(1);
+      
+      if (!existing) {
+        await db.insert(portfolios).values({
+          userId: user.id,
+          stockId: stock.id,
+          roundId,
+          jumlahLot: initialLot,
+          averagePrice: String(stock.basePrice),
+        });
+      }
+    }
+  }
+  console.log(`[Scheduler] Initial portfolios seeded: ${allUsers.length} users x ${stockRows.length} stocks x ${initialLot} lot`);
+}
+
+// ============================================================
 // STATE MACHINE — CORE
 // ============================================================
 
@@ -251,6 +282,9 @@ async function startRound(roundNumber: number) {
       startTime: new Date(),
     })
     .where(eq(rounds.id, roundRow.id));
+
+  // Seed initial portfolios for responden users
+  await seedInitialPortfolios(roundRow.id, stockRows);
 
   // Start tick interval
   startTickInterval();
@@ -751,6 +785,10 @@ async function executeTrade(
     await emitBalanceUpdate(bidOrder.userId);
     await emitBalanceUpdate(askOrder.userId);
 
+    // Emit updated portfolios
+    await emitPortfolioUpdate(bidOrder.userId, stockId);
+    await emitPortfolioUpdate(askOrder.userId, stockId);
+
   } catch (error) {
     console.error("[MatchingEngine] Trade execution error:", error);
   }
@@ -782,6 +820,19 @@ async function emitBalanceUpdate(userId: number) {
       balance: Number(user.saldo),
     });
   }
+}
+
+async function emitPortfolioUpdate(userId: number, stockId: number) {
+  const [p] = await db
+    .select()
+    .from(portfolios)
+    .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId)))
+    .limit(1);
+  io.to(`user:${userId}`).emit("portfolio-update", {
+    userId,
+    stockId,
+    jumlahLot: p ? p.jumlahLot : 0,
+  });
 }
 
 // ============================================================
@@ -1001,6 +1052,9 @@ app.prepare().then(async () => {
 
       // Reset all rounds in DB
       try {
+        // Cancel all open orders in orderBook
+        await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
+
         const allRounds = await db.select().from(rounds);
         for (const r of allRounds) {
           await db.update(rounds).set({
@@ -1015,7 +1069,7 @@ app.prepare().then(async () => {
           await db.delete(roundStocks).where(eq(roundStocks.roundId, r.id));
         }
       } catch (err) {
-        console.error("[Scheduler] Reset rounds DB error:", err);
+        console.error("[Scheduler] Reset DB elements error:", err);
       }
 
       // Reset in-memory state
@@ -1180,14 +1234,26 @@ app.prepare().then(async () => {
       }
 
       const rd = roundData[activeRound];
-      if (rd.phase !== "PRE_OPENING" && rd.phase !== "PENDING" && rd.phase !== "CLOSED" && rd.phase !== undefined) {
-        socket.emit("order-error", { message: "Trading is not open" });
+      if (rd.phase !== "TRADING") {
+        socket.emit("order-error", { message: "Trading belum dibuka. Tunggu fase PRE_OPENING selesai." });
         return;
       }
 
       const stock = rd.stocks.find(s => s.id === stockId);
       if (!stock) {
         socket.emit("order-error", { message: "Invalid stock for this round" });
+        return;
+      }
+
+      // Persist order — Fetch active round row first for DB validation
+      const [roundRow] = await db
+        .select()
+        .from(rounds)
+        .where(eq(rounds.roundNumber, activeRound))
+        .limit(1);
+
+      if (!roundRow) {
+        socket.emit("order-error", { message: "Active round not found" });
         return;
       }
 
@@ -1201,29 +1267,77 @@ app.prepare().then(async () => {
       const totalCost = harga * jumlah * 100;
       const saldo = Number(user.saldo) || 0;
 
-      if (tipe === "BID" && saldo < totalCost) {
-        socket.emit("order-error", { message: "Insufficient balance" });
-        return;
-      }
-
-      if (tipe === "ASK") {
-        const [portfolio] = await db
+      if (tipe === "BID") {
+        // Calculate escrow: sum all open BIDs in active round for this user
+        const openBids = await db
           .select()
-          .from(portfolios)
-          .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId)))
-          .limit(1);
-        if (!portfolio || portfolio.jumlahLot < jumlah) {
-          socket.emit("order-error", { message: "Insufficient stock holdings" });
+          .from(orderBook)
+          .where(
+            and(
+              eq(orderBook.userId, userId),
+              eq(orderBook.roundId, roundRow.id),
+              eq(orderBook.status, "open"),
+              eq(orderBook.tipe, "BID")
+            )
+          );
+
+        const totalLockedCash = openBids.reduce((sum, o) => {
+          return sum + Number(o.harga) * o.jumlah * 100;
+        }, 0);
+
+        const availableCash = saldo - totalLockedCash;
+
+        if (availableCash < totalCost) {
+          socket.emit("order-error", {
+            message: `Saldo kas tidak mencukupi (dikunci escrow). Uang Kas: Rp ${saldo.toLocaleString("id-ID")}, dikunci dalam antrean beli aktif: Rp ${totalLockedCash.toLocaleString("id-ID")}, sisa kas tersedia: Rp ${availableCash.toLocaleString("id-ID")}. Total kebutuhan order ini: Rp ${totalCost.toLocaleString("id-ID")}.`
+          });
           return;
         }
       }
 
-      // Persist order
-      const [roundRow] = await db
-        .select()
-        .from(rounds)
-        .where(eq(rounds.roundNumber, activeRound))
-        .limit(1);
+      if (tipe === "ASK") {
+        // Calculate portfolio holdings
+        const [portfolio] = await db
+          .select()
+          .from(portfolios)
+          .where(
+            and(
+              eq(portfolios.userId, userId),
+              eq(portfolios.stockId, stockId),
+              eq(portfolios.roundId, roundRow.id)
+            )
+          )
+          .limit(1);
+
+        const ownedLots = portfolio ? portfolio.jumlahLot : 0;
+
+        // Calculate escrow: sum all open ASKs for this stock in active round
+        const openAsks = await db
+          .select()
+          .from(orderBook)
+          .where(
+            and(
+              eq(orderBook.userId, userId),
+              eq(orderBook.roundId, roundRow.id),
+              eq(orderBook.stockId, stockId),
+              eq(orderBook.status, "open"),
+              eq(orderBook.tipe, "ASK")
+            )
+          );
+
+        const totalLockedLots = openAsks.reduce((sum, o) => {
+          return sum + o.jumlah;
+        }, 0);
+
+        const availableLots = ownedLots - totalLockedLots;
+
+        if (availableLots < jumlah) {
+          socket.emit("order-error", {
+            message: `Jumlah saham tidak mencukupi (dikunci escrow). Kepemilikan Anda: ${ownedLots} lot, dikunci dalam antrean jual aktif: ${totalLockedLots} lot, sisa saham tersedia: ${availableLots} lot. Total kebutuhan order ini: ${jumlah} lot.`
+          });
+          return;
+        }
+      }
 
       const [order] = await db.insert(orderBook).values({
         userId,
@@ -1317,6 +1431,56 @@ app.prepare().then(async () => {
           avgPrice: p.avgPrice,
         })),
       });
+    });
+
+    // ── Get Stock Portfolio ──────────────────────────────
+    socket.on("get-stock-portfolio", async (data: { userId: number; stockId: number }) => {
+      await emitPortfolioUpdate(data.userId, data.stockId);
+    });
+
+    // ── Get Trade History ────────────────────────────────
+    socket.on("get-trade-history", async (data: { stockId: number }) => {
+      const { stockId } = data;
+      if (activeRound === null) {
+        socket.emit("trade-history", { stockId, trades: [] });
+        return;
+      }
+
+      const rd = roundData[activeRound];
+      if (!rd) {
+        socket.emit("trade-history", { stockId, trades: [] });
+        return;
+      }
+
+      try {
+        const trades = await db
+          .select({
+            id: transactionsHistory.id,
+            harga: transactionsHistory.harga,
+            jumlah: transactionsHistory.jumlah,
+            createdAt: transactionsHistory.createdAt,
+          })
+          .from(transactionsHistory)
+          .where(
+            and(
+              eq(transactionsHistory.stockId, stockId),
+              eq(transactionsHistory.roundId, rd.roundId)
+            )
+          )
+          .orderBy(transactionsHistory.createdAt);
+
+        socket.emit("trade-history", {
+          stockId,
+          trades: trades.map(t => ({
+            time: new Date(t.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+            price: Number(t.harga),
+            quantity: t.jumlah,
+          })),
+        });
+      } catch (err) {
+        console.error("[Socket] Failed to fetch trade history:", err);
+        socket.emit("trade-history", { stockId, trades: [] });
+      }
     });
 
     // ── Join Round Room ───────────────────────────────────
