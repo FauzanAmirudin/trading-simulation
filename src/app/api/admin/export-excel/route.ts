@@ -91,8 +91,11 @@ export async function GET(req: NextRequest) {
       });
 
       if (dateParam) {
-        userPredictions = userPredictions.filter(p => dayjs(p.createdAt).format("YYYY-MM-DD") === dateParam);
-        userTransactions = userTransactions.filter(tx => dayjs(tx.createdAt).format("YYYY-MM-DD") === dateParam);
+        const getWibDateString = (d: Date) => {
+          return new Date(d.getTime() + 7 * 60 * 60 * 1000).toISOString().split('T')[0];
+        };
+        userPredictions = userPredictions.filter(p => p.createdAt && getWibDateString(new Date(p.createdAt)) === dateParam);
+        userTransactions = userTransactions.filter(tx => tx.createdAt && getWibDateString(new Date(tx.createdAt)) === dateParam);
       }
 
       // ── SHEET 1: PREDIKSI ──
@@ -132,8 +135,11 @@ export async function GET(req: NextRequest) {
         const predPrice = Number(p.tebakanHarga);
         const selisih = Math.abs(predPrice - finalPrice);
 
+        const timeStr = new Date(new Date(p.createdAt).getTime() + 7 * 60 * 60 * 1000)
+          .toISOString().replace('T', ' ').substring(0, 19);
+
         const row = sheet1.addRow({
-          waktu: dayjs(p.createdAt).format("YYYY-MM-DD HH:mm:ss"),
+          waktu: timeStr,
           periode: `Periode ${round?.period || "-"}`,
           ronde: `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
           saham: stock?.kodeSaham || "-",
@@ -194,8 +200,11 @@ export async function GET(req: NextRequest) {
         const lawanId = isBuyer ? sellerId : buyerId;
         const lawanName = lawanId ? userMap[lawanId] || `User #${lawanId}` : "Sistem/Unknown";
 
+        const timeStr = new Date(new Date(tx.createdAt).getTime() + 7 * 60 * 60 * 1000)
+          .toISOString().replace('T', ' ').substring(0, 19);
+
         const row = sheet2.addRow({
-          waktu: dayjs(tx.createdAt).format("YYYY-MM-DD HH:mm:ss"),
+          waktu: timeStr,
           periode: `Periode ${round?.period || "-"}`,
           ronde: `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
           saham: stock?.kodeSaham || "-",

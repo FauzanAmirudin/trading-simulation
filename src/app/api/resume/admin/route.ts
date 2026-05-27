@@ -72,8 +72,9 @@ export async function GET(req: NextRequest) {
 
     if (dateParam) {
       transactions = transactions.filter(t => {
-        const txDate = t.timeObj ? t.timeObj.toISOString().split("T")[0] : "";
-        return txDate === dateParam;
+        if (!t.timeObj) return false;
+        const wibDate = new Date(t.timeObj.getTime() + 7 * 60 * 60 * 1000).toISOString().split("T")[0];
+        return wibDate === dateParam;
       });
     }
 
