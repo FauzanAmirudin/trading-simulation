@@ -314,11 +314,6 @@ function TradingPageContent() {
       setPeriod(data.period);
       setSessionActive(true);
       setStocks(data.stocks);
-      // Auto-select first stock if none selected
-      if (data.stocks.length > 0) {
-        setStock(prev => prev ?? data.stocks[0]);
-        setSelectedId(prev => prev ?? data.stocks[0].id);
-      }
     });
 
     socket.on("sub-session-started", (data: {
@@ -436,10 +431,6 @@ function TradingPageContent() {
         setPhase(data.phase || "PENDING");
         setSubSession(data.activeSubSession);
         setSessionTimer(data.timeLeft || 0);
-        if (data.stocks.length > 0) {
-          setStock(prev => prev ?? data.stocks[0]);
-          setSelectedId(prev => prev ?? data.stocks[0].id);
-        }
       }
     });
 
