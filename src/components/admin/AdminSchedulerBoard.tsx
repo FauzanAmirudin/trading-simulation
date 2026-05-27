@@ -36,6 +36,7 @@ type ExperimentState = {
   stocks: Stock[];
   openingPrices: Record<number, number>;
   interventionCache: Record<string, { title: string; content: string }>;
+  periodStates: Record<number, string>;
 };
 
 // ─────────────────────────────────────────────
@@ -156,13 +157,16 @@ function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
 // PeriodSummaryCard
 // ─────────────────────────────────────────────
 function PeriodSummaryCard({
-  period, activePeriod, onStart,
+  period, activePeriod, onStart, periodState,
 }: {
   period: PeriodDef;
   activePeriod: 1 | 2 | 3 | null;
   onStart: (n: 1 | 2 | 3) => void;
+  periodState?: string;
 }) {
   const isActive = activePeriod === period.periodNumber;
+  const isCompleted = periodState === "completed";
+  const isPaused = periodState === "paused";
   const totalRounds = period.sessions.reduce((a, s) => a + s.rounds.length, 0);
   const hasIntervention = period.sessions.some(s => s.intervention !== "NONE");
 
@@ -177,9 +181,19 @@ function PeriodSummaryCard({
             {period.sessions.length} Sesi · {totalRounds} Ronde
           </div>
         </div>
-        {isActive && (
+        {isActive && !isPaused && (
           <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-[10px] font-medium animate-pulse">
             <RadioTower className="size-2.5" /> Berjalan
+          </span>
+        )}
+        {isPaused && (
+          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] font-medium">
+            <PauseCircle className="size-2.5" /> Dijeda
+          </span>
+        )}
+        {isCompleted && (
+          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium">
+            <CheckCircle2 className="size-2.5" /> Selesai
           </span>
         )}
       </div>
@@ -215,10 +229,10 @@ function PeriodSummaryCard({
       <Button
         className="w-full h-8 text-xs font-medium gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
         onClick={() => onStart(period.periodNumber as 1 | 2 | 3)}
-        disabled={activePeriod !== null}
+        disabled={activePeriod !== null || isCompleted}
       >
-        <PlayCircle className="size-3.5" />
-        Mulai {period.label}
+        {isCompleted ? <CheckCircle2 className="size-3.5" /> : <PlayCircle className="size-3.5" />}
+        {isCompleted ? "Selesai" : `Mulai ${period.label}`}
       </Button>
     </div>
   );
@@ -422,6 +436,7 @@ export default function AdminSchedulerBoard() {
     stocks: [],
     openingPrices: {},
     interventionCache: {},
+    periodStates: {},
   });
 
   const [loading, setLoading] = useState(true);
@@ -453,8 +468,14 @@ export default function AdminSchedulerBoard() {
         stocks: data.stocks ?? [],
         openingPrices: data.openingPrices ?? {},
         interventionCache: data.interventionCache ?? {},
+        periodStates: data.periodStates ?? {},
       }));
       setLoading(false);
+    });
+
+    // State sync
+    socket.on("period-state-changed", (states: Record<number, string>) => {
+      setExpState(prev => ({ ...prev, periodStates: states }));
     });
 
     // Period events
@@ -637,14 +658,15 @@ export default function AdminSchedulerBoard() {
           )}
         </div>
         <div className="grid grid-cols-1 gap-3">
-          {PERIOD_MATRIX.map(period => (
-            <PeriodSummaryCard
-              key={period.periodNumber}
-              period={period}
-              activePeriod={activePeriod}
-              onStart={handleStartPeriod}
-            />
-          ))}
+            {PERIOD_MATRIX.map(period => (
+              <PeriodSummaryCard
+                key={period.periodNumber}
+                period={period}
+                activePeriod={expState.activePeriod}
+                periodState={expState.periodStates[period.periodNumber]}
+                onStart={handleStartPeriod}
+              />
+            ))}
         </div>
       </div>
 

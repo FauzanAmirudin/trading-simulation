@@ -69,6 +69,39 @@ let matchingInterval: NodeJS.Timeout | null = null;
 // ─── Intervention content cache ──────────────────────────────
 let interventionCache: Record<string, { title: string; content: string }> = {};
 
+// ─── Persistent Period States ────────────────────────────────
+export type PeriodStateType = "idle" | "running" | "paused" | "completed";
+let periodStates: Record<number, PeriodStateType> = { 1: "idle", 2: "idle", 3: "idle" };
+
+async function loadPeriodStates() {
+  try {
+    for (let i = 1; i <= 3; i++) {
+      const key = `period_${i}_status`;
+      const [row] = await db.select().from(experimentalConfig).where(eq(experimentalConfig.key, key)).limit(1);
+      if (row) {
+        periodStates[i] = row.content as PeriodStateType;
+      } else {
+        await db.insert(experimentalConfig).values({ key, title: `Status Period ${i}`, content: "idle" });
+        periodStates[i] = "idle";
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] Error loading period states:", err);
+  }
+}
+
+async function setPeriodState(periodNumber: number, state: PeriodStateType) {
+  try {
+    periodStates[periodNumber] = state;
+    await db.update(experimentalConfig)
+      .set({ content: state })
+      .where(eq(experimentalConfig.key, `period_${periodNumber}_status`));
+    io.emit("period-state-changed", periodStates);
+  } catch (err) {
+    console.error("[Scheduler] Error setting period state:", err);
+  }
+}
+
 // ============================================================
 // TIMER — pauseable, abortable countdown
 // ============================================================
@@ -500,6 +533,7 @@ async function startPeriod(periodNumber: 1 | 2 | 3) {
   currentPhase = "IDLE";
 
   console.log(`[Scheduler] ===== PERIOD ${periodNumber} STARTED =====`);
+  await setPeriodState(periodNumber, "running");
   io.emit("period-started", {
     periodNumber, label: periodConfig.label,
     totalSessions: periodConfig.sessions.length,
@@ -553,10 +587,12 @@ async function startPeriod(periodNumber: 1 | 2 | 3) {
 
   if (!periodAborted) {
     console.log(`[Scheduler] ===== PERIOD ${periodNumber} COMPLETE =====`);
+    await setPeriodState(periodNumber, "completed");
     io.emit("period-ended", { periodNumber });
   } else {
     console.log(`[Scheduler] ===== PERIOD ${periodNumber} ABORTED =====`);
     await cleanupActiveRound();
+    await setPeriodState(periodNumber, "completed");
     io.emit("period-aborted", { periodNumber });
   }
 }
@@ -574,6 +610,7 @@ app.prepare().then(async () => {
   });
 
   await loadInterventionCache();
+  await loadPeriodStates();
   console.log("[Scheduler] State machine ready — PERIOD_MATRIX loaded");
 
   io.on("connection", (socket) => {
@@ -600,6 +637,7 @@ app.prepare().then(async () => {
         socket.data.userRole = user.role;
         socket.join(`user:${user.id}`);
         socket.emit("auth-success", { user: { id: user.id, nama: user.nama, role: user.role, saldo: Number(user.saldo) } });
+        socket.emit("period-state-changed", periodStates);
 
         // Sync current experiment state to newly connected client
         if (activePeriod !== null) {
@@ -706,6 +744,7 @@ app.prepare().then(async () => {
       }
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
       isPaused = true;
+      if (activePeriod !== null) await setPeriodState(activePeriod, "paused");
       io.emit("experiment-paused", { timeLeft: currentTimeLeft, phase: currentPhase });
       console.log("[Scheduler] PAUSED");
     });
@@ -718,6 +757,7 @@ app.prepare().then(async () => {
       }
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
       isPaused = false;
+      if (activePeriod !== null) await setPeriodState(activePeriod, "running");
       io.emit("experiment-resumed", { phase: currentPhase });
       console.log("[Scheduler] RESUMED");
     });
@@ -747,6 +787,7 @@ app.prepare().then(async () => {
       activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
       currentPhase = "IDLE"; currentIntervention = "NONE";
       activeRoundDbId = null; activeStocks = []; activeOrderBooks = {};
+      for (let i = 1; i <= 3; i++) await setPeriodState(i, "idle");
       io.emit("experiment-reset", {});
       console.log("[Scheduler] Experiment RESET by admin");
     });
@@ -789,6 +830,7 @@ app.prepare().then(async () => {
         stocks: activeStocks.map(s => ({ id: s.id, kodeSaham: s.kodeSaham, namaSaham: s.namaSaham, basePrice: Number(s.basePrice) })),
         openingPrices: activeOpeningPrices,
         interventionCache,
+        periodStates, // <-- ADD THIS
         // Legacy fields
         activeRound: activeRoundIdx !== null ? activeRoundIdx + 1 : null,
         activeSubSession: currentPhase === "PRE_MARKET" ? 1 : 2,
