@@ -46,6 +46,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("user");
   }, []);
 
+  // Auto-logout after 1 hour of inactivity
+  useEffect(() => {
+    if (!user) return; // Only track if logged in
+
+    const IDLE_TIMEOUT = 60 * 60 * 1000; // 1 hour
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        logout();
+        // Optional: reload the page to ensure complete cleanup, though state update triggers redirect
+        window.location.href = "/login";
+      }, IDLE_TIMEOUT);
+    };
+
+    resetTimer();
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+    };
+  }, [user, logout]);
+
   return <AuthCtx.Provider value={{ user, hydrated, login, logout }}>{children}</AuthCtx.Provider>;
 }
 

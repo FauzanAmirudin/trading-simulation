@@ -33,8 +33,9 @@ type RoundInfo = {
 export default function AdminResumePage() {
   const { user, hydrated } = useAuth();
   const router = useRouter();
-  const [rounds, setRounds] = useState<RoundInfo[]>([]);
-  const [selectedRound, setSelectedRound] = useState<string>("all");
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split("T")[0]
+  );
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [data, setData] = useState({
@@ -45,28 +46,14 @@ export default function AdminResumePage() {
     transactions: [] as TransactionItem[],
   });
 
-  // 1. Fetch started rounds for the filter dropdown
-  useEffect(() => {
-    if (!hydrated || !user) return;
-    fetch("/api/rounds")
-      .then((res) => res.json())
-      .then((resData) => {
-        if (resData.rounds) {
-          const started = resData.rounds.filter(
-            (r: any) => r.status === "active" || r.status === "closed"
-          );
-          setRounds(started);
-        }
-      })
-      .catch((err) => console.error("Error fetching rounds:", err));
-  }, [hydrated, user]);
 
-  // 2. Fetch admin resume stats whenever selected round changes
+
+  // 1. Fetch admin resume stats whenever selected date changes
   useEffect(() => {
     if (!hydrated || !user) return;
     setLoading(true);
-    const roundQuery = selectedRound !== "all" ? `?roundId=${selectedRound}` : "";
-    fetch(`/api/resume/admin${roundQuery}`)
+    const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
+    fetch(`/api/resume/admin${dateQuery}`)
       .then((res) => res.json())
       .then((resData) => {
         if (!resData.error) {
@@ -84,27 +71,40 @@ export default function AdminResumePage() {
         console.error("Error loading admin resume data:", err);
         setLoading(false);
       });
-  }, [hydrated, user, selectedRound]);
+  }, [hydrated, user, selectedDate]);
 
-  const handleExport = async () => {
+  const handleDownloadExcel = async () => {
     try {
       setExporting(true);
-      toast.info("Sedang mengekspor data eksperimen...");
-      window.location.href = "/api/export?format=csv";
-      setTimeout(() => {
-        setExporting(false);
-        toast.success("Data transaksi berhasil diekspor!");
-      }, 1500);
+      toast.info("Menyiapkan file ZIP, mohon tunggu...");
+      const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
+      const res = await fetch(`/api/admin/export-excel${dateQuery}`);
+      
+      if (!res.ok) {
+        throw new Error("Gagal mengunduh data");
+      }
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = selectedDate ? `Laporan_Trading_${selectedDate}.zip` : `Laporan_Trading_All.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Berhasil mengunduh data Excel!");
     } catch (err) {
       console.error(err);
       toast.error("Gagal mengekspor data");
+    } finally {
       setExporting(false);
     }
   };
 
   if (!hydrated || !user) return null;
 
-  if (loading && rounds.length === 0) {
+  if (loading && data.transactions.length === 0) {
     return (
       <div className="p-6 space-y-4">
         <Skeleton className="h-8 w-48 bg-zinc-800" />
@@ -123,29 +123,23 @@ export default function AdminResumePage() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-400 font-medium">Filter Sesi:</span>
-            <select
-              value={selectedRound}
-              onChange={(e) => setSelectedRound(e.target.value)}
+            <span className="text-xs text-zinc-400 font-medium">Filter Tanggal:</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
               className="bg-zinc-800 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-            >
-              <option value="all">Semua Sesi (Kumulatif)</option>
-              {rounds.map((r) => (
-                <option key={r.id} value={r.id}>
-                  Ronde {r.roundNumber} ({r.status === "active" ? "Aktif" : "Selesai"})
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <Button
             size="sm"
             variant="outline"
-            className="border-white/10 text-zinc-400 gap-2 bg-zinc-800 hover:bg-zinc-700 border border-white/5"
-            onClick={handleExport}
+            className="border-white/10 text-emerald-400 gap-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20"
+            onClick={handleDownloadExcel}
             disabled={exporting}
           >
             <DownloadCloud className="size-4" />
-            {exporting ? "Mengekspor..." : "Export CSV"}
+            {exporting ? "Mengekspor..." : "Download Excel (ZIP)"}
           </Button>
         </div>
       </div>

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
+import RunningText from "@/components/trading/RunningText";
 
 type Stock = {
   id: number;
@@ -227,12 +228,19 @@ function TradingPageContent() {
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [period, setPeriod] = useState<number | null>(null);
   const [subSession, setSubSession] = useState<number | null>(null);
-  const [phase, setPhase] = useState<SubSessionPhase>("PENDING");
+  const [phase, setPhase] = useState<SubSessionPhase>("IDLE");
   const [openingPrices, setOpeningPrices] = useState<Record<number, number>>({});
   const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
   const [predictionInput, setPredictionInput] = useState<Record<number, string>>({});
   const [showPredictionUI, setShowPredictionUI] = useState(false);
   const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
+  // Running text (shown during PRE_MARKET interventions)
+  const [runningText, setRunningText] = useState<{ active: boolean; type: InterventionType; title: string; content: string }>({
+    active: false, type: "NONE", title: "", content: "",
+  });
+  // Cooldown state
+  const [cooldownActive, setCooldownActive] = useState(false);
+  const [cooldownReason, setCooldownReason] = useState<string>("");
 
   // Refs to access the latest state in socket event listeners without re-subscribing
   const selectedIdRef = useRef<number | null>(null);
@@ -324,11 +332,17 @@ function TradingPageContent() {
       setPhase(data.phase);
       setSessionTimer(data.duration);
       setActiveIntervention(data.intervention);
-      if (data.phase === "PRE_OPENING") {
+      setCooldownActive(false);
+      // PRE_MARKET — show prediction input
+      if (data.phase === "PRE_MARKET") {
         setShowPredictionUI(true);
         setPredictionInput({});
       } else {
         setShowPredictionUI(false);
+      }
+      // TRADING phase starts — hide running text
+      if (data.phase === "TRADING") {
+        setRunningText(prev => ({ ...prev, active: false }));
       }
     });
 
@@ -358,7 +372,7 @@ function TradingPageContent() {
     socket.on("round-ended", () => {
       setSessionActive(false);
       setRoundNumber(null);
-      setPhase("PENDING");
+      setPhase("IDLE");
       setSubSession(null);
       setStocks([]);
       setStock(null);
@@ -366,7 +380,34 @@ function TradingPageContent() {
       setOpeningPrices({});
       setPriceHistory([]);
       setCurrentPrice(0);
+      setRunningText(prev => ({ ...prev, active: false }));
+      setCooldownActive(false);
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    });
+
+    socket.on("cooldown-started", (data: { duration: number; reason: string }) => {
+      setCooldownActive(true);
+      setCooldownReason(data.reason === "between-sessions" ? "antar sesi" : "antar ronde");
+      setPhase("COOLDOWN");
+      setSessionTimer(data.duration);
+      setRunningText(prev => ({ ...prev, active: false }));
+    });
+
+    socket.on("intervention-ended", () => {
+      setRunningText(prev => ({ ...prev, active: false }));
+    });
+
+    socket.on("period-ended", () => {
+      setSessionActive(false);
+      setRoundNumber(null);
+      setPhase("IDLE");
+      setSubSession(null);
+      setStocks([]);
+      setStock(null);
+      setSelectedId(null);
+      setRunningText(prev => ({ ...prev, active: false }));
+      setCooldownActive(false);
+      toast.success("Periode selesai!");
     });
 
     socket.on("experiment-ended", () => {
@@ -380,7 +421,10 @@ function TradingPageContent() {
     }) => {
       setActiveIntervention(data.type);
       setInterventionContent({ title: data.title, content: data.content });
-      toast.warning(data.title, { description: data.content });
+      // Show running text ticker (only in PRE_MARKET)
+      if (data.type !== "NONE") {
+        setRunningText({ active: true, type: data.type, title: data.title, content: data.content });
+      }
     });
 
     socket.on("scheduler-state", (data: any) => {
@@ -451,6 +495,9 @@ function TradingPageContent() {
       socket.off("round-ended");
       socket.off("experiment-ended");
       socket.off("intervention-triggered");
+      socket.off("intervention-ended");
+      socket.off("cooldown-started");
+      socket.off("period-ended");
       socket.off("scheduler-state");
       socket.off("portfolio-data");
       socket.off("portfolio-update");
@@ -608,6 +655,30 @@ function TradingPageContent() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 relative">
+      {/* Running Text Ticker — shown during PRE_MARKET interventions */}
+      <RunningText
+        active={runningText.active}
+        type={runningText.type}
+        title={runningText.title}
+        content={runningText.content}
+      />
+
+      {/* Cooldown overlay banner */}
+      {cooldownActive && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-950/60 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Timer className="size-4 text-sky-400" />
+            <div>
+              <div className="text-xs font-semibold text-sky-300">Jeda ({cooldownReason})</div>
+              <div className="text-[10px] text-sky-500">Perdagangan akan dilanjutkan setelah waktu jeda selesai</div>
+            </div>
+          </div>
+          <div className="font-mono text-lg font-bold text-sky-300">
+            {Math.floor(sessionTimer / 60)}:{String(sessionTimer % 60).padStart(2, "0")}
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Floating NAV Header */}
       {sessionActive && (
         <div className="sticky top-0 z-50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 backdrop-blur-md bg-zinc-950/80 border-b border-white/5 shadow-md flex flex-wrap items-center justify-between gap-4 transition-all">
@@ -681,7 +752,7 @@ function TradingPageContent() {
             </div>
           )}
           {/* Phase badge */}
-          {phase && phase !== "PENDING" && (
+          {phase && phase !== "IDLE" && (
             <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
               {getPhaseLabel(phase)}
             </span>

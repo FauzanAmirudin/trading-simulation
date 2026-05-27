@@ -46,7 +46,7 @@ export default function AdminTradingPage() {
   // Real-time experimental state
   const [activeRound, setActiveRound] = useState<number | null>(null);
   const [subSession, setSubSession] = useState<number | null>(null);
-  const [phase, setPhase] = useState<SubSessionPhase>("PENDING");
+  const [phase, setPhase] = useState<SubSessionPhase>("IDLE");
   const [sessionTimer, setSessionTimer] = useState(0);
   const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
   const [isPaused, setIsPaused] = useState(false);
@@ -201,7 +201,7 @@ export default function AdminTradingPage() {
     socket.on("round-started", (data: { roundNumber: number; period: number; stocks: any[] }) => {
       setActiveRound(data.roundNumber);
       setSubSession(1);
-      setPhase("PRE_OPENING");
+      setPhase("PRE_MARKET");
       setActiveIntervention("NONE");
       setIsPaused(false);
       openingPricesRef.current = {};

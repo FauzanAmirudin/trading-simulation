@@ -82,18 +82,7 @@ export default function AdminPage() {
     return () => { socket.off("trade-executed"); };
   }, []);
 
-  const exportData = async () => {
-    setExporting(true);
-    const res = await fetch("/api/export?format=csv");
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `experiment_data_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setExporting(false);
-  };
+
 
   if (!hydrated || !user || user.role !== "admin") return null;
 
@@ -106,9 +95,9 @@ export default function AdminPage() {
         <p className="text-xs text-zinc-600">Kontrol sesi, matriks eksperimen, intervensi, dan monitoring</p>
       </motion.div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="flex flex-col items-center gap-4 max-w-4xl mx-auto">
         {/* Main: Scheduler Board */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="w-full space-y-4">
           <Card className="border-white/5 bg-zinc-900">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Experimental Scheduler</CardTitle>
@@ -180,33 +169,6 @@ export default function AdminPage() {
                 </TableBody>
               </Table>
               <div ref={logEndRef} />
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="space-y-3">
-          <Card className="border-white/5 bg-zinc-900">
-            <CardHeader className="pb-3"><CardTitle className="text-sm">Status</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 px-3 py-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-500"><Users className="size-3.5" /> Responden</div>
-                <span className="font-mono tabular-nums text-sm font-bold text-zinc-200">0</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-zinc-800/50 px-3 py-2">
-                <div className="flex items-center gap-2 text-xs text-zinc-500"><Activity className="size-3.5" /> Total Transaksi</div>
-                <span className="font-mono tabular-nums text-sm font-bold text-zinc-200">{txLog.length}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/5 bg-zinc-900">
-            <CardHeader className="pb-3"><CardTitle className="text-sm">Ekspor Data</CardTitle></CardHeader>
-            <CardContent>
-              <Button variant="outline" size="sm" className="w-full gap-2" onClick={exportData} disabled={exporting}>
-                {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <DownloadCloud className="size-3.5" />}
-                {exporting ? "Memproses..." : "Unduh CSV"}
-              </Button>
             </CardContent>
           </Card>
         </div>

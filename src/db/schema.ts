@@ -19,14 +19,17 @@ export const experimentalConfig = pgTable("experimental_config", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// === ROUNDS — structured round tracking (12 rounds per experiment) ===
+// === ROUNDS — dynamic round tracking (created on-the-fly by state machine) ===
 export const rounds = pgTable("rounds", {
   id: serial("id").primaryKey(),
-  roundNumber: integer("round_number").notNull().unique(),
-  period: integer("period").notNull(), // 1 | 2 | 3
+  // roundNumber is nullable and non-unique: same round index can appear in multiple sessions
+  roundNumber: integer("round_number"),
+  period: integer("period").notNull().default(1), // 1 | 2 | 3
+  sessionGroup: integer("session_group").notNull().default(1), // which session (1-4) within period
+  roundIndex: integer("round_index").notNull().default(0),     // 0-based round within session
   status: varchar("status", { length: 30 }).notNull().default("pending"),
-  // Sub-session states: PENDING | PRE_OPENING | TRADING_S2 | TRADING_S3 | TRADING_S4 | CLOSED
-  subSessionStatus: varchar("sub_session_status", { length: 30 }).notNull().default("PENDING"),
+  // Phase: IDLE | PRE_MARKET | TRADING | COOLDOWN | CLOSED
+  subSessionStatus: varchar("sub_session_status", { length: 30 }).notNull().default("IDLE"),
   activeSubSession: integer("active_sub_session").notNull().default(1),
   activeIntervention: varchar("active_intervention", { length: 30 }).default("NONE"),
   startTime: timestamp("start_time"),

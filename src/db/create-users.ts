@@ -7,6 +7,7 @@ const accounts = [
   { nama: "Andi", password: "password" },
   { nama: "Budi", password: "password" },
   { nama: "Citra", password: "password" },
+  { nama: "Doni", password: "password" },
 ];
 
 async function createUsers() {

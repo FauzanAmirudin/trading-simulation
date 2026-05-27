@@ -1,175 +1,174 @@
 // ============================================================
-// EXPERIMENTAL DESIGN MATRIX — Type-Safe Configuration
+// EXPERIMENTAL DESIGN MATRIX — Revised Architecture v2
 // ============================================================
-// Structure: 3 Periods → 12 Rounds → 2 Sub-Sessions each
-// Sub-Sessions: Sesi 1 (PRE_OPENING 60s), Sesi 2 (TRADING 120s)
-// Round ends after Sesi 2 completes
+// Structure: 3 Periods → Sessions per Period → Rounds per Session
+// Intervention Rule: Running Text ONLY during PRE_MARKET phase
+// Cooldown: 3 minutes between rounds AND between sessions (Period 2 & 3)
+// Period 1: PRE_MARKET (prediction input) ONLY — no live trading
 // ============================================================
 
-// === INTERVENTION TYPES ===
-export type InterventionType =
-  | "NONE"
-  | "BERITA_BAIK"
-  | "BERITA_BURUK"
-  | "TMNP_1"
-  | "TMNP_2";
+// === TYPES ===
+export type InterventionType = "NONE" | "BERITA_BAIK" | "BERITA_BURUK";
+export type PhaseType = "PRE_MARKET" | "TRADING" | "COOLDOWN" | "IDLE" | "CLOSED";
 
-// === SUB-SESSION PHASES ===
-export type SubSessionPhase =
-  | "PENDING"
-  | "PRE_OPENING"   // Sesi 1: Prediction input (60s)
-  | "TRADING"        // Sesi 2: Main trading (120s) — replaces TRADING_S2/S3/S4
-  | "CLOSED";        // Round complete
+// Backward-compatibility alias used in existing frontend components
+export type SubSessionPhase = PhaseType;
 
-// === SESSION CONFIG — config for one sub-session within a round ===
-export interface SessionConfig {
-  sessionNumber: 1 | 2;
-  phase: SubSessionPhase;
-  durationSeconds: number;
-  intervention: InterventionType;
+export interface RoundDef {
+  stockCodes: string[]; // exactly 3 stock codes, e.g. ["S-1","S-2","S-3"]
+}
+
+export interface SessionGroupDef {
+  sessionNumber: 1 | 2 | 3 | 4;
   label: string;
+  intervention: InterventionType; // active running text during PRE_MARKET
+  hasTrading: boolean;            // false = PRE_MARKET only (Period 1)
+  rounds: RoundDef[];
 }
 
-// === ROUND CONFIG — full config for one round (2 sub-sessions) ===
-export interface RoundConfig {
-  roundNumber: number;
-  period: 1 | 2 | 3;
-  periodLabel: "I" | "II" | "III";
-  sessions: SessionConfig[];
+export interface PeriodDef {
+  periodNumber: 1 | 2 | 3;
+  label: string;
+  sessions: SessionGroupDef[];
 }
 
-// === FULL EXPERIMENTAL MATRIX ===
-// Intervention mapping (new 2-session structure):
-// Period I (R1-4): Control — Sesi 2 = NONE
-// Period II (R5-8):
-//   R5: Sesi 2 = BERITA_BAIK
-//   R6: Sesi 2 = TMNP_1
-//   R7: Sesi 2 = BERITA_BAIK
-//   R8: Sesi 2 = TMNP_1
-// Period III (R9-12):
-//   R9:  Sesi 2 = BERITA_BURUK
-//   R10: Sesi 2 = TMNP_2
-//   R11: Sesi 2 = BERITA_BURUK
-//   R12: Sesi 2 = TMNP_2
+// === TIMER DURATIONS (seconds) ===
+export const DURATIONS = {
+  PRE_MARKET: 60,       // 1 minute prediction phase
+  TRADING: 120,          // 2 minute live trading phase
+  COOLDOWN: 180,         // 3 minute cooldown (between rounds AND between sessions)
+  // Legacy aliases
+  PRE_OPENING: 60,
+  TRADING_SESSION: 120,
+  ROUND_COOLDOWN: 180,
+} as const;
+
 // ============================================================
-export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
-  // ============================================================
-  // PERIOD I (Rounds 1-4): Control group — no interventions
-  // ============================================================
+// FULL EXPERIMENTAL MATRIX
+// ============================================================
+export const PERIOD_MATRIX: PeriodDef[] = [
+
+  // ── PERIOD 1: Prediction Only, S-1 to S-12 ────────────────────
   {
-    roundNumber: 1,
-    period: 1,
-    periodLabel: "I",
+    periodNumber: 1,
+    label: "Periode I",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 2,
-    period: 1,
-    periodLabel: "I",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 3,
-    period: 1,
-    periodLabel: "I",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 4,
-    period: 1,
-    periodLabel: "I",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE", label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "NONE", label: "Perdagangan" },
+      {
+        sessionNumber: 1,
+        label: "Pra-Perdagangan",
+        intervention: "NONE",
+        hasTrading: false, // NO live trading in Period 1
+        rounds: [
+          { stockCodes: ["S-1",  "S-2",  "S-3"]  },
+          { stockCodes: ["S-4",  "S-5",  "S-6"]  },
+          { stockCodes: ["S-7",  "S-8",  "S-9"]  },
+          { stockCodes: ["S-10", "S-11", "S-12"] },
+        ],
+      },
     ],
   },
 
-  // ============================================================
-  // PERIOD II (Rounds 5-8): Mixed interventions
-  // ============================================================
+  // ── PERIOD 2: S-13 to S-24, 4 Sessions ────────────────────────
   {
-    roundNumber: 5,
-    period: 2,
-    periodLabel: "II",
+    periodNumber: 2,
+    label: "Periode II",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BAIK",   label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 6,
-    period: 2,
-    periodLabel: "II",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_1",   label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 7,
-    period: 2,
-    periodLabel: "II",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",         label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BAIK",   label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 8,
-    period: 2,
-    periodLabel: "II",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",      label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_1",   label: "Perdagangan" },
+      {
+        sessionNumber: 1,
+        label: "Sesi Normal",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-13", "S-14", "S-15"] },
+          { stockCodes: ["S-16", "S-17", "S-18"] },
+          { stockCodes: ["S-19", "S-20", "S-21"] },
+          { stockCodes: ["S-22", "S-23", "S-24"] },
+        ],
+      },
+      {
+        sessionNumber: 2,
+        label: "Sesi Berita Baik",
+        intervention: "BERITA_BAIK",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-13", "S-14", "S-15"] },
+          { stockCodes: ["S-19", "S-20", "S-21"] },
+        ],
+      },
+      {
+        sessionNumber: 3,
+        label: "Sesi Netral",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-13", "S-14", "S-15"] },
+          { stockCodes: ["S-16", "S-17", "S-18"] },
+          { stockCodes: ["S-19", "S-20", "S-21"] },
+          { stockCodes: ["S-22", "S-23", "S-24"] },
+        ],
+      },
+      {
+        sessionNumber: 4,
+        label: "Sesi Berita Buruk",
+        intervention: "BERITA_BURUK",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-16", "S-17", "S-18"] },
+          { stockCodes: ["S-22", "S-23", "S-24"] },
+        ],
+      },
     ],
   },
 
-  // ============================================================
-  // PERIOD III (Rounds 9-12): Mixed interventions
-  // ============================================================
+  // ── PERIOD 3: S-25 to S-36, 4 Sessions ────────────────────────
   {
-    roundNumber: 9,
-    period: 3,
-    periodLabel: "III",
+    periodNumber: 3,
+    label: "Periode III",
     sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",           label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 10,
-    period: 3,
-    periodLabel: "III",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",       label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_2",   label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 11,
-    period: 3,
-    periodLabel: "III",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",           label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "BERITA_BURUK", label: "Perdagangan" },
-    ],
-  },
-  {
-    roundNumber: 12,
-    period: 3,
-    periodLabel: "III",
-    sessions: [
-      { sessionNumber: 1, phase: "PRE_OPENING", durationSeconds: 60,  intervention: "NONE",       label: "Pra Pembukaan" },
-      { sessionNumber: 2, phase: "TRADING",        durationSeconds: 120, intervention: "TMNP_2",   label: "Perdagangan" },
+      {
+        sessionNumber: 1,
+        label: "Sesi Normal",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-25", "S-26", "S-27"] },
+          { stockCodes: ["S-28", "S-29", "S-30"] },
+          { stockCodes: ["S-31", "S-32", "S-33"] },
+          { stockCodes: ["S-34", "S-35", "S-36"] },
+        ],
+      },
+      {
+        sessionNumber: 2,
+        label: "Sesi Berita Buruk",
+        intervention: "BERITA_BURUK",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-25", "S-26", "S-27"] },
+          { stockCodes: ["S-31", "S-32", "S-33"] },
+        ],
+      },
+      {
+        sessionNumber: 3,
+        label: "Sesi Netral",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-25", "S-26", "S-27"] },
+          { stockCodes: ["S-28", "S-29", "S-30"] },
+          { stockCodes: ["S-31", "S-32", "S-33"] },
+          { stockCodes: ["S-34", "S-35", "S-36"] },
+        ],
+      },
+      {
+        sessionNumber: 4,
+        label: "Sesi Berita Baik",
+        intervention: "BERITA_BAIK",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-28", "S-29", "S-30"] },
+          { stockCodes: ["S-34", "S-35", "S-36"] },
+        ],
+      },
     ],
   },
 ];
@@ -178,37 +177,10 @@ export const EXPERIMENTAL_MATRIX: RoundConfig[] = [
 // HELPER FUNCTIONS
 // ============================================================
 
-export function getRoundConfig(roundNumber: number): RoundConfig {
-  const config = EXPERIMENTAL_MATRIX.find(r => r.roundNumber === roundNumber);
-  if (!config) throw new Error(`Round ${roundNumber} not found in matrix`);
+export function getPeriodConfig(periodNumber: 1 | 2 | 3): PeriodDef {
+  const config = PERIOD_MATRIX.find(p => p.periodNumber === periodNumber);
+  if (!config) throw new Error(`Period ${periodNumber} not found in matrix`);
   return config;
-}
-
-export function getCurrentSessionConfig(
-  roundNumber: number,
-  sessionNumber: number
-): SessionConfig {
-  const round = getRoundConfig(roundNumber);
-  const session = round.sessions.find(s => s.sessionNumber === sessionNumber);
-  if (!session) throw new Error(`Session ${sessionNumber} not found for round ${roundNumber}`);
-  return session;
-}
-
-export function getInterventionForSubSession(
-  roundNumber: number,
-  sessionNumber: number
-): InterventionType {
-  return getCurrentSessionConfig(roundNumber, sessionNumber).intervention;
-}
-
-export function getPhaseLabel(phase: SubSessionPhase): string {
-  const labels: Record<SubSessionPhase, string> = {
-    PENDING: "Menunggu",
-    PRE_OPENING: "Pra Pembukaan",
-    TRADING: "Perdagangan",
-    CLOSED: "Selesai",
-  };
-  return labels[phase];
 }
 
 export function getInterventionLabel(type: InterventionType): string {
@@ -216,23 +188,37 @@ export function getInterventionLabel(type: InterventionType): string {
     NONE: "Tanpa Intervensi",
     BERITA_BAIK: "Berita Baik",
     BERITA_BURUK: "Berita Buruk",
-    TMNP_1: "Trading Halt 1",
-    TMNP_2: "Trading Halt 2",
   };
   return labels[type];
 }
 
-// All 4 intervention keys used in the experiment
-export const INTERVENTION_KEYS: InterventionType[] = [
-  "BERITA_BAIK",
-  "BERITA_BURUK",
-  "TMNP_1",
-  "TMNP_2",
-];
+export function getPhaseLabel(phase: PhaseType): string {
+  const labels: Record<PhaseType, string> = {
+    PRE_MARKET: "Pra-Perdagangan",
+    TRADING: "Perdagangan",
+    COOLDOWN: "Jeda",
+    IDLE: "Menunggu",
+    CLOSED: "Selesai",
+  };
+  return labels[phase];
+}
 
-// Sub-session duration constants (server-side, authoritative)
-export const DURATIONS = {
-  PRE_OPENING: 60,
-  TRADING_SESSION: 120,
-  ROUND_COOLDOWN: 180, // 3-minute pause between rounds
-} as const;
+export const INTERVENTION_KEYS: InterventionType[] = ["BERITA_BAIK", "BERITA_BURUK"];
+
+// ── Legacy exports for backward compatibility ──────────────────
+// These aliases let existing frontend files continue to compile
+// without requiring simultaneous updates.
+export const EXPERIMENTAL_MATRIX = PERIOD_MATRIX;
+export type { SessionGroupDef as SessionConfig };
+export type { PeriodDef as RoundConfig };
+
+// Legacy no-op stubs (previously used in server.ts, now replaced)
+export function getRoundConfig(roundNumber: number): never {
+  throw new Error("getRoundConfig is deprecated — use getPeriodConfig");
+}
+export function getCurrentSessionConfig(): never {
+  throw new Error("getCurrentSessionConfig is deprecated");
+}
+export function getInterventionForSubSession(): InterventionType {
+  return "NONE";
+}

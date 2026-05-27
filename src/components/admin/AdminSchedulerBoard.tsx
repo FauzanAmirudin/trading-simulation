@@ -4,84 +4,82 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { getSocket } from "@/lib/socket";
 import {
-  EXPERIMENTAL_MATRIX,
-  InterventionType,
-  SubSessionPhase,
-  getInterventionLabel,
-  getPhaseLabel,
-  INTERVENTION_KEYS,
-  RoundConfig,
+  PERIOD_MATRIX, PeriodDef, InterventionType, PhaseType,
+  getInterventionLabel, getPhaseLabel, INTERVENTION_KEYS,
 } from "@/lib/experimental-matrix";
 import { Button } from "@/components/ui/button";
-import {
-  Card, CardContent, CardHeader, CardTitle, CardDescription,
-} from "@/components/ui/card";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  PlayCircle, PauseCircle, SkipForward, Loader2, Clock,
-  RadioTower, Zap, AlertTriangle, TrendingUp, TrendingDown,
-  ChevronRight, ChevronDown, DownloadCloud, Settings2,
-  Timer, BookOpen, Activity, RefreshCw,
+  PlayCircle, PauseCircle, StopCircle, Loader2, Clock,
+  RadioTower, TrendingUp, TrendingDown, RefreshCw,
+  ChevronRight, DownloadCloud, Zap, Activity, Timer,
+  BookOpen, CheckCircle2, Circle, AlertCircle, SkipForward,
 } from "lucide-react";
 import { toast } from "sonner";
 
 // ─────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────
-type Stock = { id: number; kode: string; nama: string; basePrice?: number };
+type Stock = { id: number; kodeSaham: string; namaSaham: string; basePrice?: number };
 
-type SchedulerState = {
-  activeRound: number | null;
-  activeSubSession: number | null;
-  phase: SubSessionPhase | null;
+type ExperimentState = {
+  activePeriod: 1 | 2 | 3 | null;
+  activeSessionIdx: number | null;
+  activeRoundIdx: number | null;
+  currentPhase: PhaseType;
   timeLeft: number;
-  currentIntervention: InterventionType;
+  sessionGroup: number | null;
   isPaused: boolean;
-  openingPrices: Record<number, number>;
+  currentIntervention: InterventionType;
   stocks: Stock[];
+  openingPrices: Record<number, number>;
   interventionCache: Record<string, { title: string; content: string }>;
-  completedRounds: number[];
-  usedStockIds: number[];
-};
-
-type InterventionContent = {
-  [K in InterventionType]: { title: string; content: string };
 };
 
 // ─────────────────────────────────────────────
-// InterventionContentForm
+// Helpers
 // ─────────────────────────────────────────────
-function InterventionContentForm({
-  onSaved,
-}: {
-  onSaved?: (key: string, data: { title: string; content: string }) => void;
-}) {
-  const [form, setForm] = useState<Omit<InterventionContent, "NONE">>({
-    BERITA_BAIK: { title: "Berita Baik: Saham X Laba Naik 20%", content: "" },
-    BERITA_BURUK: { title: "Berita Buruk: Saham X Terdampak Regulasi", content: "" },
-    TMNP_1: { title: "Trading Halt — Pengumuman Antrian", content: "Trading dihentikan sementara. Harap tunggu pengumuman selanjutnya." },
-    TMNP_2: { title: "Trading Halt — Pengumuman Antrian", content: "Trading dihentikan sementara. Harap tunggu pengumuman selanjutnya." },
+function formatTime(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+}
+
+const PHASE_CONFIG: Record<PhaseType, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+  IDLE:       { label: "Menunggu",       color: "text-zinc-400",   bg: "bg-zinc-700/40",         icon: <Circle className="size-3.5" /> },
+  PRE_MARKET: { label: "Pra-Perdagangan", color: "text-amber-400",  bg: "bg-amber-500/10",        icon: <BookOpen className="size-3.5" /> },
+  TRADING:    { label: "Perdagangan",    color: "text-emerald-400", bg: "bg-emerald-500/10",      icon: <Activity className="size-3.5" /> },
+  COOLDOWN:   { label: "Jeda",           color: "text-sky-400",    bg: "bg-sky-500/10",          icon: <Timer className="size-3.5" /> },
+  CLOSED:     { label: "Selesai",        color: "text-zinc-500",   bg: "bg-zinc-800/40",         icon: <CheckCircle2 className="size-3.5" /> },
+};
+
+const INTERVENTION_CONFIG: Record<InterventionType, { label: string; color: string; icon: React.ReactNode }> = {
+  NONE:        { label: "Tanpa Intervensi", color: "text-zinc-500", icon: null },
+  BERITA_BAIK: { label: "Berita Baik",      color: "text-emerald-400", icon: <TrendingUp className="size-3.5" /> },
+  BERITA_BURUK:{ label: "Berita Buruk",     color: "text-rose-400",    icon: <TrendingDown className="size-3.5" /> },
+};
+
+// ─────────────────────────────────────────────
+// InterventionConfigForm
+// ─────────────────────────────────────────────
+function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
+  const [form, setForm] = useState<Record<"BERITA_BAIK" | "BERITA_BURUK", { title: string; content: string }>>({
+    BERITA_BAIK:  { title: "", content: "" },
+    BERITA_BURUK: { title: "", content: "" },
   });
   const [saving, setSaving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Load existing config
   useEffect(() => {
     fetch("/api/intervention")
       .then(r => r.json())
       .then(data => {
         if (data.config) {
           setForm(prev => ({
-            BERITA_BAIK: data.config.BERITA_BAIK || prev.BERITA_BAIK,
+            BERITA_BAIK:  data.config.BERITA_BAIK  || prev.BERITA_BAIK,
             BERITA_BURUK: data.config.BERITA_BURUK || prev.BERITA_BURUK,
-            TMNP_1: data.config.TMNP_1 || prev.TMNP_1,
-            TMNP_2: data.config.TMNP_2 || prev.TMNP_2,
           }));
         }
       })
@@ -89,7 +87,7 @@ function InterventionContentForm({
       .finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async (key: "BERITA_BAIK" | "BERITA_BURUK" | "TMNP_1" | "TMNP_2") => {
+  const handleSave = async (key: "BERITA_BAIK" | "BERITA_BURUK") => {
     setSaving(key);
     try {
       const res = await fetch("/api/intervention", {
@@ -98,784 +96,579 @@ function InterventionContentForm({
         body: JSON.stringify({ key, ...form[key] }),
       });
       if (res.ok) {
-        toast.success(`${getInterventionLabel(key)} saved`);
-        onSaved?.(key, form[key]);
-        // Reload cache so the server picks up the new content
-        await fetch("/api/intervention", { method: "GET" });
+        toast.success(`${getInterventionLabel(key)} disimpan!`);
+        onSaved?.();
+        const socket = getSocket();
+        socket.emit("reload-intervention-cache");
       } else {
-        toast.error("Failed to save");
+        toast.error("Gagal menyimpan");
       }
     } finally {
       setSaving(null);
     }
   };
 
-  const interventionColors: Record<InterventionType, string> = {
-    NONE: "text-zinc-500",
-    BERITA_BAIK: "text-emerald-500",
-    BERITA_BURUK: "text-rose-500",
-    TMNP_1: "text-amber-500",
-    TMNP_2: "text-amber-500",
-  };
-
-  const interventionIcons: Record<InterventionType, React.ReactNode> = {
-    NONE: null,
-    BERITA_BAIK: <TrendingUp className="size-4" />,
-    BERITA_BURUK: <TrendingDown className="size-4" />,
-    TMNP_1: <AlertTriangle className="size-4" />,
-    TMNP_2: <AlertTriangle className="size-4" />,
-  };
-
-  if (loading) {
-    return <Skeleton className="h-40 bg-zinc-800" />;
-  }
-
-  return (
-    <div className="space-y-4">
-      {(["BERITA_BAIK", "BERITA_BURUK", "TMNP_1", "TMNP_2"] as (keyof Omit<InterventionContent, "NONE">)[]).map(key => (
-        <div key={key} className="space-y-2 rounded-lg border border-white/5 bg-zinc-800/30 p-3">
-          <div className={`flex items-center gap-2 text-xs font-medium ${interventionColors[key]}`}>
-            {interventionIcons[key]}
-            {getInterventionLabel(key)}
-          </div>
-          <Input
-            value={form[key].title}
-            onChange={e => setForm(prev => ({
-              ...prev,
-              [key]: { ...prev[key], title: e.target.value },
-            }))}
-            placeholder="Title..."
-            className="text-xs bg-zinc-900 border-white/10 text-zinc-200 placeholder:text-zinc-600"
-          />
-          <textarea
-            value={form[key].content}
-            onChange={e => setForm(prev => ({
-              ...prev,
-              [key]: { ...prev[key], content: e.target.value },
-            }))}
-            placeholder="Content..."
-            rows={2}
-            className="w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 resize-none"
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full text-xs h-7"
-            onClick={() => handleSave(key)}
-            disabled={saving === key || !form[key].title || !form[key].content}
-          >
-            {saving === key ? <Loader2 className="size-3 animate-spin" /> : <DownloadCloud className="size-3" />}
-            {saving === key ? "Saving..." : "Save"}
-          </Button>
-        </div>
-      ))}
+  if (loading) return (
+    <div className="flex items-center gap-2 text-zinc-500 text-xs py-4">
+      <Loader2 className="size-3 animate-spin" /> Memuat konten intervensi...
     </div>
   );
-}
-
-// ─────────────────────────────────────────────
-// InterventionBadge
-// ─────────────────────────────────────────────
-function InterventionBadge({ type }: { type: InterventionType }) {
-  const config: Record<InterventionType, { label: string; className: string; icon: React.ReactNode }> = {
-    NONE: { label: "Tanpa Intervensi", className: "bg-zinc-700/50 text-zinc-400", icon: null },
-    BERITA_BAIK: { label: "Berita Baik", className: "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20", icon: <TrendingUp className="size-3" /> },
-    BERITA_BURUK: { label: "Berita Buruk", className: "bg-rose-500/10 text-rose-500 border border-rose-500/20", icon: <TrendingDown className="size-3" /> },
-    TMNP_1: { label: "Trading Halt 1", className: "bg-amber-500/10 text-amber-500 border border-amber-500/20", icon: <AlertTriangle className="size-3" /> },
-    TMNP_2: { label: "Trading Halt 2", className: "bg-amber-500/10 text-amber-500 border border-amber-500/20", icon: <AlertTriangle className="size-3" /> },
-  };
-  const c = config[type];
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${c.className}`}>
-      {c.icon}
-      {c.label}
-    </span>
-  );
-}
-
-// ─────────────────────────────────────────────
-// ExperimentProgress — visual matrix grid
-// ─────────────────────────────────────────────
-function ExperimentProgress({ activeRound }: { activeRound: number | null }) {
-  const periods = [
-    { label: "Period I", rounds: EXPERIMENTAL_MATRIX.slice(0, 4), period: 1 },
-    { label: "Period II", rounds: EXPERIMENTAL_MATRIX.slice(4, 8), period: 2 },
-    { label: "Period III", rounds: EXPERIMENTAL_MATRIX.slice(8, 12), period: 3 },
-  ];
 
   return (
-    <div className="space-y-3">
-      {periods.map(period => (
-        <div key={period.period} className="space-y-1.5">
-          <div className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">{period.label}</div>
-          <div className="grid grid-cols-4 gap-1.5">
-            {period.rounds.map(round => {
-              const isActive = round.roundNumber === activeRound;
-              const isDone = activeRound !== null && round.roundNumber < activeRound;
-
-              return (
-                <div
-                  key={round.roundNumber}
-                  className={`relative rounded-lg border p-1.5 text-center transition-all ${
-                    isActive
-                      ? "border-emerald-500/50 bg-emerald-500/10 ring-1 ring-emerald-500/30"
-                      : isDone
-                      ? "border-white/10 bg-zinc-800/50 opacity-60"
-                      : "border-white/5 bg-zinc-800/20 opacity-40"
-                  }`}
-                >
-                  <div className={`text-[10px] font-bold ${isActive ? "text-emerald-400" : "text-zinc-500"}`}>
-                    R{round.roundNumber}
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap justify-center gap-0.5">
-                    {round.sessions.slice(1).map(sess => (
-                      <InterventionBadge key={sess.sessionNumber} type={sess.intervention} />
-                    ))}
-                  </div>
-                  {isActive && (
-                    <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-500 animate-pulse" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// SchedulerPanel — main start/control UI
-// ─────────────────────────────────────────────
-function SchedulerPanel({
-  state,
-  allStocks,
-  onStartRound,
-  onPause,
-  onResume,
-}: {
-  state: SchedulerState;
-  allStocks: Stock[];
-  onStartRound: (roundNumber: number, stockIds: number[]) => void;
-  onPause: () => void;
-  onResume: () => void;
-}) {
-  const [selectedRound, setSelectedRound] = useState<number>(1);
-  const [selectedStockIds, setSelectedStockIds] = useState<number[]>([]);
-  const [starting, setStarting] = useState(false);
-  const [interventionOverride, setInterventionOverride] = useState<InterventionType>("NONE");
-
-  // Find next available round
-  const nextRound = state.activeRound === null
-    ? (() => {
-        for (let i = 1; i <= 12; i++) {
-          if (!EXPERIMENTAL_MATRIX[i - 1]) return 1;
-        }
-        return 12;
-      })()
-    : null;
-
-  const isRunning = state.activeRound !== null;
-
-  const handleStart = () => {
-    if (selectedStockIds.length === 0) {
-      toast.error("Select exactly 3 stocks before starting");
-      return;
-    }
-    setStarting(true);
-    onStartRound(selectedRound, selectedStockIds);
-    setTimeout(() => setStarting(false), 3000);
-  };
-
-  const toggleStock = (id: number) => {
-    setSelectedStockIds(prev =>
-      prev.includes(id)
-        ? prev.filter(x => x !== id)
-        : prev.length < 3
-        ? [...prev, id]
-        : prev
-    );
-  };
-
-
-
-  const roundConfig = EXPERIMENTAL_MATRIX[selectedRound - 1];
-
-  return (
-    <div className="space-y-4">
-      {/* Active round status */}
-      {isRunning && state.activeRound && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-sm font-medium text-emerald-400">
-              Round {state.activeRound} Sedang Aktif
-            </span>
-            <span className="ml-auto text-xs text-zinc-500">
-              Period {Math.ceil(state.activeRound / 4)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Clock className="size-4 text-zinc-500" />
-            <span className="font-mono text-lg font-bold text-zinc-200">
-              {Math.floor(state.timeLeft / 60)}:{String(state.timeLeft % 60).padStart(2, "0")}
-            </span>
-            <span className="text-xs text-zinc-500">
-              {getPhaseLabel(state.phase!)} — Sesi {state.activeSubSession}
-            </span>
-          </div>
-
-          {state.stocks.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {state.stocks.map(s => (
-                <span key={s.id} className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-xs text-zinc-400">
-                  {s.kode}
-                </span>
-              ))}
+    <div className="grid grid-cols-1 gap-3">
+      {(["BERITA_BAIK", "BERITA_BURUK"] as const).map(key => {
+        const cfg = INTERVENTION_CONFIG[key];
+        return (
+          <div key={key} className="rounded-xl border border-white/5 bg-zinc-800/40 p-3 space-y-2">
+            <div className={`flex items-center gap-2 text-xs font-semibold ${cfg.color}`}>
+              {cfg.icon}{cfg.label}
             </div>
-          )}
-
-          {state.currentIntervention !== "NONE" && (
-            <div className="flex items-center gap-2 rounded bg-amber-500/10 border border-amber-500/20 p-2">
-              <Zap className="size-4 text-amber-500" />
-              <span className="text-xs font-medium text-amber-400">
-                INTERVENSI AKTIF: {getInterventionLabel(state.currentIntervention)}
-              </span>
-            </div>
-          )}
-
-          {/* Progress bar */}
-          <div className="h-1.5 w-full rounded-full bg-zinc-700 overflow-hidden">
-            <motion.div
-              className="h-full bg-emerald-500"
-              initial={{ width: "100%" }}
-              animate={{ width: `${Math.max(0, (state.timeLeft / 120) * 100)}%` }}
-              transition={{ duration: 1, ease: "linear" }}
+            <Input
+              value={form[key].title}
+              onChange={e => setForm(p => ({ ...p, [key]: { ...p[key], title: e.target.value } }))}
+              placeholder="Judul running text..."
+              className="text-xs bg-zinc-900/60 border-white/10 text-zinc-200 placeholder:text-zinc-600 h-8"
             />
+            <textarea
+              value={form[key].content}
+              onChange={e => setForm(p => ({ ...p, [key]: { ...p[key], content: e.target.value } }))}
+              placeholder="Isi pesan / teks berjalan..."
+              rows={2}
+              className="w-full rounded-lg border border-white/10 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/40 resize-none"
+            />
+            <Button
+              size="sm" variant="outline"
+              className="w-full text-xs h-7 border-white/10 hover:bg-white/5"
+              onClick={() => handleSave(key)}
+              disabled={saving === key || !form[key].title || !form[key].content}
+            >
+              {saving === key ? <Loader2 className="size-3 animate-spin mr-1" /> : <DownloadCloud className="size-3 mr-1" />}
+              {saving === key ? "Menyimpan..." : "Simpan"}
+            </Button>
           </div>
-        </div>
-      )}
-
-      {/* Pause/Resume */}
-      {isRunning && (
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1 gap-1.5"
-            onClick={state.isPaused ? onResume : onPause}
-          >
-            {state.isPaused ? (
-              <>
-                <PlayCircle className="size-4 text-emerald-500" />
-                Lanjutkan
-              </>
-            ) : (
-              <>
-                <PauseCircle className="size-4 text-amber-500" />
-                Jeda
-              </>
-            )}
-          </Button>
-        </div>
-      )}
-
-      {/* Not running: show start panel */}
-      {!isRunning && (
-        <div className="space-y-3">
-          <div className="text-xs text-zinc-500">
-            Pilih Round dan 3 saham untuk memulai
-          </div>
-
-          {/* Round selector */}
-          <div className="grid grid-cols-4 gap-1">
-            {EXPERIMENTAL_MATRIX.map((round: RoundConfig) => {
-              const isCompleted = (state.completedRounds || []).includes(round.roundNumber);
-              return (
-                <button
-                  key={round.roundNumber}
-                  onClick={() => {
-                    setSelectedRound(round.roundNumber);
-                    setSelectedStockIds([]);
-                  }}
-                  disabled={isCompleted}
-                  className={`rounded border px-2 py-1.5 text-[10px] font-medium transition-all ${
-                    selectedRound === round.roundNumber
-                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-                      : isCompleted
-                      ? "border-white/5 bg-zinc-800/20 text-zinc-600 opacity-50 cursor-not-allowed"
-                      : "border-white/5 bg-zinc-800/50 text-zinc-500 hover:border-white/10 hover:text-zinc-300"
-                  }`}
-                >
-                  R{round.roundNumber} {isCompleted && "✓"}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Selected round intervention preview */}
-          {roundConfig && (
-            <div className="rounded border border-white/5 bg-zinc-800/30 p-2 space-y-1">
-              <div className="text-[10px] text-zinc-600">
-                Intervensi untuk Round {selectedRound}:
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {roundConfig.sessions.slice(1).map(sess => (
-                  <div key={sess.sessionNumber} className="text-[10px] text-zinc-400">
-                    S{sess.sessionNumber}: <InterventionBadge type={sess.intervention} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Stock selector */}
-          <div className="text-[10px] text-zinc-600 font-medium">
-            Pilih 3 Saham ({selectedStockIds.length}/3):
-          </div>
-          <div className="grid grid-cols-2 gap-1">
-            {allStocks.map(stock => {
-              const sel = selectedStockIds.includes(stock.id);
-              const isUsed = (state.usedStockIds || []).includes(stock.id);
-              return (
-                <button
-                  key={stock.id}
-                  onClick={() => toggleStock(stock.id)}
-                  disabled={(selectedStockIds.length >= 3 && !sel) || isUsed}
-                  className={`rounded border px-2 py-1.5 text-left text-xs transition-all ${
-                    sel
-                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-                      : isUsed
-                      ? "border-rose-500/20 bg-rose-500/5 text-rose-400/50 cursor-not-allowed"
-                      : selectedStockIds.length >= 3
-                      ? "border-white/5 bg-zinc-800/30 text-zinc-600 opacity-40 cursor-not-allowed"
-                      : "border-white/5 bg-zinc-800/50 text-zinc-400 hover:border-white/10 hover:text-zinc-200"
-                  }`}
-                >
-                  <span className="font-medium">{stock.kode}</span>
-                  <span className="ml-1 text-[10px] opacity-70">{stock.nama}</span>
-                  {isUsed && <span className="ml-2 text-[8px] text-rose-500/80 uppercase">Digunakan</span>}
-                </button>
-              );
-            })}
-          </div>
-
-
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full gap-1.5"
-            onClick={handleStart}
-            disabled={selectedStockIds.length !== 3 || starting}
-          >
-            {starting ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <SkipForward className="size-3.5" />
-            )}
-            {starting ? "Memulai..." : `Mulai Round ${selectedRound} Saja`}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full gap-1.5 border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
-            onClick={() => {
-              if (confirm("Reset semua sesi? Semua data round akan dihapus dan saham bisa dipilih ulang.")) {
-                const socket = getSocket();
-                socket.emit("admin-reset-experiment");
-              }
-            }}
-          >
-            <RefreshCw className="size-3.5" />
-            Reset Semua Sesi
-          </Button>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────
-// Main AdminSchedulerBoard component
+// PeriodSummaryCard
 // ─────────────────────────────────────────────
-export default function AdminSchedulerBoard() {
-  const { user } = useAuth();
-  const [state, setState] = useState<SchedulerState>({
-    activeRound: null,
-    activeSubSession: null,
-    phase: null,
-    timeLeft: 0,
-    currentIntervention: "NONE",
-    isPaused: false,
-    openingPrices: {},
-    stocks: [],
-    interventionCache: {},
-    completedRounds: [],
-    usedStockIds: [],
-  });
-  const [allStocks, setAllStocks] = useState<Stock[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"scheduler" | "intervention" | "matrix" | "export">("scheduler");
-  const [socketConnected, setSocketConnected] = useState(false);
-
-  // Auto authenticate socket whenever it connects
-  useEffect(() => {
-    if (!user || user.role !== "admin") return;
-    const socket = getSocket();
-    const auth = () => socket.emit("authenticate", { userId: user.id });
-    
-    if (socket.connected) auth();
-    socket.on("connect", auth);
-    return () => { socket.off("connect", auth); };
-  }, [user]);
-
-  useEffect(() => {
-    fetch("/api/stocks")
-      .then(r => r.json())
-      .then(data => setAllStocks(
-        (data.stocks || []).map((s: any) => ({
-          id: s.id,
-          kode: s.kodeSaham,
-          nama: s.namaSaham,
-          basePrice: s.basePrice
-        }))
-      ))
-      .catch(() => {});
-
-    // Request initial scheduler state
-    const socket = getSocket();
-    socket.emit("get-scheduler-state");
-
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    const socket = getSocket();
-
-    // Track socket connection
-    const onConnect = () => setSocketConnected(true);
-    const onDisconnect = () => setSocketConnected(false);
-    setSocketConnected(socket.connected);
-    socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-
-    socket.on("scheduler-state", (data: SchedulerState) => {
-      setState({
-        ...data,
-        completedRounds: data.completedRounds || [],
-        usedStockIds: data.usedStockIds || [],
-      });
-    });
-
-    socket.on("round-started", (data: { roundNumber: number; stocks: Stock[] }) => {
-      setState(prev => ({
-        ...prev,
-        activeRound: data.roundNumber,
-        stocks: data.stocks,
-        phase: "PRE_OPENING",
-        timeLeft: 60,
-        currentIntervention: "NONE",
-      }));
-      toast.dismiss("start-round");
-      toast.success(`Round ${data.roundNumber} berhasil dimulai! Fase: Pra Pembukaan (60 detik)`);
-    });
-
-    socket.on("sub-session-started", (data: {
-      roundNumber: number;
-      sessionNumber: number;
-      phase: SubSessionPhase;
-      duration: number;
-      intervention: InterventionType;
-    }) => {
-      setState(prev => ({
-        ...prev,
-        activeRound: data.roundNumber,
-        activeSubSession: data.sessionNumber,
-        phase: data.phase,
-        timeLeft: data.duration,
-        currentIntervention: data.intervention,
-      }));
-    });
-
-    socket.on("timer-tick", (data: { timeLeft: number }) => {
-      setState(prev => ({ ...prev, timeLeft: data.timeLeft }));
-    });
-
-    socket.on("intervention-triggered", (data: { type: InterventionType }) => {
-      setState(prev => ({ ...prev, currentIntervention: data.type }));
-      toast.warning(`Intervensi aktif: ${getInterventionLabel(data.type)}`, {
-        description: data.type !== "NONE" ? state.interventionCache[data.type]?.content : undefined,
-      });
-    });
-
-    socket.on("round-ended", () => {
-      setState(prev => ({
-        ...prev,
-        activeRound: null,
-        activeSubSession: null,
-        phase: null,
-        timeLeft: 0,
-        currentIntervention: "NONE",
-        openingPrices: {},
-      }));
-      // Fetch updated scheduler state to get the new completedRounds and usedStockIds
-      socket.emit("get-scheduler-state");
-      toast.success("Ronde selesai.");
-    });
-
-    socket.on("experiment-ended", () => {
-      toast.success("Eksperimen selesai! Semua 12 ronde telah selesai.");
-    });
-
-    socket.on("experiment-reset", () => {
-      setState({
-        activeRound: null,
-        activeSubSession: null,
-        phase: null,
-        timeLeft: 0,
-        currentIntervention: "NONE",
-        isPaused: false,
-        openingPrices: {},
-        stocks: [],
-        interventionCache: {},
-        completedRounds: [],
-        usedStockIds: [],
-      });
-      toast.info("Semua sesi telah direset.");
-    });
-
-    socket.on("experiment-stopped", () => {
-      setState(prev => ({
-        ...prev,
-        activeRound: null,
-        activeSubSession: null,
-        phase: null,
-        timeLeft: 0,
-        currentIntervention: "NONE",
-        openingPrices: {},
-        stocks: [],
-      }));
-      toast.info("Eksperimen dihentikan.");
-    });
-
-    socket.on("round-cooldown-started", (data: { nextRound: number; cooldownSeconds: number }) => {
-      toast.info(`Jeda 3 menit sebelum Round ${data.nextRound}...`);
-    });
-
-    socket.on("intervention-cache-loaded", (data: Record<string, { title: string; content: string }>) => {
-      setState(prev => ({ ...prev, interventionCache: data }));
-    });
-
-
-    socket.on("admin-error", (data: { message: string }) => {
-      toast.error(`Error: ${data.message}`);
-    });
-
-    socket.on("admin-warning", (data: { message: string; missingInterventions?: string[] }) => {
-      toast.warning(data.message);
-    });
-
-    socket.on("intervention-config-status", (data: {
-      roundNumber: number;
-      available: string[];
-      missing: string[];
-    }) => {
-      if (data.missing.length > 0) {
-        toast.warning(`Round ${data.roundNumber} butuh intervensi: ${data.missing.join(", ")}`);
-      }
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("scheduler-state");
-      socket.off("round-started");
-      socket.off("sub-session-started");
-      socket.off("timer-tick");
-      socket.off("intervention-triggered");
-      socket.off("round-ended");
-      socket.off("experiment-ended");
-      socket.off("experiment-reset");
-      socket.off("experiment-stopped");
-      socket.off("round-cooldown-started");
-      socket.off("intervention-cache-loaded");
-      socket.off("admin-warning");
-      socket.off("admin-error");
-      socket.off("intervention-config-status");
-    };
-  }, []);
-
-  const handleStartRound = useCallback((roundNumber: number, stockIds: number[]) => {
-    const socket = getSocket();
-    if (!socket.connected) {
-      toast.error("Server WebSocket tidak terhubung! Jalankan: npm run dev:server", {
-        description: "Hentikan 'npm run dev' lalu jalankan 'npm run dev:server'",
-        duration: 8000,
-      });
-      return;
-    }
-    toast.loading(`Memulai Round ${roundNumber}...`, { id: "start-round" });
-    socket.emit("admin-start-round", { roundNumber, stockIds, userId: user?.id });
-  }, [user]);
-
-  const handlePause = useCallback(() => {
-    const socket = getSocket();
-    socket.emit("admin-pause", { userId: user?.id });
-  }, [user]);
-
-  const handleResume = useCallback(() => {
-    const socket = getSocket();
-    socket.emit("admin-resume", { userId: user?.id });
-  }, [user]);
-
-  const handleExport = async () => {
-    const res = await fetch("/api/export?format=csv");
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `experiment_data_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Data berhasil diunduh");
-  };
-
-  const tabs = [
-    { key: "scheduler", label: "Scheduler", icon: <Timer className="size-3.5" /> },
-    { key: "intervention", label: "Intervensi", icon: <Settings2 className="size-3.5" /> },
-    { key: "matrix", label: "Matriks", icon: <BookOpen className="size-3.5" /> },
-    { key: "export", label: "Export", icon: <DownloadCloud className="size-3.5" /> },
-  ] as const;
+function PeriodSummaryCard({
+  period, activePeriod, onStart,
+}: {
+  period: PeriodDef;
+  activePeriod: 1 | 2 | 3 | null;
+  onStart: (n: 1 | 2 | 3) => void;
+}) {
+  const isActive = activePeriod === period.periodNumber;
+  const totalRounds = period.sessions.reduce((a, s) => a + s.rounds.length, 0);
+  const hasIntervention = period.sessions.some(s => s.intervention !== "NONE");
 
   return (
-    <div className="space-y-4">
-      {/* Socket Connection Status */}
-      <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${
-        socketConnected
-          ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-          : "bg-rose-500/10 border border-rose-500/20 text-rose-400"
-      }`}>
-        <span className={`size-2 rounded-full ${socketConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-        {socketConnected
-          ? "Server WebSocket terhubung — Siap memulai sesi"
-          : "Server WebSocket tidak terhubung — Jalankan: npm run dev:server (bukan npm run dev)"}
+    <div className={`rounded-2xl border p-4 transition-all ${isActive
+      ? "border-indigo-500/40 bg-indigo-500/5 shadow-lg shadow-indigo-500/10"
+      : "border-white/5 bg-zinc-800/30 hover:border-white/10"}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <div className="text-xs text-zinc-500 font-medium">{period.label}</div>
+          <div className="text-sm font-semibold text-white mt-0.5">
+            {period.sessions.length} Sesi · {totalRounds} Ronde
+          </div>
+        </div>
+        {isActive && (
+          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-[10px] font-medium animate-pulse">
+            <RadioTower className="size-2.5" /> Berjalan
+          </span>
+        )}
       </div>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-white/5 pb-1">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-1.5 rounded-t px-3 py-1.5 text-xs font-medium transition-colors ${
-              activeTab === tab.key
-                ? "bg-zinc-800 text-zinc-200"
-                : "text-zinc-600 hover:text-zinc-400"
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
+      <div className="space-y-1.5 mb-3">
+        {period.sessions.map(s => (
+          <div key={s.sessionNumber} className="flex items-center gap-2 text-xs text-zinc-400">
+            <span className="w-5 h-5 rounded-full bg-zinc-700/50 flex items-center justify-center text-[9px] font-bold shrink-0">
+              {s.sessionNumber}
+            </span>
+            <span className="flex-1">{s.label}</span>
+            {s.intervention !== "NONE" && (
+              <span className={`${INTERVENTION_CONFIG[s.intervention].color} flex items-center gap-0.5`}>
+                {INTERVENTION_CONFIG[s.intervention].icon}
+              </span>
+            )}
+            <span className="text-zinc-600">{s.rounds.length}R</span>
+          </div>
         ))}
       </div>
 
-      {/* Tab: Scheduler */}
-      {activeTab === "scheduler" && (
-        <div className="space-y-4">
-          <SchedulerPanel
-            state={state}
-            allStocks={allStocks}
-            onStartRound={handleStartRound}
-            onPause={handlePause}
-            onResume={handleResume}
+      {hasIntervention && (
+        <div className="flex flex-wrap gap-1 mb-3">
+          {[...new Set(period.sessions.filter(s => s.intervention !== "NONE").map(s => s.intervention))].map(int => (
+            <span key={int} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium border ${int === "BERITA_BAIK" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"}`}>
+              {INTERVENTION_CONFIG[int].icon}
+              {INTERVENTION_CONFIG[int].label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <Button
+        className="w-full h-8 text-xs font-medium gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
+        onClick={() => onStart(period.periodNumber as 1 | 2 | 3)}
+        disabled={activePeriod !== null}
+      >
+        <PlayCircle className="size-3.5" />
+        Mulai {period.label}
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// LiveStatusPanel
+// ─────────────────────────────────────────────
+function LiveStatusPanel({
+  state, onPause, onResume, onStop,
+}: {
+  state: ExperimentState;
+  onPause: () => void;
+  onResume: () => void;
+  onStop: () => void;
+}) {
+  const { activePeriod, activeSessionIdx, activeRoundIdx, currentPhase, timeLeft, isPaused, currentIntervention, stocks, sessionGroup } = state;
+  if (activePeriod === null) return null;
+
+  const periodCfg = PERIOD_MATRIX.find(p => p.periodNumber === activePeriod)!;
+  const sessionCfg = activeSessionIdx !== null ? periodCfg.sessions[activeSessionIdx] : null;
+  const phaseCfg = PHASE_CONFIG[currentPhase];
+  const intCfg = INTERVENTION_CONFIG[currentIntervention];
+  const totalRounds = sessionCfg?.rounds.length ?? 0;
+
+  // Timer percentage
+  const maxTime = currentPhase === "PRE_MARKET" ? 60 : currentPhase === "TRADING" ? 120 : 180;
+  const pct = maxTime > 0 ? (timeLeft / maxTime) * 100 : 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/60 to-zinc-900/80 p-4 space-y-4 shadow-xl shadow-indigo-500/10"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold border ${phaseCfg.bg} ${phaseCfg.color} border-current/20`}>
+            {phaseCfg.icon}{phaseCfg.label}
+          </span>
+          {isPaused && (
+            <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-medium">
+              <PauseCircle className="size-2.5" /> Dijeda
+            </span>
+          )}
+        </div>
+        <div className="flex gap-1.5">
+          {isPaused ? (
+            <Button size="sm" onClick={onResume} className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white gap-1">
+              <PlayCircle className="size-3" /> Resume
+            </Button>
+          ) : (
+            <Button size="sm" onClick={onPause} variant="outline" className="h-7 text-xs border-white/10 gap-1">
+              <PauseCircle className="size-3" /> Jeda
+            </Button>
+          )}
+          <Button size="sm" onClick={onStop} variant="outline" className="h-7 text-xs border-rose-500/30 text-rose-400 hover:bg-rose-500/10 gap-1">
+            <StopCircle className="size-3" /> Stop
+          </Button>
+        </div>
+      </div>
+
+      {/* Progress context */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl bg-white/5 p-2">
+          <div className="text-[10px] text-zinc-500 mb-0.5">Periode</div>
+          <div className="text-sm font-bold text-white">{activePeriod} / 3</div>
+        </div>
+        <div className="rounded-xl bg-white/5 p-2">
+          <div className="text-[10px] text-zinc-500 mb-0.5">Sesi</div>
+          <div className="text-sm font-bold text-white">
+            {sessionGroup ?? "—"} / {periodCfg.sessions.length}
+          </div>
+        </div>
+        <div className="rounded-xl bg-white/5 p-2">
+          <div className="text-[10px] text-zinc-500 mb-0.5">Ronde</div>
+          <div className="text-sm font-bold text-white">
+            {activeRoundIdx !== null ? activeRoundIdx + 1 : "—"} / {totalRounds}
+          </div>
+        </div>
+      </div>
+
+      {/* Timer */}
+      <div className="space-y-1.5">
+        <div className="flex justify-between text-xs">
+          <span className="text-zinc-400">{phaseCfg.label}</span>
+          <span className={`font-mono font-bold text-lg ${phaseCfg.color}`}>{formatTime(timeLeft)}</span>
+        </div>
+        <div className="h-2 rounded-full bg-zinc-700/50 overflow-hidden">
+          <motion.div
+            className={`h-full rounded-full ${currentPhase === "TRADING" ? "bg-emerald-500" : currentPhase === "PRE_MARKET" ? "bg-amber-500" : "bg-sky-500"}`}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.5 }}
           />
         </div>
-      )}
+      </div>
 
-      {/* Tab: Intervention Content */}
-      {activeTab === "intervention" && (
-        <div className="space-y-3">
-          <div className="text-xs text-zinc-500">
-            Definisikan konten intervensi sebelum memulai eksperimen.
-            Teks ini akan ditampilkan ke semua responden saat intervensi dipicu.
-          </div>
-          <InterventionContentForm />
+      {/* Session label */}
+      {sessionCfg && (
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-zinc-500">Sesi saat ini</span>
+          <span className="text-zinc-200 font-medium">{sessionCfg.label}</span>
         </div>
       )}
 
-      {/* Tab: Matrix Preview */}
-      {activeTab === "matrix" && (
-        <div className="space-y-3">
-          <div className="text-xs text-zinc-500">
-            Matriks desain eksperimen — menunjukkan intervensi per sesi per ronde.
+      {/* Active stocks */}
+      {stocks.length > 0 && (
+        <div>
+          <div className="text-[10px] text-zinc-500 mb-1.5">Saham Aktif</div>
+          <div className="flex flex-wrap gap-1.5">
+            {stocks.map(s => (
+              <span key={s.id} className="rounded-lg bg-zinc-700/50 border border-white/5 px-2 py-1 text-xs font-medium text-zinc-200">
+                {s.kodeSaham}
+              </span>
+            ))}
           </div>
-          <ExperimentProgress activeRound={state.activeRound} />
+        </div>
+      )}
 
-          {/* Full intervention legend */}
-          <div className="rounded-lg border border-white/5 bg-zinc-800/30 p-3">
-            <div className="mb-2 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
-              Legenda Intervensi
+      {/* Intervention status */}
+      {currentIntervention !== "NONE" && currentPhase === "PRE_MARKET" && (
+        <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs border ${currentIntervention === "BERITA_BAIK" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-rose-500/10 border-rose-500/20 text-rose-400"}`}>
+          {intCfg.icon}
+          <span className="font-medium">Running Text Aktif:</span>
+          <span>{intCfg.label}</span>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Session Progress Tracker
+// ─────────────────────────────────────────────
+function SessionProgress({ state }: { state: ExperimentState }) {
+  const { activePeriod, activeSessionIdx, activeRoundIdx, currentPhase } = state;
+  if (activePeriod === null) return null;
+  const periodCfg = PERIOD_MATRIX.find(p => p.periodNumber === activePeriod)!;
+
+  return (
+    <div className="rounded-2xl border border-white/5 bg-zinc-800/20 p-4 space-y-3">
+      <div className="text-xs font-semibold text-zinc-400">Progress {periodCfg.label}</div>
+      {periodCfg.sessions.map((session, si) => {
+        const isCurrentSession = si === activeSessionIdx;
+        const isPastSession = activeSessionIdx !== null && si < activeSessionIdx;
+        return (
+          <div key={session.sessionNumber} className={`rounded-xl p-3 border transition-all ${isCurrentSession ? "border-indigo-500/30 bg-indigo-500/5" : isPastSession ? "border-white/5 bg-zinc-800/20 opacity-50" : "border-white/5 bg-transparent opacity-30"}`}>
+            <div className="flex items-center gap-2 mb-2">
+              {isPastSession ? <CheckCircle2 className="size-3.5 text-emerald-400 shrink-0" />
+                : isCurrentSession ? <RadioTower className="size-3.5 text-indigo-400 animate-pulse shrink-0" />
+                : <Circle className="size-3.5 text-zinc-600 shrink-0" />}
+              <span className="text-xs font-medium text-zinc-300">{session.label}</span>
+              {session.intervention !== "NONE" && (
+                <span className={`ml-auto ${INTERVENTION_CONFIG[session.intervention].color} flex items-center gap-0.5 text-[10px]`}>
+                  {INTERVENTION_CONFIG[session.intervention].icon}
+                  {INTERVENTION_CONFIG[session.intervention].label}
+                </span>
+              )}
             </div>
-            <div className="space-y-1">
-              {(["NONE", "BERITA_BAIK", "BERITA_BURUK", "TMNP_1", "TMNP_2"] as InterventionType[]).map(type => (
-                <div key={type} className="flex items-center gap-2 text-xs text-zinc-400">
-                  <InterventionBadge type={type} />
-                  <span className="text-[10px] text-zinc-600">
-                    {type === "NONE" && "Tanpa intervensi (kontrol)"}
-                    {type === "BERITA_BAIK" && "Berita positif tentang saham"}
-                    {type === "BERITA_BURUK" && "Berita negatif tentang saham"}
-                    {type === "TMNP_1" && "Trading halt periode 1"}
-                    {type === "TMNP_2" && "Trading halt periode 2"}
-                  </span>
-                </div>
-              ))}
-            </div>
+            {isCurrentSession && (
+              <div className="flex gap-1 flex-wrap">
+                {session.rounds.map((r, ri) => {
+                  const isPast = activeRoundIdx !== null && ri < activeRoundIdx;
+                  const isCurrent = ri === activeRoundIdx;
+                  return (
+                    <div key={ri} className={`rounded-lg px-2 py-1 text-[10px] font-medium border transition-colors ${isCurrent
+                      ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
+                      : isPast
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                      : "bg-zinc-700/30 border-white/5 text-zinc-600"}`}>
+                      R{ri + 1} · {r.stockCodes.join(", ")}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })}
+    </div>
+  );
+}
 
-      {/* Tab: Export */}
-      {activeTab === "export" && (
-        <div className="space-y-3">
-          <div className="text-xs text-zinc-500">
-            Ekspor data eksperimen dalam format CSV untuk analisis statistik.
-            Data mencakup prediksi dan transaksi yang ditandai dengan intervensi aktif.
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={handleExport}
-            >
-              <DownloadCloud className="size-3.5" />
-              Download CSV
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={async () => {
-                const res = await fetch("/api/export?format=json");
-                const data = await res.json();
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `experiment_data_${new Date().toISOString().slice(0, 10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                toast.success("JSON data downloaded");
-              }}
-            >
-              <DownloadCloud className="size-3.5" />
-              Download JSON
-            </Button>
-          </div>
+// ─────────────────────────────────────────────
+// MAIN COMPONENT
+// ─────────────────────────────────────────────
+export default function AdminSchedulerBoard() {
+  const { user } = useAuth();
+  const socketRef = useRef<ReturnType<typeof getSocket> | null>(null);
+
+  const [expState, setExpState] = useState<ExperimentState>({
+    activePeriod: null,
+    activeSessionIdx: null,
+    activeRoundIdx: null,
+    currentPhase: "IDLE",
+    timeLeft: 0,
+    sessionGroup: null,
+    isPaused: false,
+    currentIntervention: "NONE",
+    stocks: [],
+    openingPrices: {},
+    interventionCache: {},
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [startingPeriod, setStartingPeriod] = useState<number | null>(null);
+
+  // ── Socket setup ────────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+    const socket = getSocket();
+    socketRef.current = socket;
+
+    if (!socket.connected) socket.connect();
+
+    socket.emit("authenticate", { userId: user.id });
+    socket.emit("get-scheduler-state");
+
+    // State sync
+    socket.on("scheduler-state", (data: any) => {
+      setExpState(prev => ({
+        ...prev,
+        activePeriod: data.activePeriod ?? null,
+        activeSessionIdx: data.activeSessionIdx ?? null,
+        activeRoundIdx: data.activeRoundIdx ?? null,
+        currentPhase: data.currentPhase ?? data.phase ?? "IDLE",
+        timeLeft: data.timeLeft ?? 0,
+        sessionGroup: data.sessionGroup ?? null,
+        isPaused: data.isPaused ?? false,
+        currentIntervention: data.currentIntervention ?? "NONE",
+        stocks: data.stocks ?? [],
+        openingPrices: data.openingPrices ?? {},
+        interventionCache: data.interventionCache ?? {},
+      }));
+      setLoading(false);
+    });
+
+    // Period events
+    socket.on("period-started", (data: { periodNumber: number; label: string; totalSessions: number }) => {
+      setExpState(prev => ({ ...prev, activePeriod: data.periodNumber as 1|2|3, currentPhase: "IDLE" }));
+      setStartingPeriod(null);
+      toast.success(`${data.label} dimulai!`);
+    });
+    socket.on("period-ended", (data: { periodNumber: number }) => {
+      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
+      toast.success(`Periode ${data.periodNumber} selesai!`);
+    });
+    socket.on("period-aborted", () => {
+      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
+      toast.info("Periode dihentikan");
+    });
+    socket.on("experiment-reset", () => {
+      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE", isPaused: false }));
+      toast.info("Eksperimen direset");
+    });
+
+    // Session events
+    socket.on("session-group-started", (data: any) => {
+      setExpState(prev => ({
+        ...prev,
+        activeSessionIdx: data.sessionIdx ?? null,
+        sessionGroup: data.sessionNumber ?? null,
+      }));
+    });
+
+    // Round events
+    socket.on("round-started", (data: any) => {
+      setExpState(prev => ({
+        ...prev,
+        activeRoundIdx: (data.roundNumber ?? 1) - 1,
+        stocks: data.stocks ?? [],
+      }));
+    });
+
+    // Phase events
+    socket.on("sub-session-started", (data: any) => {
+      setExpState(prev => ({
+        ...prev,
+        currentPhase: data.phase,
+        timeLeft: data.duration ?? 0,
+        currentIntervention: data.intervention ?? "NONE",
+      }));
+    });
+    socket.on("cooldown-started", (data: any) => {
+      setExpState(prev => ({ ...prev, currentPhase: "COOLDOWN", timeLeft: data.duration ?? 180 }));
+    });
+
+    // Timer
+    socket.on("timer-tick", (data: any) => {
+      setExpState(prev => ({
+        ...prev,
+        timeLeft: data.timeLeft ?? prev.timeLeft,
+        currentPhase: data.phase ?? prev.currentPhase,
+        sessionGroup: data.sessionGroup ?? prev.sessionGroup,
+        activeRoundIdx: data.roundIndex ?? prev.activeRoundIdx,
+      }));
+    });
+
+    // Intervention
+    socket.on("intervention-triggered", (data: any) => {
+      setExpState(prev => ({ ...prev, currentIntervention: data.type ?? "NONE" }));
+    });
+    socket.on("intervention-ended", () => {
+      setExpState(prev => ({ ...prev, currentIntervention: "NONE" }));
+    });
+
+    // Pause/Resume
+    socket.on("experiment-paused", () => setExpState(prev => ({ ...prev, isPaused: true })));
+    socket.on("experiment-resumed", () => setExpState(prev => ({ ...prev, isPaused: false })));
+
+    // Cache
+    socket.on("intervention-cache-loaded", (cache: any) => {
+      setExpState(prev => ({ ...prev, interventionCache: cache }));
+    });
+
+    // Errors
+    socket.on("admin-error", (data: { message: string }) => {
+      toast.error(data.message);
+      setStartingPeriod(null);
+    });
+
+    setLoading(false);
+    return () => {
+      socket.off("scheduler-state"); socket.off("period-started"); socket.off("period-ended");
+      socket.off("period-aborted"); socket.off("experiment-reset"); socket.off("session-group-started");
+      socket.off("round-started"); socket.off("sub-session-started"); socket.off("cooldown-started");
+      socket.off("timer-tick"); socket.off("intervention-triggered"); socket.off("intervention-ended");
+      socket.off("experiment-paused"); socket.off("experiment-resumed");
+      socket.off("intervention-cache-loaded"); socket.off("admin-error");
+    };
+  }, [user]);
+
+  // ── Actions ─────────────────────────────────────────────────
+  const handleStartPeriod = useCallback((periodNumber: 1 | 2 | 3) => {
+    if (!user || !socketRef.current) return;
+    setStartingPeriod(periodNumber);
+    socketRef.current.emit("admin-start-period", { periodNumber, userId: user.id });
+    toast.info(`Memulai Periode ${periodNumber}...`);
+  }, [user]);
+
+  const handlePause = useCallback(() => {
+    if (!user || !socketRef.current) return;
+    socketRef.current.emit("admin-pause", { userId: user.id });
+  }, [user]);
+
+  const handleResume = useCallback(() => {
+    if (!user || !socketRef.current) return;
+    socketRef.current.emit("admin-resume", { userId: user.id });
+  }, [user]);
+
+  const handleStop = useCallback(() => {
+    if (!user || !socketRef.current) return;
+    socketRef.current.emit("admin-stop-period", { userId: user.id });
+    toast.warning("Periode dihentikan");
+  }, [user]);
+
+  const handleReset = useCallback(() => {
+    if (!user || !socketRef.current) return;
+    socketRef.current.emit("admin-reset-experiment");
+  }, [user]);
+
+  // ── Render ───────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[300px]">
+        <div className="flex items-center gap-2 text-zinc-500 text-sm">
+          <Loader2 className="size-4 animate-spin" /> Memuat panel kontrol...
         </div>
-      )}
+      </div>
+    );
+  }
+
+  const { activePeriod } = expState;
+
+  return (
+    <div className="space-y-5">
+      {/* ── LIVE STATUS ──────────────────────────────────────── */}
+      <AnimatePresence>
+        {activePeriod !== null && (
+          <motion.div key="live" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <LiveStatusPanel
+              state={expState}
+              onPause={handlePause}
+              onResume={handleResume}
+              onStop={handleStop}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── SESSION PROGRESS ──────────────────────────────────── */}
+      <AnimatePresence>
+        {activePeriod !== null && (
+          <motion.div key="progress" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <SessionProgress state={expState} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── PERIOD SELECTOR ───────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+            <Zap className="size-3.5 text-indigo-400" />
+            Mulai Periode Eksperimen
+          </h3>
+          {activePeriod === null && (
+            <Button
+              size="sm" variant="ghost"
+              className="text-xs h-7 text-zinc-500 hover:text-zinc-300 gap-1"
+              onClick={handleReset}
+            >
+              <RefreshCw className="size-3" /> Reset
+            </Button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-3">
+          {PERIOD_MATRIX.map(period => (
+            <PeriodSummaryCard
+              key={period.periodNumber}
+              period={period}
+              activePeriod={activePeriod}
+              onStart={handleStartPeriod}
+            />
+          ))}
+        </div>
+      </div>
+
+
+
+      {/* ── INTERVENTION CONFIG ───────────────────────────────── */}
+      <div>
+        <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2 mb-3">
+          <RadioTower className="size-3.5 text-amber-400" />
+          Konten Running Text Intervensi
+        </h3>
+        <InterventionConfigForm />
+      </div>
+
+      {/* ── LEGEND ───────────────────────────────────────────── */}
+      <div className="rounded-xl border border-white/5 bg-zinc-900/30 p-3 space-y-2">
+        <div className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Keterangan Alur</div>
+        <div className="grid grid-cols-2 gap-1.5 text-[10px] text-zinc-500">
+          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" /> Pra-Perdagangan (60 detik)</div>
+          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" /> Perdagangan (120 detik)</div>
+          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" /> Jeda / Cooldown (3 menit)</div>
+          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-zinc-500 shrink-0" /> Periode I: Prediksi Saja</div>
+        </div>
+      </div>
     </div>
   );
 }

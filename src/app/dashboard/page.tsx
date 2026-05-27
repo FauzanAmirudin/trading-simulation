@@ -21,12 +21,7 @@ import {
   getInterventionLabel,
 } from "@/lib/experimental-matrix";
 
-const MOCK_TX = [
-  { time: "10:01:15", stock: "BBCA", tipe: "BID" as const, harga: 10200, jumlah: 2 },
-  { time: "10:05:30", stock: "BBRI", tipe: "ASK" as const, harga: 5700, jumlah: 1 },
-  { time: "10:12:45", stock: "TLKM", tipe: "BID" as const, harga: 4000, jumlah: 3 },
-  { time: "10:20:00", stock: "BBCA", tipe: "ASK" as const, harga: 10400, jumlah: 1 },
-];
+// Real-time history will be fetched from database instead of MOCK_TX
 
 export default function DashboardPage() {
   const { user, hydrated } = useAuth();
@@ -39,9 +34,37 @@ export default function DashboardPage() {
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [period, setPeriod] = useState<number | null>(null);
   const [subSession, setSubSession] = useState<number | null>(null);
-  const [phase, setPhase] = useState<SubSessionPhase>("PENDING");
+  const [phase, setPhase] = useState<SubSessionPhase>("IDLE");
   const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
   const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
+
+  const [resumeData, setResumeData] = useState({
+    totalBuy: 0,
+    totalSell: 0,
+    netPnl: 0,
+    history: [] as any[],
+  });
+
+  const fetchResumeData = () => {
+    if (!user) return;
+    fetch(`/api/resume/responder?userId=${user.id}`)
+      .then((res) => res.json())
+      .then((resData) => {
+        if (!resData.error) {
+          setResumeData({
+            totalBuy: resData.totalBuy,
+            totalSell: resData.totalSell,
+            netPnl: resData.netPnl,
+            history: resData.history,
+          });
+        }
+      })
+      .catch((err) => console.error("Error fetching dashboard resume data:", err));
+  };
+
+  useEffect(() => {
+    if (hydrated && user) fetchResumeData();
+  }, [hydrated, user]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -86,11 +109,14 @@ export default function DashboardPage() {
     socket.on("round-ended", () => {
       setSession(null);
       setRoundNumber(null);
-      setPhase("PENDING");
+      setPhase("IDLE");
       setSubSession(null);
     });
     socket.on("balance-update", (data: { userId: number; balance: number }) => {
-      if (data.userId === user.id) setBalance(data.balance);
+      if (data.userId === user.id) {
+        setBalance(data.balance);
+        fetchResumeData(); // Real-time sync for trade history & PnL
+      }
     });
     socket.on("portfolio-data", (data: { portfolio: any[] }) => {
       setPortfolio((data.portfolio || []).map((p: any) => ({
@@ -111,9 +137,7 @@ export default function DashboardPage() {
 
   const totalValue = portfolio.reduce((s, p) => s + p.value, 0);
   const totalWealth = balance + totalValue;
-  const totalBuy = MOCK_TX.filter((t) => t.tipe === "BID").reduce((s, t) => s + t.harga * t.jumlah * 100, 0);
-  const totalSell = MOCK_TX.filter((t) => t.tipe === "ASK").reduce((s, t) => s + t.harga * t.jumlah * 100, 0);
-  const netPnl = totalSell - totalBuy;
+  const { totalBuy, totalSell, netPnl, history } = resumeData;
 
   if (loading) {
     return (
@@ -286,7 +310,7 @@ export default function DashboardPage() {
               <div className="rounded-lg bg-zinc-800/50 p-3">
                 <div className="text-xs text-zinc-500 mb-0.5">Total Transaksi</div>
                 <div className="font-mono text-sm font-bold text-zinc-200">
-                  {MOCK_TX.length}
+                  {history.length}
                 </div>
               </div>
             </div>
@@ -302,15 +326,11 @@ export default function DashboardPage() {
               <ScrollText className="size-4 text-zinc-400" />
               Riwayat Transaksi Terakhir
             </CardTitle>
-            <Button variant="ghost" size="sm" className="text-xs text-zinc-500 gap-1"
-              onClick={() => router.push("/dashboard/resume")}>
-              Lihat Semua <ArrowRight className="size-3" />
-            </Button>
           </div>
         </CardHeader>
         <CardContent>
           <div className="divide-y divide-white/5">
-            {MOCK_TX.map((tx, i) => (
+            {history.slice(0, 5).map((tx, i) => (
               <div key={i} className="flex items-center justify-between py-2.5 text-xs">
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-zinc-600 w-14">{tx.time}</span>
@@ -326,7 +346,7 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-          {MOCK_TX.length === 0 && (
+          {history.length === 0 && (
             <div className="py-6 text-center text-zinc-600 text-xs">
               Belum ada transaksi
             </div>

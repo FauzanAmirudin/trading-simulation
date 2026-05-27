@@ -25,7 +25,6 @@ type NavItem = {
 const respondentNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: <LayoutDashboard className="size-4" /> },
   { label: "Trading", href: "/dashboard/trading", icon: <TrendingUp className="size-4" /> },
-  { label: "Resume", href: "/dashboard/resume", icon: <ScrollText className="size-4" /> },
 ];
 
 const adminNav: NavItem[] = [

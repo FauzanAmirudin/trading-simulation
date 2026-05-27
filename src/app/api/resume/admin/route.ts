@@ -6,8 +6,7 @@ import { eq, and, sql } from "drizzle-orm";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const roundIdStr = searchParams.get("roundId");
-    const roundId = roundIdStr && roundIdStr !== "all" ? parseInt(roundIdStr) : null;
+    const dateParam = searchParams.get("date");
 
     // 1. Fetch total participants count
     const [participantsCountRow] = await db
@@ -47,11 +46,10 @@ export async function GET(req: NextRequest) {
       })
       .from(transactionsHistory)
       .innerJoin(stocks, eq(transactionsHistory.stockId, stocks.id))
-      .where(roundId ? eq(transactionsHistory.roundId, roundId) : undefined)
       .orderBy(transactionsHistory.createdAt);
 
-    // Map to response format
-    const transactions = txs.map(t => {
+    // Map to response format and filter by date
+    let transactions = txs.map(t => {
       const buyerId = orderUserMap[t.orderBuyId];
       const sellerId = orderUserMap[t.orderSellId];
       const buyerName = buyerId ? (userMap[buyerId] || `User #${buyerId}`) : "Unknown";
@@ -60,6 +58,7 @@ export async function GET(req: NextRequest) {
       return {
         id: t.id,
         time: t.createdAt ? new Date(t.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "",
+        timeObj: t.createdAt ? new Date(t.createdAt) : null,
         buyer: buyerName,
         seller: sellerName,
         stock: t.stockCode,
@@ -70,6 +69,13 @@ export async function GET(req: NextRequest) {
         roundId: t.roundId,
       };
     }).reverse(); // Latest first
+
+    if (dateParam) {
+      transactions = transactions.filter(t => {
+        const txDate = t.timeObj ? t.timeObj.toISOString().split("T")[0] : "";
+        return txDate === dateParam;
+      });
+    }
 
     // Calculate aggregated metrics
     const totalTransactions = transactions.length;
