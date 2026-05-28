@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect, useRef, useCallback } from "react";
+import { Suspense, useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getSocket } from "@/lib/socket";
@@ -84,23 +84,8 @@ function getMeta(kode: string) {
   return stockMeta[kode] ?? { sektor: "Lainnya", deskripsi: "Saham perusahaan terkemuka di bidangnya." };
 }
 
-function generateRandomWalk(basePrice: number, steps: number): PricePoint[] {
-  const data: PricePoint[] = [];
-  let price = basePrice;
-  const now = new Date();
-  for (let i = steps; i >= 0; i--) {
-    const t = new Date(now.getTime() - i * 1000);
-    data.push({
-      time: t.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      price: Math.round(price),
-    });
-    const change = price * (Math.random() - 0.5) * 0.001; // reduced for smoother chart
-    price += change;
-  }
-  return data;
-}
-
-function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
+// Optimasi 7: React.memo mencegah render ulang setiap timer tick
+const PriceChart = memo(function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
   const w = 600, h = 220;
   const pad = { top: 16, right: 16, bottom: 28, left: 72 };
 
@@ -160,7 +145,8 @@ function PriceChart({ data, isUp }: { data: PricePoint[]; isUp: boolean }) {
       ))}
     </svg>
   );
-}
+// Optimasi 7: penutup memo
+});
 
 function TradingPageFallback() {
   return (
@@ -203,6 +189,9 @@ function TradingPageContent() {
   const [portfolio, setPortfolio] = useState<{ lot: number } | null>(null);
   const [sessionTimer, setSessionTimer] = useState(120);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Optimasi 4: Ref untuk client-side countdown agar tidak perlu server tick setiap detik
+  const localTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isRunningRef = useRef(false);
 
   // Real-time portfolios map (stockId -> lot) and last prices (stockId -> lastPrice)
   const [portfoliosMap, setPortfoliosMap] = useState<Record<number, number>>({});
@@ -297,14 +286,25 @@ function TradingPageContent() {
       setSessionTimer(data.duration);
       setActiveIntervention(data.intervention);
       setCooldownActive(false);
-      // PRE_MARKET — show prediction input
+      // Optimasi 4: Mulai client-side countdown
+      isRunningRef.current = true;
+      if (localTimerRef.current) clearInterval(localTimerRef.current);
+      let remaining = data.duration;
+      localTimerRef.current = setInterval(() => {
+        if (!isRunningRef.current) return;
+        remaining = Math.max(0, remaining - 1);
+        setSessionTimer(remaining);
+        if (remaining <= 0 && localTimerRef.current) {
+          clearInterval(localTimerRef.current);
+          localTimerRef.current = null;
+        }
+      }, 1000);
       if (data.phase === "PRE_MARKET") {
         setShowPredictionUI(true);
         setPredictionInput({});
       } else {
         setShowPredictionUI(false);
       }
-      // TRADING phase starts — hide running text
       if (data.phase === "TRADING") {
         setRunningText(prev => ({ ...prev, active: false }));
       }
@@ -317,6 +317,7 @@ function TradingPageContent() {
     });
 
     socket.on("timer-tick", (data: { roundNumber: number; sessionNumber: number; timeLeft: number }) => {
+      // Optimasi 4: Server hanya sync setiap 10 detik — update local timer dengan nilai server
       setSessionTimer(data.timeLeft);
     });
 
@@ -346,6 +347,9 @@ function TradingPageContent() {
       setCurrentPrice(0);
       setRunningText(prev => ({ ...prev, active: false }));
       setCooldownActive(false);
+      // Optimasi 4: Stop client-side countdown
+      isRunningRef.current = false;
+      if (localTimerRef.current) { clearInterval(localTimerRef.current); localTimerRef.current = null; }
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     });
 
@@ -354,6 +358,19 @@ function TradingPageContent() {
       setCooldownReason(data.reason === "between-sessions" ? "antar sesi" : "antar ronde");
       setPhase("COOLDOWN");
       setSessionTimer(data.duration);
+      // Optimasi 4: Mulai client-side countdown untuk cooldown juga
+      isRunningRef.current = true;
+      if (localTimerRef.current) clearInterval(localTimerRef.current);
+      let remaining = data.duration;
+      localTimerRef.current = setInterval(() => {
+        if (!isRunningRef.current) return;
+        remaining = Math.max(0, remaining - 1);
+        setSessionTimer(remaining);
+        if (remaining <= 0 && localTimerRef.current) {
+          clearInterval(localTimerRef.current);
+          localTimerRef.current = null;
+        }
+      }, 1000);
       setRunningText(prev => ({ ...prev, active: false }));
     });
 
@@ -531,12 +548,9 @@ function TradingPageContent() {
       if (data.userId === user.id) setBalance(data.balance);
     });
 
+    // Optimasi 8: hanya update portfolio saham yang sedang dipilih (portfoliosMap sudah dihandle useEffect global)
     socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
       if (data.stockId === stock.id) setPortfolio({ lot: data.jumlahLot });
-      setPortfoliosMap(prev => ({
-        ...prev,
-        [data.stockId]: data.jumlahLot
-      }));
     });
 
     socket.on("trade-history", (data: { stockId: number; trades: { time: string; price: number }[] }) => {

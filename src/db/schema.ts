@@ -7,6 +7,7 @@ import {
   integer,
   text,
   jsonb,
+  index,
 } from "drizzle-orm/pg-core";
 
 // === EXPERIMENTAL CONFIG — researcher-defined intervention content ===
@@ -22,13 +23,11 @@ export const experimentalConfig = pgTable("experimental_config", {
 // === ROUNDS — dynamic round tracking (created on-the-fly by state machine) ===
 export const rounds = pgTable("rounds", {
   id: serial("id").primaryKey(),
-  // roundNumber is nullable and non-unique: same round index can appear in multiple sessions
   roundNumber: integer("round_number"),
-  period: integer("period").notNull().default(1), // 1 | 2 | 3
-  sessionGroup: integer("session_group").notNull().default(1), // which session (1-4) within period
-  roundIndex: integer("round_index").notNull().default(0),     // 0-based round within session
+  period: integer("period").notNull().default(1),
+  sessionGroup: integer("session_group").notNull().default(1),
+  roundIndex: integer("round_index").notNull().default(0),
   status: varchar("status", { length: 30 }).notNull().default("pending"),
-  // Phase: IDLE | PRE_MARKET | TRADING | COOLDOWN | CLOSED
   subSessionStatus: varchar("sub_session_status", { length: 30 }).notNull().default("IDLE"),
   activeSubSession: integer("active_sub_session").notNull().default(1),
   activeIntervention: varchar("active_intervention", { length: 30 }).default("NONE"),
@@ -36,7 +35,10 @@ export const rounds = pgTable("rounds", {
   endTime: timestamp("end_time"),
   openingPrices: jsonb("opening_prices").default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  // Optimasi 5: Index pada status — digunakan saat recovery server
+  statusIdx: index("rounds_status_idx").on(table.status),
+}));
 
 // === STOCKS ===
 export const stocks = pgTable("stocks", {
@@ -82,14 +84,19 @@ export const orderBook = pgTable("order_book", {
   userId: integer("user_id").references(() => users.id).notNull(),
   stockId: integer("stock_id").references(() => stocks.id).notNull(),
   roundId: integer("round_id").references(() => rounds.id).notNull(),
-  subSession: integer("sub_session").notNull(), // 2 | 3 | 4 (trading sessions)
-  tipe: varchar("tipe", { length: 3 }).notNull(), // BID | ASK
+  subSession: integer("sub_session").notNull(),
+  tipe: varchar("tipe", { length: 3 }).notNull(),
   harga: decimal("harga", { precision: 15, scale: 2 }).notNull(),
   jumlah: integer("jumlah").notNull(),
   status: varchar("status", { length: 20 }).notNull().default("open"),
   activeIntervention: varchar("active_intervention", { length: 30 }).default("NONE"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  // Optimasi 5: Composite index — digunakan oleh matching engine setiap 750ms
+  roundStatusIdx: index("order_book_round_status_idx").on(table.roundId, table.status),
+  // Index untuk validasi saldo saat place-order
+  userRoundIdx: index("order_book_user_round_idx").on(table.userId, table.roundId),
+}));
 
 // === PORTFOLIOS ===
 export const portfolios = pgTable("portfolios", {
@@ -99,7 +106,10 @@ export const portfolios = pgTable("portfolios", {
   roundId: integer("round_id").references(() => rounds.id).notNull(),
   jumlahLot: integer("jumlah_lot").notNull().default(0),
   averagePrice: decimal("average_price", { precision: 15, scale: 2 }).default("0"),
-});
+}, (table) => ({
+  // Optimasi 5: Composite index — digunakan saat place-order dan emitPortfolioUpdate
+  userRoundIdx: index("portfolios_user_round_idx").on(table.userId, table.roundId),
+}));
 
 // === TRANSACTIONS HISTORY — matched trades with intervention tracking ===
 export const transactionsHistory = pgTable("transactions_history", {

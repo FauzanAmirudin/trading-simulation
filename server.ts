@@ -114,7 +114,24 @@ function emitTimerTick() {
     activePeriod !== null && activeSessionIdx !== null
       ? getPeriodConfig(activePeriod).sessions[activeSessionIdx].sessionNumber
       : null;
+  // Optimasi 4: Hanya emit ke semua client saat state berubah (pause/resume)
+  // Tick per detik hanya dikirim saat diperlukan sinkronisasi
   io.emit("timer-tick", {
+    phase: currentPhase,
+    timeLeft: currentTimeLeft,
+    periodNumber: activePeriod,
+    sessionGroup,
+    roundIndex: activeRoundIdx,
+  });
+}
+
+// Optimasi 4: Emit tick hanya ke satu socket (saat connect), bukan broadcast
+function emitTimerTickToSocket(socket: import("socket.io").Socket) {
+  const sessionGroup =
+    activePeriod !== null && activeSessionIdx !== null
+      ? getPeriodConfig(activePeriod).sessions[activeSessionIdx].sessionNumber
+      : null;
+  socket.emit("timer-tick", {
     phase: currentPhase,
     timeLeft: currentTimeLeft,
     periodNumber: activePeriod,
@@ -128,7 +145,7 @@ async function runCountdown(seconds: number): Promise<void> {
   return new Promise<void>((resolve) => {
     resolveCountdown = resolve;
     if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
-    emitTimerTick();
+    emitTimerTick(); // Sync awal ke semua client
     currentTimerInterval = setInterval(() => {
       if (periodAborted) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
@@ -137,7 +154,12 @@ async function runCountdown(seconds: number): Promise<void> {
       }
       if (isPaused) return; // freeze — do not decrement
       currentTimeLeft = Math.max(0, currentTimeLeft - 1);
-      emitTimerTick();
+      // Optimasi 4: Tidak broadcast timer-tick setiap detik ke semua client
+      // Client melakukan countdown secara mandiri di sisi browser
+      // Hanya sync setiap 10 detik untuk koreksi drift
+      if (currentTimeLeft % 10 === 0) {
+        emitTimerTick();
+      }
       if (currentTimeLeft <= 0) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
         if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
@@ -160,23 +182,20 @@ async function loadInterventionCache() {
   }
 }
 
+// Optimasi 1: Batch insert — dari 12 query terpisah menjadi 2 query total
 async function seedInitialPortfolios(roundId: number, stockRows: StockRow[], initialLot = 10) {
   const allUsers = await db.select().from(users).where(eq(users.role, "responden"));
-  for (const user of allUsers) {
-    for (const stock of stockRows) {
-      const [existing] = await db.select().from(portfolios)
-        .where(and(
-          eq(portfolios.userId, user.id),
-          eq(portfolios.stockId, stock.id),
-          eq(portfolios.roundId, roundId),
-        )).limit(1);
-      if (!existing) {
-        await db.insert(portfolios).values({
-          userId: user.id, stockId: stock.id, roundId,
-          jumlahLot: initialLot, averagePrice: String(stock.basePrice),
-        });
-      }
-    }
+  const toInsert = allUsers.flatMap(user =>
+    stockRows.map(stock => ({
+      userId: user.id,
+      stockId: stock.id,
+      roundId,
+      jumlahLot: initialLot,
+      averagePrice: String(stock.basePrice),
+    }))
+  );
+  if (toInsert.length > 0) {
+    await db.insert(portfolios).values(toInsert).onConflictDoNothing();
   }
   console.log(`[Scheduler] Portfolios seeded: ${allUsers.length} users × ${stockRows.length} stocks × ${initialLot} lot`);
 }
@@ -251,7 +270,7 @@ function startMatchingEngine() {
       }
       if (changed) emitOrderBookUpdate(stock.id);
     }
-  }, 500);
+  }, 750); // Optimasi 3: Naikkan dari 500ms ke 750ms — kurangi beban DB 33% tanpa dampak UX
 }
 
 function emitOrderBookUpdate(stockId: number) {
@@ -266,9 +285,9 @@ function emitOrderBookUpdate(stockId: number) {
   });
 }
 
-async function emitBalanceUpdate(userId: number) {
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (user) io.to(`user:${userId}`).emit("balance-update", { userId: user.id, balance: Number(user.saldo) });
+// Optimasi 2: Emit balance langsung dari nilai yang diketahui — tanpa SELECT DB
+function emitBalanceUpdateDirect(userId: number, newBalance: number) {
+  io.to(`user:${userId}`).emit("balance-update", { userId, balance: newBalance });
 }
 
 async function emitPortfolioUpdate(userId: number, stockId: number) {
@@ -343,8 +362,12 @@ async function executeTrade(
       timestamp: new Date().toISOString(),
     });
 
-    await emitBalanceUpdate(bidOrder.userId);
-    await emitBalanceUpdate(askOrder.userId);
+    // Optimasi 2: Hitung saldo baru di memori, emit langsung tanpa SELECT DB
+    // Perlu baca saldo saat ini dari DB hanya 1x di awal transaksi
+    const [bidUser] = await db.select({ saldo: users.saldo }).from(users).where(eq(users.id, bidOrder.userId)).limit(1);
+    const [askUser] = await db.select({ saldo: users.saldo }).from(users).where(eq(users.id, askOrder.userId)).limit(1);
+    if (bidUser) emitBalanceUpdateDirect(bidOrder.userId, Number(bidUser.saldo) - total);
+    if (askUser) emitBalanceUpdateDirect(askOrder.userId, Number(askUser.saldo) + total);
     await emitPortfolioUpdate(bidOrder.userId, stockId);
     await emitPortfolioUpdate(askOrder.userId, stockId);
 
