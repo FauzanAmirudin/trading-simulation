@@ -7,7 +7,7 @@ import {
   users, stocks, rounds, roundStocks, predictions,
   orderBook, transactionsHistory, portfolios, experimentalConfig,
 } from "./src/db/schema";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import {
   PERIOD_MATRIX, getPeriodConfig, DURATIONS,
@@ -47,6 +47,8 @@ let activeRoundIdx: number | null = null;    // index into session.rounds[]
 // ─── Phase & Intervention ────────────────────────────────────
 let currentPhase: PhaseType = "IDLE";
 let currentIntervention: InterventionType = "NONE";
+let currentInterventionTitle = "";
+let currentInterventionContent = "";
 
 // ─── Control flags ───────────────────────────────────────────
 let isPaused = false;
@@ -62,6 +64,7 @@ let activeOpeningPrices: Record<number, number> = {};
 // ─── Timer ───────────────────────────────────────────────────
 let currentTimeLeft = 0;
 let currentTimerInterval: NodeJS.Timeout | null = null;
+let resolveCountdown: (() => void) | null = null;
 
 // ─── Matching engine ─────────────────────────────────────────
 let matchingInterval: NodeJS.Timeout | null = null;
@@ -123,19 +126,21 @@ function emitTimerTick() {
 async function runCountdown(seconds: number): Promise<void> {
   currentTimeLeft = seconds;
   return new Promise<void>((resolve) => {
+    resolveCountdown = resolve;
     if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
     emitTimerTick();
     currentTimerInterval = setInterval(() => {
       if (periodAborted) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
-        resolve(); return;
+        if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
+        return;
       }
       if (isPaused) return; // freeze — do not decrement
       currentTimeLeft = Math.max(0, currentTimeLeft - 1);
       emitTimerTick();
       if (currentTimeLeft <= 0) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
-        resolve();
+        if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
       }
     }, 1000);
   });
@@ -226,12 +231,23 @@ function startMatchingEngine() {
       book.bids.sort((a, b) => b.harga - a.harga);
       book.asks.sort((a, b) => a.harga - b.harga);
       let changed = false;
-      while (book.bids.length > 0 && book.asks.length > 0) {
-        const hBid = book.bids[0], lAsk = book.asks[0];
-        if (hBid.harga >= lAsk.harga) {
-          await executeTrade(stock.id, hBid, lAsk, lAsk.harga, activeRoundDbId);
+      let i = 0;
+      while (i < book.bids.length) {
+        const bid = book.bids[i];
+        const askIdx = book.asks.findIndex(a => a.harga === bid.harga);
+        if (askIdx !== -1) {
+          const ask = book.asks[askIdx];
+          const initialBidId = bid.id;
+          await executeTrade(stock.id, bid, ask, bid.harga, activeRoundDbId);
           changed = true;
-        } else break;
+          // If bid was completely filled, it gets spliced out of book.bids.
+          // We only increment i if the bid wasn't removed AND there are no more matching asks.
+          // But since the matching ask was removed (or this bid was removed), 
+          // we can just let the loop re-evaluate index `i`.
+          // If the bid is still at `i` and there are no more asks, the next iteration will hit the `else` block.
+        } else {
+          i++;
+        }
       }
       if (changed) emitOrderBookUpdate(stock.id);
     }
@@ -318,8 +334,10 @@ async function executeTrade(
       });
     });
 
+    const stockInfo = activeStocks.find(s => s.id === stockId);
     io.emit("trade-executed", {
       stockId, price, quantity,
+      stockCode: stockInfo?.kodeSaham ?? `#${stockId}`,
       buyerId: bidOrder.userId, sellerId: askOrder.userId,
       activeIntervention: currentIntervention,
       timestamp: new Date().toISOString(),
@@ -380,7 +398,10 @@ async function calculateOpeningPrices(roundId: number, stockRows: StockRow[]) {
 // STATE MACHINE — CORE
 // ============================================================
 
-async function runRound(periodConfig: PeriodDef, sessionIdx: number, roundIdx: number) {
+async function runRound(
+  periodConfig: PeriodDef, sessionIdx: number, roundIdx: number,
+  initialPhase: PhaseType | null = null, initialTimeLeft: number | null = null
+) {
   const session = periodConfig.sessions[sessionIdx];
   const roundDef = session.rounds[roundIdx];
   const periodNumber = periodConfig.periodNumber;
@@ -397,29 +418,33 @@ async function runRound(periodConfig: PeriodDef, sessionIdx: number, roundIdx: n
     return;
   }
 
-  // Create DB record for this round
-  const [roundRow] = await db.insert(rounds).values({
-    period: periodNumber,
-    sessionGroup: session.sessionNumber,
-    roundIndex: roundIdx,
-    status: "active",
-    subSessionStatus: "PRE_MARKET",
-    activeSubSession: 1,
-    activeIntervention: session.intervention,
-    startTime: new Date(),
-  }).returning();
+  // If recovering, we already have activeRoundDbId set. Otherwise, create new DB record.
+  if (initialPhase === null) {
+    const [roundRow] = await db.insert(rounds).values({
+      period: periodNumber,
+      sessionGroup: session.sessionNumber,
+      roundIndex: roundIdx,
+      status: "active",
+      subSessionStatus: "PRE_MARKET",
+      activeSubSession: 1,
+      activeIntervention: session.intervention,
+      startTime: new Date(),
+    }).returning();
+    
+    activeRoundDbId = roundRow.id;
+    activeStocks = orderedStocks;
+    activeOrderBooks = Object.fromEntries(orderedStocks.map(s => [s.id, { bids: [], asks: [] }]));
+    activePredictions = Object.fromEntries(orderedStocks.map(s => [s.id, []]));
+    activeOpeningPrices = {};
+    currentIntervention = session.intervention;
 
-  activeRoundDbId = roundRow.id;
-  activeStocks = orderedStocks;
-  activeOrderBooks = Object.fromEntries(orderedStocks.map(s => [s.id, { bids: [], asks: [] }]));
-  activePredictions = Object.fromEntries(orderedStocks.map(s => [s.id, []]));
-  activeOpeningPrices = {};
-  currentIntervention = session.intervention;
-
-  for (let i = 0; i < orderedStocks.length; i++) {
-    await db.insert(roundStocks).values({ roundId: roundRow.id, stockId: orderedStocks[i].id, slot: i + 1 });
+    for (let i = 0; i < orderedStocks.length; i++) {
+      await db.insert(roundStocks).values({ roundId: roundRow.id, stockId: orderedStocks[i].id, slot: i + 1 });
+    }
+    await seedInitialPortfolios(roundRow.id, orderedStocks);
   }
-  await seedInitialPortfolios(roundRow.id, orderedStocks);
+
+
 
   const roundLabel = `P${periodNumber}-S${session.sessionNumber}-R${roundIdx + 1}`;
   console.log(`[Scheduler] ${roundLabel}: ${orderedStocks.map(s => s.kodeSaham).join(", ")}`);
@@ -437,39 +462,82 @@ async function runRound(periodConfig: PeriodDef, sessionIdx: number, roundIdx: n
   });
 
   // ── PRE_MARKET PHASE ──────────────────────────────────────
-  currentPhase = "PRE_MARKET";
-  io.emit("sub-session-started", {
-    roundNumber: roundIdx + 1,
-    sessionNumber: 1,
-    phase: "PRE_MARKET",
-    duration: DURATIONS.PRE_MARKET,
-    intervention: session.intervention,
-    label: "Pra-Perdagangan",
-  });
+  if (initialPhase === null || initialPhase === "PRE_MARKET") {
+    currentPhase = "PRE_MARKET";
+    io.emit("sub-session-started", {
+      roundNumber: roundIdx + 1,
+      sessionNumber: 1,
+      phase: "PRE_MARKET",
+      duration: initialPhase === "PRE_MARKET" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.PRE_MARKET,
+      intervention: session.intervention,
+      label: "Pra-Perdagangan",
+    });
 
   if (session.intervention !== "NONE") {
-    const content = interventionCache[session.intervention]
-      || { title: getInterventionLabel(session.intervention), content: `Intervensi ${session.intervention} aktif.` };
+    const DUMMY_GOOD_NEWS = [
+      "Laporan kuartal terakhir menunjukkan peningkatan laba perusahaan secara signifikan melebihi ekspektasi pasar.",
+      "Pemerintah baru saja mengumumkan insentif pajak baru untuk sektor industri ini, mendorong sentimen positif.",
+      "Perusahaan berhasil menandatangani kontrak eksklusif bernilai tinggi dengan mitra internasional.",
+      "Analyst terkemuka menaikkan target harga saham karena kinerja penjualan yang sangat memuaskan bulan ini.",
+      "Inovasi produk terbaru yang diluncurkan mendapatkan respons sangat antusias dari konsumen global."
+    ];
+    
+    const DUMMY_BAD_NEWS = [
+      "Terjadi masalah operasional internal, memicu kepanikan pasar dan aksi jual massal.",
+      "Kenaikan suku bunga acuan secara mendadak membuat biaya operasional perusahaan diprediksi membengkak.",
+      "Laporan terbaru menunjukkan penurunan penjualan secara beruntun akibat turunnya daya beli masyarakat.",
+      "Regulasi ketat dari pemerintah terkait pembatasan industri berdampak langsung pada proyeksi pendapatan.",
+      "Terjadi kelangkaan bahan baku utama di pasar global yang mengancam kelancaran rantai pasok perusahaan."
+    ];
+
+    let dummyText = `Intervensi ${session.intervention} aktif.`;
+    if (session.intervention === "BERITA_BAIK") {
+      dummyText = orderedStocks.map(stock => {
+        const news = DUMMY_GOOD_NEWS[Math.floor(Math.random() * DUMMY_GOOD_NEWS.length)];
+        return `[ ${stock.kodeSaham} ] ${news}`;
+      }).join("   ✦   ");
+    }
+    if (session.intervention === "BERITA_BURUK") {
+      dummyText = orderedStocks.map(stock => {
+        const news = DUMMY_BAD_NEWS[Math.floor(Math.random() * DUMMY_BAD_NEWS.length)];
+        return `[ ${stock.kodeSaham} ] ${news}`;
+      }).join("   ✦   ");
+    }
+
+    // Gunakan teks dari admin jika ada dan merupakan berita nyata (bukan label/key intervensi)
+    const cached = interventionCache[session.intervention];
+    const cachedContent = cached?.content?.trim() ?? "";
+    const isRealNews = cachedContent.length > 20 && cachedContent !== session.intervention;
+    const finalContent = isRealNews ? cachedContent : dummyText;
+      
+    const cachedTitle = cached?.title?.trim() ?? "";
+    const isRealTitle = cachedTitle.length > 0 && cachedTitle !== session.intervention;
+    const finalTitle = isRealTitle ? cachedTitle : getInterventionLabel(session.intervention);
+
+    currentInterventionTitle = finalTitle;
+    currentInterventionContent = finalContent;
+
     io.emit("intervention-triggered", {
       type: session.intervention,
-      title: content.title,
-      content: content.content,
+      title: finalTitle,
+      content: finalContent,
       roundNumber: roundIdx + 1,
     });
-    console.log(`[Scheduler] Running text ACTIVE: ${session.intervention}`);
+    console.log(`[Scheduler] Running text ACTIVE: ${session.intervention} - ${finalContent}`);
   }
 
-  await runCountdown(DURATIONS.PRE_MARKET);
-  if (periodAborted) { await cleanupActiveRound(); return; }
+    await runCountdown(initialPhase === "PRE_MARKET" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.PRE_MARKET);
+    if (periodAborted) { await cleanupActiveRound(); return; }
 
-  await calculateOpeningPrices(roundRow.id, orderedStocks);
-  io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 1, phase: "PRE_MARKET" });
+    await calculateOpeningPrices(activeRoundDbId!, orderedStocks);
+    io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 1, phase: "PRE_MARKET" });
+  }
 
   // Period 1 — NO TRADING
   if (!session.hasTrading) {
     await db.update(rounds)
       .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
-      .where(eq(rounds.id, roundRow.id));
+      .where(eq(rounds.id, activeRoundDbId!));
     io.emit("round-ended", {
       roundNumber: roundIdx + 1, periodNumber,
       sessionNumber: session.sessionNumber,
@@ -480,49 +548,57 @@ async function runRound(periodConfig: PeriodDef, sessionIdx: number, roundIdx: n
   }
 
   // ── TRADING PHASE ─────────────────────────────────────────
-  currentPhase = "TRADING";
-  currentIntervention = "NONE";
-  io.emit("intervention-ended", { roundNumber: roundIdx + 1 }); // hide running text
+  if (initialPhase === null || initialPhase === "PRE_MARKET" || initialPhase === "TRADING") {
+    currentPhase = "TRADING";
+  // Do NOT reset intervention here; let the running text continue.
 
-  await db.update(rounds)
-    .set({ subSessionStatus: "TRADING", activeSubSession: 2, activeIntervention: "NONE" })
-    .where(eq(rounds.id, roundRow.id));
+    await db.update(rounds)
+      .set({ subSessionStatus: "TRADING", activeSubSession: 2, activeIntervention: session.intervention })
+      .where(eq(rounds.id, activeRoundDbId!));
 
-  io.emit("sub-session-started", {
-    roundNumber: roundIdx + 1,
-    sessionNumber: 2,
-    phase: "TRADING",
-    duration: DURATIONS.TRADING,
-    intervention: "NONE",
-    label: "Perdagangan",
-  });
+    io.emit("sub-session-started", {
+      roundNumber: roundIdx + 1,
+      sessionNumber: 2,
+      phase: "TRADING",
+      duration: initialPhase === "TRADING" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING,
+      intervention: "NONE",
+      label: "Perdagangan",
+    });
 
-  startMatchingEngine();
-  await runCountdown(DURATIONS.TRADING);
-  stopMatchingEngine();
+    startMatchingEngine();
+    await runCountdown(initialPhase === "TRADING" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING);
+    stopMatchingEngine();
 
-  if (periodAborted) { await cleanupActiveRound(); return; }
+    if (periodAborted) { await cleanupActiveRound(); return; }
 
-  await db.update(rounds)
-    .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
-    .where(eq(rounds.id, roundRow.id));
-  await db.update(orderBook)
-    .set({ status: "cancelled" })
-    .where(and(eq(orderBook.roundId, roundRow.id), eq(orderBook.status, "open")));
+    await db.update(rounds)
+      .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
+      .where(eq(rounds.id, activeRoundDbId!));
+    await db.update(orderBook)
+      .set({ status: "cancelled" })
+      .where(and(eq(orderBook.roundId, activeRoundDbId!), eq(orderBook.status, "open")));
 
-  io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 2, phase: "TRADING" });
-  io.emit("round-ended", {
-    roundNumber: roundIdx + 1, periodNumber,
-    sessionNumber: session.sessionNumber,
-    openingPrices: activeOpeningPrices,
-  });
+    io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 2, phase: "TRADING" });
+    io.emit("intervention-ended", { roundNumber: roundIdx + 1 }); // hide running text at the end of the round
+    io.emit("round-ended", {
+      roundNumber: roundIdx + 1, periodNumber,
+      sessionNumber: session.sessionNumber,
+      openingPrices: activeOpeningPrices,
+    });
+  }
 
   activeRoundDbId = null; activeStocks = []; activeOrderBooks = {}; currentIntervention = "NONE";
   console.log(`[Scheduler] ${roundLabel} DONE`);
 }
 
-async function startPeriod(periodNumber: 1 | 2 | 3) {
-  if (activePeriod !== null) {
+async function startPeriod(
+  periodNumber: 1 | 2 | 3,
+  startFromSessionIdx = 0,
+  startFromRoundIdx = 0,
+  initialPhase: PhaseType | null = null,
+  initialTimeLeft: number | null = null
+) {
+  if (activePeriod !== null && activePeriod !== periodNumber) {
     io.emit("admin-error", { message: `Periode ${activePeriod} masih berjalan. Hentikan dahulu sebelum memulai periode baru.` });
     return;
   }
@@ -530,7 +606,7 @@ async function startPeriod(periodNumber: 1 | 2 | 3) {
   const periodConfig = getPeriodConfig(periodNumber);
   activePeriod = periodNumber;
   periodAborted = false;
-  currentPhase = "IDLE";
+  currentPhase = initialPhase !== null ? initialPhase : "IDLE";
 
   console.log(`[Scheduler] ===== PERIOD ${periodNumber} STARTED =====`);
   await setPeriodState(periodNumber, "running");
@@ -541,12 +617,12 @@ async function startPeriod(periodNumber: 1 | 2 | 3) {
 
   await resetAllBalances();
 
-  for (let si = 0; si < periodConfig.sessions.length; si++) {
+  for (let si = startFromSessionIdx; si < periodConfig.sessions.length; si++) {
     if (periodAborted) break;
     const session = periodConfig.sessions[si];
     activeSessionIdx = si;
 
-    if (si > 0) {
+    if (si > 0 && !(si === startFromSessionIdx && initialPhase !== null)) {
       // Reset session state for the new session
       await resetSessionState();
       // Cooldown between sessions
@@ -572,13 +648,18 @@ async function startPeriod(periodNumber: 1 | 2 | 3) {
       totalRounds: session.rounds.length,
     });
 
-    for (let ri = 0; ri < session.rounds.length; ri++) {
+    const startRi = (si === startFromSessionIdx) ? startFromRoundIdx : 0;
+    for (let ri = startRi; ri < session.rounds.length; ri++) {
       if (periodAborted) break;
       activeRoundIdx = ri;
 
+      const isFirstRecoveredRound = (si === startFromSessionIdx && ri === startFromRoundIdx && initialPhase !== null);
+      // Removed round-transition cooldown as requested; rounds now proceed back-to-back within a session.
 
-
-      await runRound(periodConfig, si, ri);
+      const passPhase = isFirstRecoveredRound ? initialPhase : null;
+      const passTime = isFirstRecoveredRound ? initialTimeLeft : null;
+      
+      await runRound(periodConfig, si, ri, passPhase, passTime);
     }
   }
 
@@ -609,9 +690,87 @@ app.prepare().then(async () => {
     },
   });
 
+  async function recoverActiveSession() {
+    try {
+      const [activeRound] = await db.select().from(rounds).where(eq(rounds.status, "active")).orderBy(desc(rounds.startTime)).limit(1);
+      if (!activeRound) return;
+
+      const periodNumber = activeRound.period as 1 | 2 | 3;
+
+      // Only recover if the period was actually in "running" state when server went down.
+      // If period state is "completed", "idle", or "paused", the round is stale — close it.
+      const periodState = periodStates[periodNumber];
+      if (periodState !== "running") {
+        console.log(`[Scheduler] Found stale active round ${activeRound.id} but period ${periodNumber} state is "${periodState}" — closing stale round.`);
+        await db.update(rounds)
+          .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
+          .where(eq(rounds.id, activeRound.id));
+        await db.update(orderBook)
+          .set({ status: "cancelled" })
+          .where(and(eq(orderBook.roundId, activeRound.id), eq(orderBook.status, "open")));
+        return;
+      }
+
+      const pc = getPeriodConfig(periodNumber);
+      const sessionIdx = pc.sessions.findIndex(s => s.sessionNumber === activeRound.sessionGroup);
+      const roundIdx = activeRound.roundIndex;
+      const phase = activeRound.subSessionStatus as PhaseType;
+
+      console.log(`[Scheduler] RECOVERING active round ${activeRound.id} (Period ${periodNumber}, Session ${activeRound.sessionGroup}, Round ${roundIdx + 1})`);
+
+      // Set global active DB ID
+      activeRoundDbId = activeRound.id;
+
+      // Restore activeStocks
+      const rs = await db.select().from(roundStocks).where(eq(roundStocks.roundId, activeRoundDbId));
+      const sRows = await db.select().from(stocks).where(inArray(stocks.id, rs.map(r => r.stockId)));
+      activeStocks = rs.map(r => sRows.find(s => s.id === r.stockId)).filter(Boolean) as StockRow[];
+
+      // Restore order books
+      activeOrderBooks = Object.fromEntries(activeStocks.map(s => [s.id, { bids: [], asks: [] }]));
+      const openOrders = await db.select().from(orderBook).where(and(eq(orderBook.roundId, activeRoundDbId), eq(orderBook.status, "open")));
+      for (const order of openOrders) {
+        if (activeOrderBooks[order.stockId]) {
+          const formatted = { id: order.id, userId: order.userId, stockId: order.stockId, tipe: order.tipe, harga: Number(order.harga), jumlah: order.jumlah };
+          if (order.tipe === "buy") activeOrderBooks[order.stockId].bids.push(formatted);
+          else activeOrderBooks[order.stockId].asks.push(formatted);
+        }
+      }
+
+      // Restore predictions
+      activePredictions = Object.fromEntries(activeStocks.map(s => [s.id, []]));
+      const preds = await db.select().from(predictions).where(eq(predictions.roundId, activeRoundDbId));
+      for (const pred of preds) {
+        if (activePredictions[pred.stockId]) {
+          activePredictions[pred.stockId].push({ userId: pred.userId, predictedPrice: Number(pred.tebakanHarga) });
+        }
+      }
+      
+      // Attempt to calculate opening prices if in TRADING phase
+      activeOpeningPrices = {};
+      if (phase === "TRADING") {
+         await calculateOpeningPrices(activeRoundDbId, activeStocks);
+      }
+
+      isPaused = true;
+      console.log("[Scheduler] Session recovered and PAUSED. Awaiting admin resume.");
+
+      // Calculate time left (default to max for phase if exact calculation is tricky)
+      const timeLeft = phase === "PRE_MARKET" ? DURATIONS.PRE_MARKET : phase === "TRADING" ? DURATIONS.TRADING : DURATIONS.COOLDOWN;
+
+      // Start the period asynchronously
+      startPeriod(periodNumber, sessionIdx, roundIdx, phase, timeLeft).catch(err => {
+        console.error("[Scheduler] Error resuming period:", err);
+      });
+    } catch (err) {
+      console.error("[Scheduler] Error recovering session:", err);
+    }
+  }
+
   await loadInterventionCache();
   await loadPeriodStates();
   console.log("[Scheduler] State machine ready — PERIOD_MATRIX loaded");
+  await recoverActiveSession();
 
   io.on("connection", (socket) => {
     console.log("[Socket] Connected:", socket.id);
@@ -772,6 +931,7 @@ app.prepare().then(async () => {
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
+      if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
       stopMatchingEngine();
       console.log("[Scheduler] Period ABORTED by admin");
     });
@@ -782,6 +942,7 @@ app.prepare().then(async () => {
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
+      if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
       stopMatchingEngine();
       await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
       activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
@@ -799,6 +960,7 @@ app.prepare().then(async () => {
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
+      if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
     });
 
     // ── Admin: Reload Intervention Cache ─────────────────────
@@ -830,11 +992,13 @@ app.prepare().then(async () => {
         stocks: activeStocks.map(s => ({ id: s.id, kodeSaham: s.kodeSaham, namaSaham: s.namaSaham, basePrice: Number(s.basePrice) })),
         openingPrices: activeOpeningPrices,
         interventionCache,
-        periodStates, // <-- ADD THIS
+        periodStates,
         // Legacy fields
         activeRound: activeRoundIdx !== null ? activeRoundIdx + 1 : null,
         activeSubSession: currentPhase === "PRE_MARKET" ? 1 : 2,
-        phase: currentPhase,
+        phase: currentPhase,   // alias for currentPhase — used by client
+        interventionTitle: currentInterventionTitle,
+        interventionContent: currentInterventionContent,
       };
       socket.emit("scheduler-state", state);
     });

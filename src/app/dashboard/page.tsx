@@ -38,33 +38,16 @@ export default function DashboardPage() {
   const [activeIntervention, setActiveIntervention] = useState<InterventionType>("NONE");
   const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
 
-  const [resumeData, setResumeData] = useState({
-    totalBuy: 0,
-    totalSell: 0,
-    netPnl: 0,
-    history: [] as any[],
-  });
+  // Per-session transaction history — populated in real-time via socket, cleared when session ends
+  const [sessionHistory, setSessionHistory] = useState<{
+    time: string; stock: string; tipe: string; harga: number; jumlah: number;
+  }[]>([]);
 
-  const fetchResumeData = () => {
-    if (!user) return;
-    fetch(`/api/resume/responder?userId=${user.id}`)
-      .then((res) => res.json())
-      .then((resData) => {
-        if (!resData.error) {
-          setResumeData({
-            totalBuy: resData.totalBuy,
-            totalSell: resData.totalSell,
-            netPnl: resData.netPnl,
-            history: resData.history,
-          });
-        }
-      })
-      .catch((err) => console.error("Error fetching dashboard resume data:", err));
-  };
-
-  useEffect(() => {
-    if (hydrated && user) fetchResumeData();
-  }, [hydrated, user]);
+  // Derive summary stats from live session history
+  const totalBuy = sessionHistory.filter(t => t.tipe === "BID").reduce((s, t) => s + t.harga * t.jumlah * 100, 0);
+  const totalSell = sessionHistory.filter(t => t.tipe === "ASK").reduce((s, t) => s + t.harga * t.jumlah * 100, 0);
+  const netPnl = totalSell - totalBuy;
+  const history = sessionHistory;
 
   useEffect(() => {
     if (!hydrated) return;
@@ -113,11 +96,27 @@ export default function DashboardPage() {
       setSubSession(null);
     });
     socket.on("balance-update", (data: { userId: number; balance: number }) => {
-      if (data.userId === user.id) {
-        setBalance(data.balance);
-        fetchResumeData(); // Real-time sync for trade history & PnL
-      }
+      if (data.userId === user.id) setBalance(data.balance);
     });
+    // Collect per-session trade history in real-time
+    socket.on("trade-executed", (data: { stockId: number; price: number; quantity: number; tipe?: string; stockCode?: string; timestamp?: string }) => {
+      const time = data.timestamp
+        ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setSessionHistory(prev => [{
+        time,
+        stock: data.stockCode || `#${data.stockId}`,
+        tipe: data.tipe || "BID",
+        harga: data.price,
+        jumlah: data.quantity,
+      }, ...prev]);
+    });
+    // Clear history when session/round ends
+    const clearHistory = () => setSessionHistory([]);
+    socket.on("round-ended", () => { setSession(null); setRoundNumber(null); setPhase("IDLE"); setSubSession(null); clearHistory(); });
+    socket.on("experiment-reset", clearHistory);
+    socket.on("period-aborted", clearHistory);
+    socket.on("experiment-paused", () => {}); // no-op for paused
     socket.on("portfolio-data", (data: { portfolio: any[] }) => {
       setPortfolio((data.portfolio || []).map((p: any) => ({
         stock: p.stockCode, lot: p.jumlahLot, value: Number(p.currentValue),
@@ -130,6 +129,7 @@ export default function DashboardPage() {
       socket.off("round-started"); socket.off("sub-session-started");
       socket.off("timer-tick"); socket.off("intervention-triggered");
       socket.off("round-ended"); socket.off("balance-update"); socket.off("portfolio-data");
+      socket.off("trade-executed"); socket.off("experiment-reset"); socket.off("period-aborted"); socket.off("experiment-paused");
     };
   }, [hydrated, user]);
 
@@ -137,7 +137,8 @@ export default function DashboardPage() {
 
   const totalValue = portfolio.reduce((s, p) => s + p.value, 0);
   const totalWealth = balance + totalValue;
-  const { totalBuy, totalSell, netPnl, history } = resumeData;
+
+
 
   if (loading) {
     return (
@@ -279,80 +280,94 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Ringkasan Resume */}
-        <Card className="border-white/5 bg-zinc-900">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <BarChart3 className="size-4 text-zinc-400" />
-              Ringkasan Resume
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-zinc-800/50 p-3">
-                <div className="text-xs text-zinc-500 mb-0.5">Total Beli</div>
-                <div className="font-mono text-sm font-bold text-emerald-500">
-                  Rp {totalBuy.toLocaleString("id-ID")}
+        {/* Ringkasan Resume — only shown during active session */}
+        {session ? (
+          <Card className="border-white/5 bg-zinc-900">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart3 className="size-4 text-zinc-400" />
+                Ringkasan Sesi Ini
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <div className="text-xs text-zinc-500 mb-0.5">Total Beli</div>
+                  <div className="font-mono text-sm font-bold text-emerald-500">
+                    Rp {totalBuy.toLocaleString("id-ID")}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <div className="text-xs text-zinc-500 mb-0.5">Total Jual</div>
+                  <div className="font-mono text-sm font-bold text-rose-500">
+                    Rp {totalSell.toLocaleString("id-ID")}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <div className="text-xs text-zinc-500 mb-0.5">P&L Bersih</div>
+                  <div className={`font-mono text-sm font-bold ${netPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                    {netPnl >= 0 ? "+" : ""}Rp {Math.abs(netPnl).toLocaleString("id-ID")}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <div className="text-xs text-zinc-500 mb-0.5">Total Transaksi</div>
+                  <div className="font-mono text-sm font-bold text-zinc-200">
+                    {history.length}
+                  </div>
                 </div>
               </div>
-              <div className="rounded-lg bg-zinc-800/50 p-3">
-                <div className="text-xs text-zinc-500 mb-0.5">Total Jual</div>
-                <div className="font-mono text-sm font-bold text-rose-500">
-                  Rp {totalSell.toLocaleString("id-ID")}
-                </div>
-              </div>
-              <div className="rounded-lg bg-zinc-800/50 p-3">
-                <div className="text-xs text-zinc-500 mb-0.5">P&L Bersih</div>
-                <div className={`font-mono text-sm font-bold ${netPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                  {netPnl >= 0 ? "+" : ""}Rp {Math.abs(netPnl).toLocaleString("id-ID")}
-                </div>
-              </div>
-              <div className="rounded-lg bg-zinc-800/50 p-3">
-                <div className="text-xs text-zinc-500 mb-0.5">Total Transaksi</div>
-                <div className="font-mono text-sm font-bold text-zinc-200">
-                  {history.length}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="border-white/5 bg-zinc-900">
+            <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+              <BarChart3 className="size-6 text-zinc-700 mb-2" />
+              <p className="text-xs text-zinc-600">Ringkasan sesi akan muncul saat sesi berjalan</p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      {/* Riwayat Transaksi Terakhir */}
-      <Card className="border-white/5 bg-zinc-900">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <ScrollText className="size-4 text-zinc-400" />
-              Riwayat Transaksi Terakhir
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="divide-y divide-white/5">
-            {history.slice(0, 5).map((tx, i) => (
-              <div key={i} className="flex items-center justify-between py-2.5 text-xs">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-zinc-600 w-14">{tx.time}</span>
-                  <span className="font-medium text-zinc-300 w-12">{tx.stock}</span>
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                    tx.tipe === "BID" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
-                  }`}>{tx.tipe}</span>
-                </div>
-                <div className="flex items-center gap-4 font-mono text-zinc-400">
-                  <span>Rp {tx.harga.toLocaleString("id-ID")}</span>
-                  <span className="text-zinc-600">{tx.jumlah} lot</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          {history.length === 0 && (
-            <div className="py-6 text-center text-zinc-600 text-xs">
-              Belum ada transaksi
+      {/* Riwayat Transaksi Sesi Ini — only shown during active session */}
+      {session && (
+        <Card className="border-white/5 bg-zinc-900">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ScrollText className="size-4 text-zinc-400" />
+                Riwayat Transaksi Sesi Ini
+              </CardTitle>
+              <span className="text-[10px] text-zinc-600 font-mono">
+                {history.length} transaksi
+              </span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y divide-white/5">
+              {history.slice(0, 10).map((tx, i) => (
+                <div key={i} className="flex items-center justify-between py-2.5 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-zinc-600 w-14">{tx.time}</span>
+                    <span className="font-medium text-zinc-300 w-12">{tx.stock}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      tx.tipe === "BID" || tx.tipe === "buy" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
+                    }`}>{tx.tipe === "buy" || tx.tipe === "BID" ? "BELI" : "JUAL"}</span>
+                  </div>
+                  <div className="flex items-center gap-4 font-mono text-zinc-400">
+                    <span>Rp {tx.harga.toLocaleString("id-ID")}</span>
+                    <span className="text-zinc-600">{tx.jumlah} lot</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {history.length === 0 && (
+              <div className="py-6 text-center text-zinc-600 text-xs">
+                Belum ada transaksi dalam sesi ini
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </motion.div>
   );
 }

@@ -262,40 +262,9 @@ function TradingPageContent() {
   useEffect(() => {
     if (!hydrated) return;
     if (!user) { router.push("/login"); return; }
-    // Try new rounds API first, fall back to session API
-    fetch("/api/rounds")
-      .then(r => r.json())
-      .then(res => {
-        if (res.rounds && res.rounds.length > 0) {
-          // Use rounds data
-          const activeRoundData = res.rounds.find((r: any) => r.status === "active");
-          if (activeRoundData) {
-            const stockList = activeRoundData.stocks || [];
-            if (stockList.length > 0) {
-              setStocks(stockList.map((s: any) => ({
-                id: s.id,
-                kodeSaham: s.kodeSaham,
-                namaSaham: s.namaSaham,
-                basePrice: Number(s.basePrice),
-              })));
-              setSessionActive(true);
-              setRoundNumber(activeRoundData.roundNumber);
-              setPhase((activeRoundData.subSessionStatus as SubSessionPhase) || "PENDING");
-            }
-          }
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        // Fallback to session API
-        fetch("/api/session/active").then(r => r.json()).then(res => {
-          if (res.session && res.stocks && res.stocks.length > 0) {
-            setStocks(res.stocks);
-            setSessionActive(true);
-          }
-          setLoading(false);
-        }).catch(() => setLoading(false));
-      });
+    // Initial state is determined by socket 'scheduler-state' event, not HTTP.
+    // Just mark loading as done — the socket handler will set stocks/session.
+    setLoading(false);
   }, [user, router]); // eslint-disable-line
 
   // ── Global socket: handles round/session events regardless of which stock is selected ──
@@ -423,14 +392,35 @@ function TradingPageContent() {
     });
 
     socket.on("scheduler-state", (data: any) => {
-      // Restore state if user reconnects mid-session
-      if (data.activeRound !== null && data.stocks && data.stocks.length > 0) {
+      // Single source of truth for session state on connect/reconnect
+      if (data.activePeriod !== null && data.stocks && data.stocks.length > 0 && data.currentPhase !== "IDLE") {
+        // Active session — populate UI
         setRoundNumber(data.activeRound);
         setSessionActive(true);
         setStocks(data.stocks);
         setPhase(data.phase || "PENDING");
         setSubSession(data.activeSubSession);
         setSessionTimer(data.timeLeft || 0);
+        if (data.currentIntervention && data.currentIntervention !== "NONE") {
+          setActiveIntervention(data.currentIntervention);
+          setRunningText({
+            active: true,
+            type: data.currentIntervention,
+            title: data.interventionTitle || "",
+            content: data.interventionContent || "",
+          });
+        } else {
+          setActiveIntervention("NONE");
+          setRunningText(prev => ({ ...prev, active: false }));
+        }
+      } else {
+        // No active session — ensure page is cleared
+        setSessionActive(false);
+        setStocks([]);
+        setRoundNumber(null);
+        setPhase("IDLE");
+        setSubSession(null);
+        setRunningText({ active: false, type: "NONE", title: "", content: "" });
       }
     });
 
@@ -759,34 +749,6 @@ function TradingPageContent() {
           </div>
         </div>
       </div>
-
-      {/* Active Intervention Banner */}
-      {activeIntervention !== "NONE" && interventionContent && (
-        <div className={cn(
-          "flex items-start gap-3 rounded-lg border p-4",
-          activeIntervention === "BERITA_BAIK" ? "bg-emerald-500/10 border-emerald-500/30" :
-          activeIntervention === "BERITA_BURUK" ? "bg-rose-500/10 border-rose-500/30" :
-          "bg-amber-500/10 border-amber-500/30"
-        )}>
-          <Zap className={cn(
-            "size-5 mt-0.5 shrink-0",
-            activeIntervention === "BERITA_BAIK" ? "text-emerald-400" :
-            activeIntervention === "BERITA_BURUK" ? "text-rose-400" :
-            "text-amber-400"
-          )} />
-          <div>
-            <div className={cn(
-              "text-sm font-bold",
-              activeIntervention === "BERITA_BAIK" ? "text-emerald-400" :
-              activeIntervention === "BERITA_BURUK" ? "text-rose-400" :
-              "text-amber-400"
-            )}>
-              {getInterventionLabel(activeIntervention)}
-            </div>
-            <div className="text-xs text-zinc-400 mt-0.5">{interventionContent.content}</div>
-          </div>
-        </div>
-      )}
 
       {/* PRE_OPENING: Prediction Input UI */}
       {showPredictionUI && stocks.length > 0 && (

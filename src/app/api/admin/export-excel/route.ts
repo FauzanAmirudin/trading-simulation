@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
 
       if (dateParam) {
         const getWibDateString = (d: Date) => {
-          return new Date(d.getTime() + 7 * 60 * 60 * 1000).toISOString().split('T')[0];
+          return d.toISOString().split('T')[0];
         };
         userPredictions = userPredictions.filter(p => p.createdAt && getWibDateString(new Date(p.createdAt)) === dateParam);
         userTransactions = userTransactions.filter(tx => tx.createdAt && getWibDateString(new Date(tx.createdAt)) === dateParam);
@@ -135,8 +135,7 @@ export async function GET(req: NextRequest) {
         const predPrice = Number(p.tebakanHarga);
         const selisih = Math.abs(predPrice - finalPrice);
 
-        const timeStr = new Date(new Date(p.createdAt).getTime() + 7 * 60 * 60 * 1000)
-          .toISOString().replace('T', ' ').substring(0, 19);
+        const timeStr = p.createdAt ? p.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
 
         const row = sheet1.addRow({
           waktu: timeStr,
@@ -200,8 +199,7 @@ export async function GET(req: NextRequest) {
         const lawanId = isBuyer ? sellerId : buyerId;
         const lawanName = lawanId ? userMap[lawanId] || `User #${lawanId}` : "Sistem/Unknown";
 
-        const timeStr = new Date(new Date(tx.createdAt).getTime() + 7 * 60 * 60 * 1000)
-          .toISOString().replace('T', ' ').substring(0, 19);
+        const timeStr = tx.createdAt ? tx.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
 
         const row = sheet2.addRow({
           waktu: timeStr,
