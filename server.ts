@@ -13,6 +13,7 @@ import {
   PERIOD_MATRIX, getPeriodConfig, DURATIONS,
   InterventionType, PhaseType, PeriodDef, getInterventionLabel,
 } from "./src/lib/experimental-matrix";
+import { isValidTickSize, getTickSize, getAutoRejectionLimits } from "./src/lib/market-rules";
 
 // ============================================================
 // SERVER SETUP
@@ -154,12 +155,8 @@ async function runCountdown(seconds: number): Promise<void> {
       }
       if (isPaused) return; // freeze — do not decrement
       currentTimeLeft = Math.max(0, currentTimeLeft - 1);
-      // Optimasi 4: Tidak broadcast timer-tick setiap detik ke semua client
-      // Client melakukan countdown secara mandiri di sisi browser
-      // Hanya sync setiap 10 detik untuk koreksi drift
-      if (currentTimeLeft % 10 === 0) {
-        emitTimerTick();
-      }
+      // Emit timer-tick setiap detik agar hitung mundur di UI berjalan real-time
+      emitTimerTick();
       if (currentTimeLeft <= 0) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
         if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
@@ -319,9 +316,15 @@ async function executeTrade(
   const subSession = currentPhase === "TRADING" ? 2 : 1;
 
   try {
+    let newBidBalance = 0;
+    let newAskBalance = 0;
+
     await db.transaction(async (tx) => {
-      await tx.update(users).set({ saldo: sql`saldo - ${total}` }).where(eq(users.id, bidOrder.userId));
-      await tx.update(users).set({ saldo: sql`saldo + ${total}` }).where(eq(users.id, askOrder.userId));
+      const [updatedBid] = await tx.update(users).set({ saldo: sql`saldo - ${total}` }).where(eq(users.id, bidOrder.userId)).returning({ saldo: users.saldo });
+      const [updatedAsk] = await tx.update(users).set({ saldo: sql`saldo + ${total}` }).where(eq(users.id, askOrder.userId)).returning({ saldo: users.saldo });
+      
+      newBidBalance = Number(updatedBid?.saldo || 0);
+      newAskBalance = Number(updatedAsk?.saldo || 0);
 
       // Buyer portfolio — scoped to current roundId
       const [bp] = await tx.select().from(portfolios)
@@ -345,6 +348,14 @@ async function executeTrade(
         else await tx.update(portfolios).set({ jumlahLot: newLots }).where(eq(portfolios.id, sp.id));
       }
 
+      // Perbarui status dan jumlah tersisa di order_book
+      await tx.update(orderBook)
+        .set({ jumlah: bidOrder.jumlah, status: bidOrder.jumlah <= 0 ? "completed" : "open" })
+        .where(eq(orderBook.id, bidOrder.id));
+      await tx.update(orderBook)
+        .set({ jumlah: askOrder.jumlah, status: askOrder.jumlah <= 0 ? "completed" : "open" })
+        .where(eq(orderBook.id, askOrder.id));
+
       await tx.insert(transactionsHistory).values({
         orderBuyId: bidOrder.id, orderSellId: askOrder.id,
         stockId, roundId, subSession,
@@ -362,12 +373,10 @@ async function executeTrade(
       timestamp: new Date().toISOString(),
     });
 
-    // Optimasi 2: Hitung saldo baru di memori, emit langsung tanpa SELECT DB
-    // Perlu baca saldo saat ini dari DB hanya 1x di awal transaksi
-    const [bidUser] = await db.select({ saldo: users.saldo }).from(users).where(eq(users.id, bidOrder.userId)).limit(1);
-    const [askUser] = await db.select({ saldo: users.saldo }).from(users).where(eq(users.id, askOrder.userId)).limit(1);
-    if (bidUser) emitBalanceUpdateDirect(bidOrder.userId, Number(bidUser.saldo) - total);
-    if (askUser) emitBalanceUpdateDirect(askOrder.userId, Number(askUser.saldo) + total);
+    // Optimasi 2 (Fixed): Emit saldo baru langsung dari hasil RETURNING transaksi database
+    emitBalanceUpdateDirect(bidOrder.userId, newBidBalance);
+    emitBalanceUpdateDirect(askOrder.userId, newAskBalance);
+    
     await emitPortfolioUpdate(bidOrder.userId, stockId);
     await emitPortfolioUpdate(askOrder.userId, stockId);
 
@@ -621,7 +630,8 @@ async function startPeriod(
   initialPhase: PhaseType | null = null,
   initialTimeLeft: number | null = null
 ) {
-  if (activePeriod !== null && activePeriod !== periodNumber) {
+  // Prevent starting if ANY period is already running, even the same one.
+  if (activePeriod !== null) {
     io.emit("admin-error", { message: `Periode ${activePeriod} masih berjalan. Hentikan dahulu sebelum memulai periode baru.` });
     return;
   }
@@ -631,73 +641,70 @@ async function startPeriod(
   periodAborted = false;
   currentPhase = initialPhase !== null ? initialPhase : "IDLE";
 
-  console.log(`[Scheduler] ===== PERIOD ${periodNumber} STARTED =====`);
-  await setPeriodState(periodNumber, "running");
-  io.emit("period-started", {
-    periodNumber, label: periodConfig.label,
-    totalSessions: periodConfig.sessions.length,
-  });
-
-  await resetAllBalances();
-
-  for (let si = startFromSessionIdx; si < periodConfig.sessions.length; si++) {
-    if (periodAborted) break;
-    const session = periodConfig.sessions[si];
-    activeSessionIdx = si;
-
-    if (si > 0 && !(si === startFromSessionIdx && initialPhase !== null)) {
-      // Reset session state for the new session
-      await resetSessionState();
-      // Cooldown between sessions
-      currentPhase = "COOLDOWN";
-      io.emit("cooldown-started", {
-        duration: DURATIONS.COOLDOWN, reason: "between-sessions",
-        periodNumber, sessionGroup: session.sessionNumber,
-      });
-      console.log(`[Scheduler] Cooldown between sessions (${DURATIONS.COOLDOWN}s)...`);
-      await runCountdown(DURATIONS.COOLDOWN);
-      if (periodAborted) break;
-    }
-
-    currentPhase = "IDLE";
-    console.log(`[Scheduler] --- Session ${session.sessionNumber}: ${session.label} ---`);
-    io.emit("session-group-started", {
-      periodNumber,
-      sessionNumber: session.sessionNumber,
-      sessionIdx: si,
-      label: session.label,
-      intervention: session.intervention,
-      hasTrading: session.hasTrading,
-      totalRounds: session.rounds.length,
+  try {
+    console.log(`[Scheduler] ===== PERIOD ${periodNumber} STARTED =====`);
+    await setPeriodState(periodNumber, "running");
+    io.emit("period-started", {
+      periodNumber, label: periodConfig.label,
+      totalSessions: periodConfig.sessions.length,
     });
 
-    const startRi = (si === startFromSessionIdx) ? startFromRoundIdx : 0;
-    for (let ri = startRi; ri < session.rounds.length; ri++) {
+    await resetAllBalances();
+
+    for (let si = startFromSessionIdx; si < periodConfig.sessions.length; si++) {
       if (periodAborted) break;
-      activeRoundIdx = ri;
+      const session = periodConfig.sessions[si];
+      activeSessionIdx = si;
 
-      const isFirstRecoveredRound = (si === startFromSessionIdx && ri === startFromRoundIdx && initialPhase !== null);
-      // Removed round-transition cooldown as requested; rounds now proceed back-to-back within a session.
+      if (si > 0 && !(si === startFromSessionIdx && initialPhase !== null)) {
+        await resetSessionState();
+        currentPhase = "COOLDOWN";
+        io.emit("cooldown-started", {
+          duration: DURATIONS.COOLDOWN, reason: "between-sessions",
+          periodNumber, sessionGroup: session.sessionNumber,
+        });
+        console.log(`[Scheduler] Cooldown between sessions (${DURATIONS.COOLDOWN}s)...`);
+        await runCountdown(DURATIONS.COOLDOWN);
+        if (periodAborted) break;
+      }
 
-      const passPhase = isFirstRecoveredRound ? initialPhase : null;
-      const passTime = isFirstRecoveredRound ? initialTimeLeft : null;
-      
-      await runRound(periodConfig, si, ri, passPhase, passTime);
+      currentPhase = "IDLE";
+      console.log(`[Scheduler] --- Session ${session.sessionNumber}: ${session.label} ---`);
+      io.emit("session-group-started", {
+        periodNumber, sessionNumber: session.sessionNumber, sessionIdx: si,
+        label: session.label, intervention: session.intervention,
+        hasTrading: session.hasTrading, totalRounds: session.rounds.length,
+      });
+
+      const startRi = (si === startFromSessionIdx) ? startFromRoundIdx : 0;
+      for (let ri = startRi; ri < session.rounds.length; ri++) {
+        if (periodAborted) break;
+        activeRoundIdx = ri;
+
+        const isFirstRecoveredRound = (si === startFromSessionIdx && ri === startFromRoundIdx && initialPhase !== null);
+        const passPhase = isFirstRecoveredRound ? initialPhase : null;
+        const passTime = isFirstRecoveredRound ? initialTimeLeft : null;
+        
+        await runRound(periodConfig, si, ri, passPhase, passTime);
+      }
     }
-  }
+  } catch (err) {
+    console.error(`[Scheduler] Kritis: Error pada Period ${periodNumber}:`, err);
+    io.emit("admin-error", { message: `Terjadi error kritis pada Periode ${periodNumber}. Server menghentikan sesi secara otomatis.` });
+  } finally {
+    activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
+    currentPhase = "IDLE"; currentIntervention = "NONE";
 
-  activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
-  currentPhase = "IDLE"; currentIntervention = "NONE";
-
-  if (!periodAborted) {
-    console.log(`[Scheduler] ===== PERIOD ${periodNumber} COMPLETE =====`);
-    await setPeriodState(periodNumber, "completed");
-    io.emit("period-ended", { periodNumber });
-  } else {
-    console.log(`[Scheduler] ===== PERIOD ${periodNumber} ABORTED =====`);
-    await cleanupActiveRound();
-    await setPeriodState(periodNumber, "completed");
-    io.emit("period-aborted", { periodNumber });
+    if (!periodAborted) {
+      console.log(`[Scheduler] ===== PERIOD ${periodNumber} COMPLETE (Atau Dihentikan Otomatis) =====`);
+      await setPeriodState(periodNumber, "completed");
+      io.emit("period-ended", { periodNumber });
+    } else {
+      console.log(`[Scheduler] ===== PERIOD ${periodNumber} ABORTED =====`);
+      await cleanupActiveRound();
+      await setPeriodState(periodNumber, "completed");
+      io.emit("period-aborted", { periodNumber });
+    }
   }
 }
 
@@ -925,10 +932,14 @@ app.prepare().then(async () => {
         if (u?.role === "admin") { socket.data.userId = u.id; socket.data.userRole = u.role; }
       }
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
+      
+      // Update state & emit instantly so UI doesn't delay
       isPaused = true;
-      if (activePeriod !== null) await setPeriodState(activePeriod, "paused");
       io.emit("experiment-paused", { timeLeft: currentTimeLeft, phase: currentPhase });
       console.log("[Scheduler] PAUSED");
+      
+      // Save state to DB asynchronously
+      if (activePeriod !== null) await setPeriodState(activePeriod, "paused");
     });
 
     // ── Admin: Resume ─────────────────────────────────────────
@@ -938,10 +949,14 @@ app.prepare().then(async () => {
         if (u?.role === "admin") { socket.data.userId = u.id; socket.data.userRole = u.role; }
       }
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
+      
+      // Update state & emit instantly so UI doesn't delay
       isPaused = false;
-      if (activePeriod !== null) await setPeriodState(activePeriod, "running");
       io.emit("experiment-resumed", { phase: currentPhase });
       console.log("[Scheduler] RESUMED");
+      
+      // Save state to DB asynchronously
+      if (activePeriod !== null) await setPeriodState(activePeriod, "running");
     });
 
     // ── Admin: Stop Period ────────────────────────────────────
@@ -962,18 +977,23 @@ app.prepare().then(async () => {
     // ── Admin: Reset Experiment ───────────────────────────────
     socket.on("admin-reset-experiment", async () => {
       if (!isAdmin()) return;
+      
+      // Stop everything instantly and tell the UI to reset
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
       if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
       stopMatchingEngine();
-      await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
       activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
       currentPhase = "IDLE"; currentIntervention = "NONE";
       activeRoundDbId = null; activeStocks = []; activeOrderBooks = {};
-      for (let i = 1; i <= 3; i++) await setPeriodState(i, "idle");
+      
       io.emit("experiment-reset", {});
       console.log("[Scheduler] Experiment RESET by admin");
+
+      // Background DB cleanup
+      await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
+      for (let i = 1; i <= 3; i++) await setPeriodState(i, "idle");
     });
 
     // Legacy aliases
@@ -1035,6 +1055,21 @@ app.prepare().then(async () => {
       const stock = activeStocks.find(s => s.id === stockId);
       if (!stock) { socket.emit("prediction-error", { message: "Saham tidak valid" }); return; }
 
+      // ── Validasi Fraksi Harga ─────────────────────────────
+      if (!isValidTickSize(predictedPrice)) {
+        const tick = getTickSize(predictedPrice);
+        socket.emit("prediction-error", { message: `Harga prediksi harus kelipatan Rp ${tick}. Contoh: Rp ${Math.round(predictedPrice / tick) * tick}` });
+        return;
+      }
+
+      // ── Validasi Auto Rejection vs basePrice ──────────────
+      const basePrice = Number(stock.basePrice);
+      const { upper, lower } = getAutoRejectionLimits(basePrice);
+      if (predictedPrice > upper || predictedPrice < lower) {
+        socket.emit("prediction-error", { message: `Prediksi di luar batas wajar. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
+        return;
+      }
+
       if (!activePredictions[stockId]) activePredictions[stockId] = [];
       activePredictions[stockId].push({ userId, predictedPrice });
 
@@ -1047,6 +1082,15 @@ app.prepare().then(async () => {
     // ── Place Order ──────────────────────────────────────────
     socket.on("place-order", async (data: { stockId: number; tipe: "BID" | "ASK"; harga: number; jumlah: number; userId: number }) => {
       const { stockId, tipe, harga, jumlah, userId } = data;
+
+      if (harga <= 0 || jumlah <= 0) {
+        socket.emit("order-error", { message: "Harga dan jumlah lot harus lebih dari nol" });
+        return;
+      }
+      if (!Number.isInteger(jumlah) || jumlah > 10000) {
+        socket.emit("order-error", { message: "Jumlah lot tidak valid (harus bilangan bulat, maks 10.000 lot)" });
+        return;
+      }
 
       if (!activeRoundDbId) { socket.emit("order-error", { message: "Tidak ada ronde aktif" }); return; }
       if (currentPhase !== "TRADING") {
@@ -1080,6 +1124,24 @@ app.prepare().then(async () => {
         const lockedLots = openAsks.reduce((s, o) => s + o.jumlah, 0);
         if (owned - lockedLots < jumlah) {
           socket.emit("order-error", { message: `Lot tidak mencukupi. Tersedia: ${owned - lockedLots} lot, dibutuhkan: ${jumlah} lot` });
+          return;
+        }
+      }
+
+      // ── Validasi Fraksi Harga ─────────────────────────────
+      if (!isValidTickSize(harga)) {
+        const tick = getTickSize(harga);
+        const nearest = Math.round(harga / tick) * tick;
+        socket.emit("order-error", { message: `Harga tidak valid. Harga harus kelipatan Rp ${tick}. Contoh harga valid: Rp ${nearest.toLocaleString("id-ID")}` });
+        return;
+      }
+
+      // ── Validasi Auto Rejection vs Opening Price ──────────
+      const openingPrice = activeOpeningPrices[stockId];
+      if (openingPrice) {
+        const { upper, lower } = getAutoRejectionLimits(openingPrice);
+        if (harga > upper || harga < lower) {
+          socket.emit("order-error", { message: `Harga di luar batas Auto Rejection. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
           return;
         }
       }
@@ -1134,6 +1196,51 @@ app.prepare().then(async () => {
     // ── Get Stock Portfolio ───────────────────────────────────
     socket.on("get-stock-portfolio", async (data: { userId: number; stockId: number }) => {
       await emitPortfolioUpdate(data.userId, data.stockId);
+    });
+
+    // ── Get User Session History ──────────────────────────────
+    socket.on("get-session-history", async (data: { userId: number }) => {
+      const { userId } = data;
+      if (!activeRoundDbId) { socket.emit("session-history-data", []); return; }
+      
+      try {
+        const history = await db.execute(sql`
+          SELECT 
+            t.created_at as time,
+            s.kode_saham as stock,
+            t.harga as price,
+            t.jumlah as quantity,
+            ob.user_id as buyer_id,
+            os.user_id as seller_id
+          FROM transactions_history t
+          JOIN stocks s ON t.stock_id = s.id
+          JOIN order_book ob ON t.order_buy_id = ob.id
+          JOIN order_book os ON t.order_sell_id = os.id
+          WHERE t.round_id = ${activeRoundDbId}
+            AND (ob.user_id = ${userId} OR os.user_id = ${userId})
+          ORDER BY t.created_at DESC
+        `);
+
+        const rows = (history as any).rows || [];
+        const formatted = rows.map((row: any) => {
+          let tipe = "BID";
+          if (row.buyer_id === userId && row.seller_id === userId) tipe = "SELF";
+          else if (row.buyer_id === userId) tipe = "BID";
+          else tipe = "ASK";
+          
+          return {
+            time: new Date(row.time).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+            stock: row.stock,
+            tipe,
+            harga: Number(row.price),
+            jumlah: row.quantity
+          };
+        });
+        socket.emit("session-history-data", formatted);
+      } catch (err) {
+        console.error("Error fetching session history:", err);
+        socket.emit("session-history-data", []);
+      }
     });
 
     // ── Get Trade History ─────────────────────────────────────

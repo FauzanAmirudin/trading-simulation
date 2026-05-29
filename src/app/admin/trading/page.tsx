@@ -148,8 +148,7 @@ export default function AdminTradingPage() {
     else socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
 
-    // Initial state restore
-    socket.on("scheduler-state", (data: any) => {
+    const onSchedulerState = (data: any) => {
       setLoading(false);
       setIsPaused(data.isPaused || false);
       if (data.activeRound !== null) {
@@ -163,7 +162,6 @@ export default function AdminTradingPage() {
           openingPricesRef.current = data.openingPrices;
         }
 
-        // Initialize active stocks record
         if (data.stocks && data.stocks.length > 0) {
           const initialStocks: Record<number, Stock> = {};
           data.stocks.forEach((s: any) => {
@@ -181,8 +179,6 @@ export default function AdminTradingPage() {
             };
           });
           setStocks(initialStocks);
-
-          // Retrieve database stats
           fetchAdminData(data.activeRound);
         }
       } else {
@@ -196,9 +192,9 @@ export default function AdminTradingPage() {
           avgTransactionValue: 0,
         });
       }
-    });
+    };
 
-    socket.on("round-started", (data: { roundNumber: number; period: number; stocks: any[] }) => {
+    const onRoundStarted = (data: { roundNumber: number; period: number; stocks: any[] }) => {
       setActiveRound(data.roundNumber);
       setSubSession(1);
       setPhase("PRE_MARKET");
@@ -226,9 +222,9 @@ export default function AdminTradingPage() {
       
       toast.success(`Ronde ${data.roundNumber} dimulai! Sesi PRE_OPENING berjalan.`);
       fetchAdminData(data.roundNumber);
-    });
+    };
 
-    socket.on("sub-session-started", (data: {
+    const onSubSessionStarted = (data: {
       roundNumber: number;
       sessionNumber: number;
       phase: SubSessionPhase;
@@ -240,13 +236,13 @@ export default function AdminTradingPage() {
       setSessionTimer(data.duration);
       setActiveIntervention(data.intervention);
       setIsPaused(false);
-    });
+    };
 
-    socket.on("timer-tick", (data: { timeLeft: number }) => {
+    const onTimerTick = (data: { timeLeft: number }) => {
       setSessionTimer(data.timeLeft);
-    });
+    };
 
-    socket.on("opening-prices-calculated", (data: { prices: { stockId: number; price: number }[] }) => {
+    const onOpeningPricesCalculated = (data: { prices: { stockId: number; price: number }[] }) => {
       data.prices.forEach(p => {
         openingPricesRef.current[p.stockId] = p.price;
       });
@@ -262,9 +258,9 @@ export default function AdminTradingPage() {
         return newStocks;
       });
       toast.info("Harga keseimbangan pasar (Equilibrium) berhasil dihitung.");
-    });
+    };
 
-    socket.on("order-book-update", (data: { stockId: number; bids: any[]; asks: any[] }) => {
+    const onOrderBookUpdate = (data: { stockId: number; bids: any[]; asks: any[] }) => {
       setStocks(prev => {
         const s = prev[data.stockId];
         if (!s) return prev;
@@ -279,63 +275,74 @@ export default function AdminTradingPage() {
           },
         };
       });
-    });
+    };
 
-    socket.on("trade-executed", (trade: { stockId: number; price: number; quantity: number }) => {
-      // Fetch latest logs from database to guarantee absolute correctness and fetch participant labels
+    const onTradeExecuted = (trade: { stockId: number; price: number; quantity: number }) => {
       if (activeRound) {
         fetchAdminData(activeRound);
       }
-    });
+    };
 
-    socket.on("experiment-paused", () => {
+    const onExperimentPaused = () => {
       setIsPaused(true);
       toast.info("Sesi perdagangan ditangguhkan oleh Admin.");
-    });
+    };
 
-    socket.on("experiment-resumed", () => {
+    const onExperimentResumed = () => {
       setIsPaused(false);
       toast.success("Sesi perdagangan dilanjutkan.");
-    });
+    };
 
-    socket.on("round-ended", (data: { roundNumber: number }) => {
+    const onRoundEnded = (data: { roundNumber: number }) => {
       toast.warning(`Ronde ${data.roundNumber} telah selesai.`);
       setActiveRound(null);
       setStocks({});
       setTransactions([]);
-    });
+    };
 
-    socket.on("experiment-stopped", () => {
+    const onExperimentStopped = () => {
       setActiveRound(null);
       setStocks({});
       setTransactions([]);
-    });
+    };
 
-    socket.on("experiment-reset", () => {
+    const onExperimentReset = () => {
       setActiveRound(null);
       setStocks({});
       setTransactions([]);
       toast.info("Eksperimen di-reset sepenuhnya.");
-    });
+    };
 
-    // Request full state immediately
+    socket.on("scheduler-state", onSchedulerState);
+    socket.on("round-started", onRoundStarted);
+    socket.on("sub-session-started", onSubSessionStarted);
+    socket.on("timer-tick", onTimerTick);
+    socket.on("opening-prices-calculated", onOpeningPricesCalculated);
+    socket.on("order-book-update", onOrderBookUpdate);
+    socket.on("trade-executed", onTradeExecuted);
+    socket.on("experiment-paused", onExperimentPaused);
+    socket.on("experiment-resumed", onExperimentResumed);
+    socket.on("round-ended", onRoundEnded);
+    socket.on("experiment-stopped", onExperimentStopped);
+    socket.on("experiment-reset", onExperimentReset);
+
     socket.emit("get-scheduler-state");
 
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
-      socket.off("scheduler-state");
-      socket.off("round-started");
-      socket.off("sub-session-started");
-      socket.off("timer-tick");
-      socket.off("opening-prices-calculated");
-      socket.off("order-book-update");
-      socket.off("trade-executed");
-      socket.off("experiment-paused");
-      socket.off("experiment-resumed");
-      socket.off("round-ended");
-      socket.off("experiment-stopped");
-      socket.off("experiment-reset");
+      socket.off("scheduler-state", onSchedulerState);
+      socket.off("round-started", onRoundStarted);
+      socket.off("sub-session-started", onSubSessionStarted);
+      socket.off("timer-tick", onTimerTick);
+      socket.off("opening-prices-calculated", onOpeningPricesCalculated);
+      socket.off("order-book-update", onOrderBookUpdate);
+      socket.off("trade-executed", onTradeExecuted);
+      socket.off("experiment-paused", onExperimentPaused);
+      socket.off("experiment-resumed", onExperimentResumed);
+      socket.off("round-ended", onRoundEnded);
+      socket.off("experiment-stopped", onExperimentStopped);
+      socket.off("experiment-reset", onExperimentReset);
     };
   }, [hydrated, user, router, activeRound, fetchAdminData]);
 

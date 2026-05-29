@@ -68,7 +68,7 @@ export default function AdminPage() {
   // Listen for trade-executed events for live transaction log
   useEffect(() => {
     const socket = getSocket();
-    socket.on("trade-executed", (data: any) => {
+    const onTradeExecuted = (data: any) => {
       setTxLog(prev => [{
         id: Date.now(),
         user: `User ${data.buyerId}`,
@@ -78,8 +78,9 @@ export default function AdminPage() {
         jumlah: data.quantity,
         waktu: new Date(data.timestamp).toLocaleTimeString("id-ID"),
       }, ...prev].slice(0, 100));
-    });
-    return () => { socket.off("trade-executed"); };
+    };
+    socket.on("trade-executed", onTradeExecuted);
+    return () => { socket.off("trade-executed", onTradeExecuted); };
   }, []);
 
 

@@ -59,14 +59,18 @@ export default function DashboardPage() {
     if (!hydrated || !user) return;
     const socket = getSocket();
 
-    socket.on("connect", () => socket.emit("authenticate", { userId: user.id }));
-    socket.on("session-state", (data: any) => setSession(data));
-    socket.on("round-started", (data: { roundNumber: number; period: number }) => {
+    const onConnect = () => socket.emit("authenticate", { userId: user.id });
+    const onAuthSuccess = (data: { user: { saldo: number } }) => {
+      setBalance(data.user.saldo);
+      socket.emit("get-session-history", { userId: user.id });
+    };
+    const onSessionState = (data: any) => setSession(data);
+    const onRoundStarted = (data: { roundNumber: number; period: number }) => {
       setRoundNumber(data.roundNumber);
       setPeriod(data.period);
       setSession({ sessionId: 1, status: "active", timeLeft: 60 });
-    });
-    socket.on("sub-session-started", (data: {
+    };
+    const onSubSessionStarted = (data: {
       roundNumber: number;
       sessionNumber: number;
       phase: SubSessionPhase;
@@ -77,59 +81,97 @@ export default function DashboardPage() {
       setPhase(data.phase);
       setSession({ sessionId: 1, status: "active", timeLeft: data.duration });
       setActiveIntervention(data.intervention);
-    });
-    socket.on("timer-tick", (data: { timeLeft: number }) => {
+    };
+    const onTimerTick = (data: { timeLeft: number }) => {
       setSession(prev => prev ? { ...prev, timeLeft: data.timeLeft } : prev);
-    });
-    socket.on("intervention-triggered", (data: {
+    };
+    const onInterventionTriggered = (data: {
       type: InterventionType;
       title: string;
       content: string;
     }) => {
       setActiveIntervention(data.type);
       setInterventionContent({ title: data.title, content: data.content });
-    });
-    socket.on("round-ended", () => {
+    };
+    const clearHistory = () => setSessionHistory([]);
+    const onRoundEnded = () => {
       setSession(null);
       setRoundNumber(null);
       setPhase("IDLE");
       setSubSession(null);
-    });
-    socket.on("balance-update", (data: { userId: number; balance: number }) => {
+      clearHistory();
+    };
+    const onBalanceUpdate = (data: { userId: number; balance: number }) => {
       if (data.userId === user.id) setBalance(data.balance);
-    });
-    // Collect per-session trade history in real-time
-    socket.on("trade-executed", (data: { stockId: number; price: number; quantity: number; tipe?: string; stockCode?: string; timestamp?: string }) => {
+    };
+    const onSessionHistoryData = (data: any[]) => {
+      setSessionHistory(data);
+    };
+    const onTradeExecuted = (data: { stockId: number; price: number; quantity: number; buyerId: number; sellerId: number; stockCode?: string; timestamp?: string }) => {
+      if (data.buyerId !== user.id && data.sellerId !== user.id) return;
+
       const time = data.timestamp
         ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
         : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      
+      let tipe = "BID";
+      if (data.buyerId === user.id && data.sellerId === user.id) tipe = "SELF";
+      else if (data.buyerId === user.id) tipe = "BID";
+      else tipe = "ASK";
+
       setSessionHistory(prev => [{
         time,
         stock: data.stockCode || `#${data.stockId}`,
-        tipe: data.tipe || "BID",
+        tipe,
         harga: data.price,
         jumlah: data.quantity,
       }, ...prev]);
-    });
-    // Clear history when session/round ends
-    const clearHistory = () => setSessionHistory([]);
-    socket.on("round-ended", () => { setSession(null); setRoundNumber(null); setPhase("IDLE"); setSubSession(null); clearHistory(); });
-    socket.on("experiment-reset", clearHistory);
-    socket.on("period-aborted", clearHistory);
-    socket.on("experiment-paused", () => {}); // no-op for paused
-    socket.on("portfolio-data", (data: { portfolio: any[] }) => {
+
+      socket.emit("get-portfolio", { userId: user.id });
+    };
+    const onExperimentReset = clearHistory;
+    const onPeriodAborted = clearHistory;
+    const onExperimentPaused = () => {};
+    const onPortfolioData = (data: { portfolio: any[] }) => {
       setPortfolio((data.portfolio || []).map((p: any) => ({
         stock: p.stockCode, lot: p.jumlahLot, value: Number(p.currentValue),
       })));
-    });
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("auth-success", onAuthSuccess);
+    socket.on("session-state", onSessionState);
+    socket.on("round-started", onRoundStarted);
+    socket.on("sub-session-started", onSubSessionStarted);
+    socket.on("timer-tick", onTimerTick);
+    socket.on("intervention-triggered", onInterventionTriggered);
+    socket.on("round-ended", onRoundEnded);
+    socket.on("balance-update", onBalanceUpdate);
+    socket.on("session-history-data", onSessionHistoryData);
+    socket.on("trade-executed", onTradeExecuted);
+    socket.on("experiment-reset", onExperimentReset);
+    socket.on("period-aborted", onPeriodAborted);
+    socket.on("experiment-paused", onExperimentPaused);
+    socket.on("portfolio-data", onPortfolioData);
+
     socket.emit("get-portfolio", { userId: user.id });
 
     return () => {
-      socket.off("connect"); socket.off("session-state");
-      socket.off("round-started"); socket.off("sub-session-started");
-      socket.off("timer-tick"); socket.off("intervention-triggered");
-      socket.off("round-ended"); socket.off("balance-update"); socket.off("portfolio-data");
-      socket.off("trade-executed"); socket.off("experiment-reset"); socket.off("period-aborted"); socket.off("experiment-paused");
+      socket.off("connect", onConnect);
+      socket.off("auth-success", onAuthSuccess);
+      socket.off("session-state", onSessionState);
+      socket.off("round-started", onRoundStarted);
+      socket.off("sub-session-started", onSubSessionStarted);
+      socket.off("timer-tick", onTimerTick);
+      socket.off("intervention-triggered", onInterventionTriggered);
+      socket.off("round-ended", onRoundEnded);
+      socket.off("balance-update", onBalanceUpdate);
+      socket.off("session-history-data", onSessionHistoryData);
+      socket.off("trade-executed", onTradeExecuted);
+      socket.off("experiment-reset", onExperimentReset);
+      socket.off("period-aborted", onPeriodAborted);
+      socket.off("experiment-paused", onExperimentPaused);
+      socket.off("portfolio-data", onPortfolioData);
     };
   }, [hydrated, user]);
 
@@ -350,8 +392,13 @@ export default function DashboardPage() {
                     <span className="font-mono text-zinc-600 w-14">{tx.time}</span>
                     <span className="font-medium text-zinc-300 w-12">{tx.stock}</span>
                     <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                      tx.tipe === "BID" || tx.tipe === "buy" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
-                    }`}>{tx.tipe === "buy" || tx.tipe === "BID" ? "BELI" : "JUAL"}</span>
+                      tx.tipe === "SELF" ? "bg-amber-500/10 text-amber-500" :
+                      tx.tipe === "BID" || tx.tipe === "buy" ? "bg-emerald-500/10 text-emerald-500" : 
+                      "bg-rose-500/10 text-rose-500"
+                    }`}>{
+                      tx.tipe === "SELF" ? "SELF" : 
+                      tx.tipe === "buy" || tx.tipe === "BID" ? "BELI" : "JUAL"
+                    }</span>
                   </div>
                   <div className="flex items-center gap-4 font-mono text-zinc-400">
                     <span>Rp {tx.harga.toLocaleString("id-ID")}</span>

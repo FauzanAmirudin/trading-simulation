@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
+import { PriceInput, TickSizeBadge } from "@/components/ui/price-input";
+import { getAutoRejectionLimits, isValidTickSize, getTickSize } from "@/lib/market-rules";
 import RunningText from "@/components/trading/RunningText";
 
 type Stock = {
@@ -267,14 +269,16 @@ function TradingPageContent() {
     };
     if (socket.connected) onConnect(); else socket.on("connect", onConnect);
 
-    socket.on("round-started", (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
+    const onAuthSuccess = (data: { user: { saldo: number } }) => {
+      setBalance(data.user.saldo);
+    };
+    const onRoundStarted = (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
       setRoundNumber(data.roundNumber);
       setPeriod(data.period);
       setSessionActive(true);
       setStocks(data.stocks);
-    });
-
-    socket.on("sub-session-started", (data: {
+    };
+    const onSubSessionStarted = (data: {
       roundNumber: number;
       sessionNumber: number;
       phase: SubSessionPhase;
@@ -286,7 +290,6 @@ function TradingPageContent() {
       setSessionTimer(data.duration);
       setActiveIntervention(data.intervention);
       setCooldownActive(false);
-      // Optimasi 4: Mulai client-side countdown
       isRunningRef.current = true;
       if (localTimerRef.current) clearInterval(localTimerRef.current);
       let remaining = data.duration;
@@ -308,20 +311,15 @@ function TradingPageContent() {
       if (data.phase === "TRADING") {
         setRunningText(prev => ({ ...prev, active: false }));
       }
-    });
-
-    socket.on("sub-session-ended", (data: { roundNumber: number; sessionNumber: number }) => {
+    };
+    const onSubSessionEnded = (data: { roundNumber: number; sessionNumber: number }) => {
       if (data.sessionNumber === 1) {
-        // PRE_OPENING ended — wait for sub-session-started (TRADING) event
       }
-    });
-
-    socket.on("timer-tick", (data: { roundNumber: number; sessionNumber: number; timeLeft: number }) => {
-      // Optimasi 4: Server hanya sync setiap 10 detik — update local timer dengan nilai server
+    };
+    const onTimerTick = (data: { roundNumber: number; sessionNumber: number; timeLeft: number }) => {
       setSessionTimer(data.timeLeft);
-    });
-
-    socket.on("opening-prices-calculated", (data: { roundNumber: number; prices: { stockId: number; price: number }[] }) => {
+    };
+    const onOpeningPricesCalculated = (data: { roundNumber: number; prices: { stockId: number; price: number }[] }) => {
       const prices: Record<number, number> = {};
       data.prices.forEach(p => { prices[p.stockId] = p.price; });
       setOpeningPrices(prices);
@@ -332,9 +330,8 @@ function TradingPageContent() {
         });
         return newPrices;
       });
-    });
-
-    socket.on("round-ended", () => {
+    };
+    const onRoundEnded = () => {
       setSessionActive(false);
       setRoundNumber(null);
       setPhase("IDLE");
@@ -347,18 +344,15 @@ function TradingPageContent() {
       setCurrentPrice(0);
       setRunningText(prev => ({ ...prev, active: false }));
       setCooldownActive(false);
-      // Optimasi 4: Stop client-side countdown
       isRunningRef.current = false;
       if (localTimerRef.current) { clearInterval(localTimerRef.current); localTimerRef.current = null; }
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-    });
-
-    socket.on("cooldown-started", (data: { duration: number; reason: string }) => {
+    };
+    const onCooldownStarted = (data: { duration: number; reason: string }) => {
       setCooldownActive(true);
       setCooldownReason(data.reason === "between-sessions" ? "antar sesi" : "antar ronde");
       setPhase("COOLDOWN");
       setSessionTimer(data.duration);
-      // Optimasi 4: Mulai client-side countdown untuk cooldown juga
       isRunningRef.current = true;
       if (localTimerRef.current) clearInterval(localTimerRef.current);
       let remaining = data.duration;
@@ -372,13 +366,11 @@ function TradingPageContent() {
         }
       }, 1000);
       setRunningText(prev => ({ ...prev, active: false }));
-    });
-
-    socket.on("intervention-ended", () => {
+    };
+    const onInterventionEnded = () => {
       setRunningText(prev => ({ ...prev, active: false }));
-    });
-
-    socket.on("period-ended", () => {
+    };
+    const onPeriodEnded = () => {
       setSessionActive(false);
       setRoundNumber(null);
       setPhase("IDLE");
@@ -389,29 +381,23 @@ function TradingPageContent() {
       setRunningText(prev => ({ ...prev, active: false }));
       setCooldownActive(false);
       toast.success("Periode selesai!");
-    });
-
-    socket.on("experiment-ended", () => {
+    };
+    const onExperimentEnded = () => {
       toast.success("Eksperimen selesai! Terima kasih.");
-    });
-
-    socket.on("intervention-triggered", (data: {
+    };
+    const onInterventionTriggered = (data: {
       type: InterventionType;
       title: string;
       content: string;
     }) => {
       setActiveIntervention(data.type);
       setInterventionContent({ title: data.title, content: data.content });
-      // Show running text ticker (only in PRE_MARKET)
       if (data.type !== "NONE") {
         setRunningText({ active: true, type: data.type, title: data.title, content: data.content });
       }
-    });
-
-    socket.on("scheduler-state", (data: any) => {
-      // Single source of truth for session state on connect/reconnect
+    };
+    const onSchedulerState = (data: any) => {
       if (data.activePeriod !== null && data.stocks && data.stocks.length > 0 && data.currentPhase !== "IDLE") {
-        // Active session — populate UI
         setRoundNumber(data.activeRound);
         setSessionActive(true);
         setStocks(data.stocks);
@@ -431,7 +417,6 @@ function TradingPageContent() {
           setRunningText(prev => ({ ...prev, active: false }));
         }
       } else {
-        // No active session — ensure page is cleared
         setSessionActive(false);
         setStocks([]);
         setRoundNumber(null);
@@ -439,31 +424,25 @@ function TradingPageContent() {
         setSubSession(null);
         setRunningText({ active: false, type: "NONE", title: "", content: "" });
       }
-    });
-
-    // Real-time portfolios map & trade monitoring
-    socket.on("portfolio-data", (data: { portfolio: { stockId: number; jumlahLot: number }[] }) => {
+    };
+    const onPortfolioData = (data: { portfolio: { stockId: number; jumlahLot: number }[] }) => {
       const initialMap: Record<number, number> = {};
       data.portfolio.forEach(p => {
         initialMap[p.stockId] = p.jumlahLot;
       });
       setPortfoliosMap(initialMap);
-    });
-
-    socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
+    };
+    const onPortfolioUpdate = (data: { userId: number; stockId: number; jumlahLot: number }) => {
       setPortfoliosMap(prev => ({
         ...prev,
         [data.stockId]: data.jumlahLot
       }));
-    });
-
-    socket.on("trade-executed", (data: { stockId: number; price: number; quantity: number; timestamp?: string }) => {
+    };
+    const onTradeExecuted = (data: { stockId: number; price: number; quantity: number; timestamp?: string }) => {
       setLastPrices(prev => ({
         ...prev,
         [data.stockId]: data.price
       }));
-
-      // Append trade to chart price history if it matches selected stock
       if (selectedIdRef.current && data.stockId === selectedIdRef.current) {
         const t = data.timestamp ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         setCurrentPrice(data.price);
@@ -478,28 +457,46 @@ function TradingPageContent() {
           return upd;
         });
       }
-    });
+    };
+
+    socket.on("auth-success", onAuthSuccess);
+    socket.on("round-started", onRoundStarted);
+    socket.on("sub-session-started", onSubSessionStarted);
+    socket.on("sub-session-ended", onSubSessionEnded);
+    socket.on("timer-tick", onTimerTick);
+    socket.on("opening-prices-calculated", onOpeningPricesCalculated);
+    socket.on("round-ended", onRoundEnded);
+    socket.on("cooldown-started", onCooldownStarted);
+    socket.on("intervention-ended", onInterventionEnded);
+    socket.on("period-ended", onPeriodEnded);
+    socket.on("experiment-ended", onExperimentEnded);
+    socket.on("intervention-triggered", onInterventionTriggered);
+    socket.on("scheduler-state", onSchedulerState);
+    socket.on("portfolio-data", onPortfolioData);
+    socket.on("portfolio-update", onPortfolioUpdate);
+    socket.on("trade-executed", onTradeExecuted);
 
     socket.emit("get-scheduler-state");
     socket.emit("get-portfolio", { userId: user.id });
 
     return () => {
       socket.off("connect", onConnect);
-      socket.off("round-started");
-      socket.off("sub-session-started");
-      socket.off("sub-session-ended");
-      socket.off("timer-tick");
-      socket.off("opening-prices-calculated");
-      socket.off("round-ended");
-      socket.off("experiment-ended");
-      socket.off("intervention-triggered");
-      socket.off("intervention-ended");
-      socket.off("cooldown-started");
-      socket.off("period-ended");
-      socket.off("scheduler-state");
-      socket.off("portfolio-data");
-      socket.off("portfolio-update");
-      socket.off("trade-executed");
+      socket.off("auth-success", onAuthSuccess);
+      socket.off("round-started", onRoundStarted);
+      socket.off("sub-session-started", onSubSessionStarted);
+      socket.off("sub-session-ended", onSubSessionEnded);
+      socket.off("timer-tick", onTimerTick);
+      socket.off("opening-prices-calculated", onOpeningPricesCalculated);
+      socket.off("round-ended", onRoundEnded);
+      socket.off("experiment-ended", onExperimentEnded);
+      socket.off("intervention-triggered", onInterventionTriggered);
+      socket.off("intervention-ended", onInterventionEnded);
+      socket.off("cooldown-started", onCooldownStarted);
+      socket.off("period-ended", onPeriodEnded);
+      socket.off("scheduler-state", onSchedulerState);
+      socket.off("portfolio-data", onPortfolioData);
+      socket.off("portfolio-update", onPortfolioUpdate);
+      socket.off("trade-executed", onTradeExecuted);
     };
   }, [user, hydrated]); // eslint-disable-line
 
@@ -540,20 +537,16 @@ function TradingPageContent() {
       });
     }
 
-    socket.on("order-book-update", (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
+    const onOrderBookUpdate = (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
       if (data.stockId === stock.id) { setBids(data.bids); setAsks(data.asks); }
-    });
-
-    socket.on("balance-update", (data: { userId: number; balance: number }) => {
+    };
+    const onBalanceUpdate = (data: { userId: number; balance: number }) => {
       if (data.userId === user.id) setBalance(data.balance);
-    });
-
-    // Optimasi 8: hanya update portfolio saham yang sedang dipilih (portfoliosMap sudah dihandle useEffect global)
-    socket.on("portfolio-update", (data: { userId: number; stockId: number; jumlahLot: number }) => {
+    };
+    const onPortfolioUpdate = (data: { userId: number; stockId: number; jumlahLot: number }) => {
       if (data.stockId === stock.id) setPortfolio({ lot: data.jumlahLot });
-    });
-
-    socket.on("trade-history", (data: { stockId: number; trades: { time: string; price: number }[] }) => {
+    };
+    const onTradeHistory = (data: { stockId: number; trades: { time: string; price: number }[] }) => {
       if (data.stockId === stock.id) {
         const base = openingPrice || baseStockPrice || 1000;
         if (data.trades.length === 0) {
@@ -567,18 +560,21 @@ function TradingPageContent() {
           setPriceChange(((lastPrice - base) / base) * 100);
         }
       }
-    });
+    };
+    const onPredictionSaved = () => toast.success("Prediksi tersimpan");
 
-    socket.on("prediction-saved", () => {
-      toast.success("Prediksi tersimpan");
-    });
+    socket.on("order-book-update", onOrderBookUpdate);
+    socket.on("balance-update", onBalanceUpdate);
+    socket.on("portfolio-update", onPortfolioUpdate);
+    socket.on("trade-history", onTradeHistory);
+    socket.on("prediction-saved", onPredictionSaved);
 
     return () => {
-      socket.off("order-book-update");
-      socket.off("balance-update");
-      socket.off("portfolio-update");
-      socket.off("trade-history");
-      socket.off("prediction-saved");
+      socket.off("order-book-update", onOrderBookUpdate);
+      socket.off("balance-update", onBalanceUpdate);
+      socket.off("portfolio-update", onPortfolioUpdate);
+      socket.off("trade-history", onTradeHistory);
+      socket.off("prediction-saved", onPredictionSaved);
     };
   }, [user, stock, openingPrice, baseStockPrice]);
 
@@ -587,6 +583,7 @@ function TradingPageContent() {
     const price = parseInt(orderPrice);
     const lot = parseInt(orderLot);
     if (!price || !lot) { toast.error("Isi harga dan jumlah"); return; }
+    if (price <= 0 || lot <= 0) { toast.error("Harga dan jumlah lot tidak boleh minus atau nol"); return; }
     const socket = getSocket();
     socket.emit("place-order", { stockId: stock.id, tipe: orderType, harga: price, jumlah: lot, userId: user.id });
     socket.once("order-placed", () => {
@@ -600,6 +597,7 @@ function TradingPageContent() {
     if (!user) return;
     const price = parseInt(predictionInput[stockId]);
     if (!price) { toast.error("Masukkan harga prediksi"); return; }
+    if (price <= 0) { toast.error("Harga prediksi tidak boleh minus atau nol"); return; }
     const socket = getSocket();
     socket.emit("submit-prediction", { stockId, predictedPrice: price, userId: user.id });
     socket.once("prediction-saved", () => {
@@ -776,28 +774,48 @@ function TradingPageContent() {
           <CardContent className="space-y-3">
             <p className="text-xs text-zinc-500">Prediksi harga Equilibrium untuk setiap saham sebelum sesi trading dimulai.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {stocks.map(s => (
-                <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
-                  <div className="text-xs font-medium text-zinc-300 mb-2">{(s as any).kodeSaham || (s as any).kode} — {(s as any).namaSaham || (s as any).nama}</div>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Harga prediksi"
-                      value={predictionInput[s.id] || ""}
-                      onChange={e => setPredictionInput(prev => ({ ...prev, [s.id]: e.target.value }))}
-                      className="text-xs font-mono flex-1"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-xs h-8 px-3"
-                      onClick={() => handleSubmitPrediction(s.id)}
-                    >
-                      Kirim
-                    </Button>
+              {stocks.map(s => {
+                const baseP = Number(s.basePrice);
+                const { upper, lower } = getAutoRejectionLimits(baseP);
+                const predVal = parseInt(predictionInput[s.id]) || 0;
+                const isInvalid = predVal > 0 && (!isValidTickSize(predVal) || predVal > upper || predVal < lower);
+                return (
+                  <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
+                    <div className="text-xs font-medium text-zinc-300 mb-2">{(s as any).kodeSaham || (s as any).kode} — {(s as any).namaSaham || (s as any).nama}</div>
+                    <div className="flex gap-2 mb-1.5">
+                      <PriceInput
+                        value={predictionInput[s.id] || ""}
+                        onChange={val => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
+                        min={1}
+                        max={upper}
+                        className="flex-1"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-8 px-3"
+                        onClick={() => handleSubmitPrediction(s.id)}
+                        disabled={isInvalid}
+                      >
+                        Kirim
+                      </Button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-zinc-600 font-mono">
+                        Rentang: Rp {lower.toLocaleString("id-ID")} – Rp {upper.toLocaleString("id-ID")}
+                      </span>
+                      {predVal > 0 && <TickSizeBadge price={predVal} />}
+                    </div>
+                    {isInvalid && (
+                      <p className="text-[10px] text-rose-400 mt-1">
+                        {!isValidTickSize(predVal)
+                          ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}`
+                          : `Di luar batas: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}`}
+                      </p>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -930,17 +948,52 @@ function TradingPageContent() {
                       <ArrowUpFromLine className="size-3.5" /> Jual
                     </button>
                   </div>
-                  {portfolio && portfolio.lot > 0 && (
+                  {portfolio && (
                     <div className="text-[11px] text-zinc-400 flex justify-between items-center bg-zinc-800/30 px-2 py-1 rounded">
                       <span>Kepemilikan Anda:</span>
-                      <span className="text-emerald-400 font-mono font-bold">{portfolio.lot} lot</span>
+                      <span className={portfolio.lot > 0 ? "text-emerald-400 font-mono font-bold" : "text-rose-400 font-mono font-bold"}>
+                        {portfolio.lot} lot
+                      </span>
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Input type="number" placeholder="Harga" value={orderPrice} onChange={e => setOrderPrice(e.target.value)} className="text-xs" />
-                    <Input type="number" placeholder="Jumlah (Lot)" value={orderLot} onChange={e => setOrderLot(e.target.value)} className="text-xs" />
+                    <div className="space-y-1">
+                      <PriceInput
+                        value={orderPrice}
+                        onChange={setOrderPrice}
+                        min={1}
+                        placeholder="Harga"
+                      />
+                      <div className="flex items-center justify-between px-1">
+                        {parseInt(orderPrice) > 0 && <TickSizeBadge price={parseInt(orderPrice)} />}
+                        {(() => {
+                          const op = stockId ? openingPrices[stockId] : undefined;
+                          if (!op) return null;
+                          const { upper, lower } = getAutoRejectionLimits(op);
+                          return (
+                            <span className="text-[10px] text-zinc-600 font-mono">
+                              ARA/ARB: Rp {lower.toLocaleString("id-ID")} – Rp {upper.toLocaleString("id-ID")}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <Input type="number" min="1" placeholder="Jumlah (Lot)" value={orderLot} onChange={e => setOrderLot(e.target.value)} className="text-xs" />
                   </div>
-                  <Button size="sm" className={`w-full gap-1 ${orderType === "BID" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"}`} onClick={handlePlaceOrder}>
+                  <Button 
+                    size="sm" 
+                    className={`w-full gap-1 ${orderType === "BID" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"}`} 
+                    onClick={handlePlaceOrder}
+                    disabled={(() => {
+                      if (orderType === "ASK" && (!portfolio || portfolio.lot === 0 || parseInt(orderLot) > portfolio.lot)) return true;
+                      const p = parseInt(orderPrice);
+                      if (!p || p <= 0) return false;
+                      if (!isValidTickSize(p)) return true;
+                      const op = stockId ? openingPrices[stockId] : undefined;
+                      if (op) { const { upper, lower } = getAutoRejectionLimits(op); if (p > upper || p < lower) return true; }
+                      return false;
+                    })()}
+                  >
                     {orderType === "BID" ? <ArrowDownToLine className="size-3.5" /> : <ArrowUpFromLine className="size-3.5" />}
                     {orderType === "BID" ? "Pasang BID" : "Pasang ASK"}
                   </Button>

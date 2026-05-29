@@ -72,28 +72,7 @@ export default function Home() {
               Anda dengan modal virtual Rp 100.000.000 dalam lingkungan pasar yang
               terkontrol dan terukur.
             </p>
-            <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-              <Link href="/login">
-                <Button
-                  size="lg"
-                  className="gap-2 px-6 text-sm transition-all duration-300 hover:shadow-[0_0_20px_-5px] hover:shadow-emerald-500/20 hover:translate-x-[-2px] group"
-                  disabled={!sessionActive}
-                >
-                  Masuk ke Panel Responden
-                  <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
-                </Button>
-              </Link>
-              <Link href="/login">
-                <Button variant="outline" size="lg" className="px-6 text-sm">
-                  Login Admin
-                </Button>
-              </Link>
-            </div>
-            {!sessionActive && (
-              <p className="mt-3 text-xs text-zinc-600">
-                Tombol responden aktif saat sesi dimulai oleh Admin
-              </p>
-            )}
+
           </motion.div>
         </div>
       </section>
