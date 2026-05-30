@@ -1,36 +1,135 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+<div align="center">
+  <h1>📈 Trading Simulation & Experimental Platform</h1>
+  <p>A full-stack real-time trading simulator designed for economic and behavioral experiments.</p>
+</div>
 
-## Getting Started
+---
 
-First, run the development server:
+## 📖 Overview
+**Trading Simulation** is a specialized web application built to facilitate interactive stock market experiments. It features a custom **Socket.io** matching engine that executes real-time buy/sell (Bid/Ask) orders, an admin dashboard to control session variables (interventions, timers, market phases), and a responsive participant dashboard for executing trades.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+This project is tailored for academic research, behavioral finance studies, and real-time market simulations where precise control over experimental rounds and data collection is required.
+
+---
+
+## 🚀 Tech Stack
+
+### Frontend
+- **Framework:** [Next.js 16 (App Router)](https://nextjs.org/) & [React 19](https://react.dev/)
+- **Styling:** [Tailwind CSS v4](https://tailwindcss.com/)
+- **Animation:** [Framer Motion](https://www.framer.com/motion/) & [tw-animate-css](https://github.com/your-username/tw-animate-css)
+- **UI Components:** [Shadcn UI](https://ui.shadcn.com/) & [Base UI](https://base-ui.com/)
+- **Notifications:** [Sonner](https://sonner.emilkowal.ski/)
+
+### Backend & Database
+- **Server:** Node.js (Custom Server via `server.ts`)
+- **Real-Time Communication:** [Socket.io](https://socket.io/)
+- **Database:** PostgreSQL
+- **ORM:** [Drizzle ORM](https://orm.drizzle.team/)
+- **Data Export:** [ExcelJS](https://github.com/exceljs/exceljs) & Archiver
+
+---
+
+## 🏗️ Folder Structure
+
+```text
+trading-simulasi/
+├── drizzle/                  # Drizzle ORM migration outputs
+├── scripts/                  # Utility scripts
+├── src/
+│   ├── app/                  # Next.js App Router (Pages & API routes)
+│   │   ├── admin/            # Admin control panel (Resume & Trading Monitor)
+│   │   ├── api/              # REST Endpoints (Data Export, Auth, etc.)
+│   │   └── dashboard/        # Participant/Respondent dashboard
+│   ├── components/           # Reusable UI Components
+│   │   ├── admin/            # Admin-specific components (Scheduler Board)
+│   │   ├── layout/           # Global layouts (Sidebar, Header)
+│   │   ├── trading/          # Order book, charts, portfolio UI
+│   │   └── ui/               # Core Shadcn UI elements
+│   ├── db/                   # Database logic
+│   │   ├── schema.ts         # Drizzle schema definitions
+│   │   ├── index.ts          # DB connection configuration
+│   │   └── seed.ts           # Seeder scripts
+│   └── lib/                  # Utilities (Socket config, Auth context, Market Rules)
+├── server.ts                 # Custom Node.js WebSockets Server (Matching Engine)
+├── drizzle.config.ts         # Drizzle ORM configuration
+└── package.json              # Project dependencies & scripts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## ✨ Core Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Live Matching Engine:** Real-time central limit order book (CLOB) that matches Bids and Asks securely in the backend.
+- **State Machine / Scheduler:** Admin-controlled phases (`PRE_MARKET`, `TRADING`, `IDLE`) with automatic countdowns and session transitions.
+- **Experimental Interventions:** Dynamic injection of visual or informational interventions directly into the respondent's UI during specific rounds.
+- **Auto Rejection Limits (ARA/ARB):** Built-in market rules to validate price boundaries and tick sizes.
+- **Live Monitoring:** Real-time dashboard for the Admin to monitor active participants, trading volume, and spread.
+- **Data Export:** One-click generation of comprehensive `.xlsx` logs containing trade history, bids/asks logs, and portfolio valuations for academic analysis.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 🛠️ Installation & Setup
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Follow these steps to run the simulation locally or on a server.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 1. Prerequisites
+- [Node.js](https://nodejs.org/) (v20+)
+- [PostgreSQL](https://www.postgresql.org/) database (Local or Cloud)
 
-## Deploy on Vercel
+### 2. Clone Repository
+```bash
+git clone https://github.com/FauzanAmirudin/trading-simulation.git
+cd trading-simulation
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Install Dependencies
+```bash
+npm install
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4. Environment Variables
+Create a `.env` file in the root directory based on the following structure:
+```env
+DATABASE_URL=postgresql://username:password@localhost:5432/trading_db
+# Add other secrets here if necessary
+```
+
+### 5. Database Setup (Drizzle ORM)
+Push the database schema and seed the initial mock data (Stocks, Users, Rounds).
+```bash
+# Push schema to database
+npm run db:push
+
+# Seed initial data
+npm run db:seed
+```
+
+### 6. Run the Application (Development)
+Because the app relies heavily on WebSockets, you must use the custom server script:
+```bash
+npm run dev:server
+```
+*The app will be available at `http://localhost:3000`.*
+
+---
+
+## 🌐 Deployment (VPS / Production)
+
+To deploy the application to a production server (VPS):
+
+1. **Build the Next.js App:**
+   ```bash
+   npm run build
+   ```
+2. **Start the Production Server with PM2:**
+   Install PM2 globally if you haven't: `npm install -g pm2`.
+   ```bash
+   # Run via the tsx runner (or compile server.ts to pure JS first)
+   pm2 start "npx tsx server.ts" --name trading-app
+   ```
+
+---
+
+## 📝 License
+This project is proprietary and built for specific academic/experimental research. Please contact the repository owner regarding distribution and usage rights.
