@@ -3,33 +3,35 @@ version: '3.8'
 services:
   app:
     build: .
+    container_name: trading_app
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-    # Tells docker-compose to use the DATABASE_URL from .env file
     env_file:
       - .env
-    # depends_on:
-    #   db:
-    #     condition: service_healthy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
-# Uncomment block di bawah ini jika ingin menggunakan database lokal Docker
-#   db:
-#     image: postgres:15-alpine
-#     environment:
-#       POSTGRES_USER: postgres
-#       POSTGRES_PASSWORD: password123
-#       POSTGRES_DB: trading_simulasi
-#     ports:
-#       - "5432:5432"
-#     volumes:
-#       - pgdata:/var/lib/postgresql/data
-#     healthcheck:
-#       test: ["CMD-SHELL", "pg_isready -U postgres -d trading_simulasi"]
-#       interval: 5s
-#       timeout: 5s
-#       retries: 5
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_simulasi}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d trading_simulasi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
-# volumes:
-#   pgdata:
+volumes:
+  pgdata:
