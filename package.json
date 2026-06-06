@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
+    "db:seed:users": "tsx src/db/seed-users.ts",
     "db:set-password": "tsx src/db/set-password.ts",
     "db:create-users": "tsx src/db/create-users.ts"
   },
