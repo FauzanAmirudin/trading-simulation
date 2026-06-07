@@ -8,6 +8,7 @@ import {
   text,
   jsonb,
   index,
+  uniqueIndex
 } from "drizzle-orm/pg-core";
 
 // === EXPERIMENTAL CONFIG — researcher-defined intervention content ===
@@ -103,12 +104,10 @@ export const portfolios = pgTable("portfolios", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id).notNull(),
   stockId: integer("stock_id").references(() => stocks.id).notNull(),
-  roundId: integer("round_id").references(() => rounds.id).notNull(),
   jumlahLot: integer("jumlah_lot").notNull().default(0),
   averagePrice: decimal("average_price", { precision: 15, scale: 2 }).default("0"),
 }, (table) => ({
-  // Optimasi 5: Composite index — digunakan saat place-order dan emitPortfolioUpdate
-  userRoundIdx: index("portfolios_user_round_idx").on(table.userId, table.roundId),
+  userStockIdx: uniqueIndex("portfolios_user_stock_idx").on(table.userId, table.stockId),
 }));
 
 // === TRANSACTIONS HISTORY — matched trades with intervention tracking ===

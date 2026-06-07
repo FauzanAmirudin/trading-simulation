@@ -73,7 +73,6 @@ export async function GET(req: NextRequest) {
         p.userName,
         p.stockCode,
         p.roundId,
-        // Period derived from roundId
         Math.ceil(Number(p.roundId) / 4),
         p.tebakanHarga,
         p.accuracyScore || "",

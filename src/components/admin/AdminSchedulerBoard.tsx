@@ -49,15 +49,15 @@ function formatTime(s: number) {
 }
 
 const PHASE_CONFIG: Record<PhaseType, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  IDLE:       { label: "Menunggu",       color: "text-zinc-400",   bg: "bg-zinc-700/40",         icon: <Circle className="size-3.5" /> },
+  IDLE:       { label: "Menunggu",       color: "text-muted-foreground",   bg: "bg-zinc-700/40",         icon: <Circle className="size-3.5" /> },
   PRE_MARKET: { label: "Pra-Perdagangan", color: "text-amber-400",  bg: "bg-amber-500/10",        icon: <BookOpen className="size-3.5" /> },
   TRADING:    { label: "Perdagangan",    color: "text-emerald-400", bg: "bg-emerald-500/10",      icon: <Activity className="size-3.5" /> },
   COOLDOWN:   { label: "Jeda",           color: "text-sky-400",    bg: "bg-sky-500/10",          icon: <Timer className="size-3.5" /> },
-  CLOSED:     { label: "Selesai",        color: "text-zinc-500",   bg: "bg-zinc-800/40",         icon: <CheckCircle2 className="size-3.5" /> },
+  CLOSED:     { label: "Selesai",        color: "text-muted-foreground",   bg: "bg-zinc-800/40",         icon: <CheckCircle2 className="size-3.5" /> },
 };
 
 const INTERVENTION_CONFIG: Record<InterventionType, { label: string; color: string; icon: React.ReactNode }> = {
-  NONE:        { label: "Tanpa Intervensi", color: "text-zinc-500", icon: null },
+  NONE:        { label: "Tanpa Intervensi", color: "text-muted-foreground", icon: null },
   BERITA_BAIK: { label: "Berita Baik",      color: "text-emerald-400", icon: <TrendingUp className="size-3.5" /> },
   BERITA_BURUK:{ label: "Berita Buruk",     color: "text-rose-400",    icon: <TrendingDown className="size-3.5" /> },
 };
@@ -110,7 +110,7 @@ function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
   };
 
   if (loading) return (
-    <div className="flex items-center gap-2 text-zinc-500 text-xs py-4">
+    <div className="flex items-center gap-2 text-muted-foreground text-xs py-4">
       <Loader2 className="size-3 animate-spin" /> Memuat konten intervensi...
     </div>
   );
@@ -120,7 +120,7 @@ function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
       {(["BERITA_BAIK", "BERITA_BURUK"] as const).map(key => {
         const cfg = INTERVENTION_CONFIG[key];
         return (
-          <div key={key} className="rounded-xl border border-white/5 bg-zinc-800/40 p-3 space-y-2">
+          <div key={key} className="rounded-xl border border-border bg-card shadow-sm dark:shadow-none p-3 space-y-2">
             <div className={`flex items-center gap-2 text-xs font-semibold ${cfg.color}`}>
               {cfg.icon}{cfg.label}
             </div>
@@ -128,18 +128,18 @@ function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
               value={form[key].title}
               onChange={e => setForm(p => ({ ...p, [key]: { ...p[key], title: e.target.value } }))}
               placeholder="Judul running text..."
-              className="text-xs bg-zinc-900/60 border-white/10 text-zinc-200 placeholder:text-zinc-600 h-8"
+              className="text-xs bg-background border-border text-foreground placeholder:text-muted-foreground h-8"
             />
             <textarea
               value={form[key].content}
               onChange={e => setForm(p => ({ ...p, [key]: { ...p[key], content: e.target.value } }))}
               placeholder="Isi pesan / teks berjalan..."
               rows={2}
-              className="w-full rounded-lg border border-white/10 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/40 resize-none"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 resize-none"
             />
             <Button
               size="sm" variant="outline"
-              className="w-full text-xs h-7 border-white/10 hover:bg-white/5"
+              className="w-full text-xs h-7 border-border hover:bg-muted"
               onClick={() => handleSave(key)}
               disabled={saving === key || !form[key].title || !form[key].content}
             >
@@ -172,17 +172,17 @@ function PeriodSummaryCard({
 
   return (
     <div className={`rounded-2xl border p-4 transition-all ${isActive
-      ? "border-indigo-500/40 bg-indigo-500/5 shadow-lg shadow-indigo-500/10"
-      : "border-white/5 bg-zinc-800/30 hover:border-white/10"}`}>
+      ? "border-primary/40 bg-primary/5 shadow-lg shadow-primary/10"
+      : "border-border bg-card shadow-sm dark:shadow-none hover:border-border/80"}`}>
       <div className="flex items-start justify-between mb-3">
         <div>
-          <div className="text-xs text-zinc-500 font-medium">{period.label}</div>
-          <div className="text-sm font-semibold text-white mt-0.5">
+          <div className="text-xs text-muted-foreground font-medium">{period.label}</div>
+          <div className="text-sm font-semibold text-foreground mt-0.5">
             {period.sessions.length} Sesi · {totalRounds} Ronde
           </div>
         </div>
         {isActive && !isPaused && (
-          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-[10px] font-medium animate-pulse">
+          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-primary/20 text-primary text-[10px] font-medium animate-pulse">
             <RadioTower className="size-2.5" /> Berjalan
           </span>
         )}
@@ -200,17 +200,17 @@ function PeriodSummaryCard({
 
       <div className="space-y-1.5 mb-3">
         {period.sessions.map(s => (
-          <div key={s.sessionNumber} className="flex items-center gap-2 text-xs text-zinc-400">
-            <span className="w-5 h-5 rounded-full bg-zinc-700/50 flex items-center justify-center text-[9px] font-bold shrink-0">
+          <div key={s.sessionNumber} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-bold shrink-0">
               {s.sessionNumber}
             </span>
-            <span className="flex-1">{s.label}</span>
+            <span className="flex-1 text-foreground/90">{s.label}</span>
             {s.intervention !== "NONE" && (
               <span className={`${INTERVENTION_CONFIG[s.intervention].color} flex items-center gap-0.5`}>
                 {INTERVENTION_CONFIG[s.intervention].icon}
               </span>
             )}
-            <span className="text-zinc-600">{s.rounds.length}R</span>
+            <span className="text-muted-foreground">{s.rounds.length}R</span>
           </div>
         ))}
       </div>
@@ -227,7 +227,7 @@ function PeriodSummaryCard({
       )}
 
       <Button
-        className="w-full h-8 text-xs font-medium gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
+        className="w-full h-8 text-xs font-medium gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40"
         onClick={() => onStart(period.periodNumber as 1 | 2 | 3)}
         disabled={activePeriod !== null || isCompleted}
       >
@@ -266,7 +266,7 @@ function LiveStatusPanel({
     <motion.div
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/60 to-zinc-900/80 p-4 space-y-4 shadow-xl shadow-indigo-500/10"
+      className="rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 to-background p-4 space-y-4 shadow-xl shadow-primary/10"
     >
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -298,19 +298,19 @@ function LiveStatusPanel({
 
       {/* Progress context */}
       <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="rounded-xl bg-white/5 p-2">
-          <div className="text-[10px] text-zinc-500 mb-0.5">Periode</div>
-          <div className="text-sm font-bold text-white">{activePeriod} / 3</div>
+        <div className="rounded-xl bg-muted/50 p-2 border border-border/50">
+          <div className="text-[10px] text-muted-foreground mb-0.5">Periode</div>
+          <div className="text-sm font-bold text-foreground">{activePeriod} / 3</div>
         </div>
-        <div className="rounded-xl bg-white/5 p-2">
-          <div className="text-[10px] text-zinc-500 mb-0.5">Sesi</div>
-          <div className="text-sm font-bold text-white">
+        <div className="rounded-xl bg-muted/50 p-2 border border-border/50">
+          <div className="text-[10px] text-muted-foreground mb-0.5">Sesi</div>
+          <div className="text-sm font-bold text-foreground">
             {sessionGroup ?? "—"} / {periodCfg.sessions.length}
           </div>
         </div>
-        <div className="rounded-xl bg-white/5 p-2">
-          <div className="text-[10px] text-zinc-500 mb-0.5">Ronde</div>
-          <div className="text-sm font-bold text-white">
+        <div className="rounded-xl bg-muted/50 p-2 border border-border/50">
+          <div className="text-[10px] text-muted-foreground mb-0.5">Ronde</div>
+          <div className="text-sm font-bold text-foreground">
             {activeRoundIdx !== null ? activeRoundIdx + 1 : "—"} / {totalRounds}
           </div>
         </div>
@@ -319,10 +319,10 @@ function LiveStatusPanel({
       {/* Timer */}
       <div className="space-y-1.5">
         <div className="flex justify-between text-xs">
-          <span className="text-zinc-400">{phaseCfg.label}</span>
+          <span className="text-muted-foreground font-medium">{phaseCfg.label}</span>
           <span className={`font-mono font-bold text-lg ${phaseCfg.color}`}>{formatTime(timeLeft)}</span>
         </div>
-        <div className="h-2 rounded-full bg-zinc-700/50 overflow-hidden">
+        <div className="h-2 rounded-full bg-muted overflow-hidden">
           <motion.div
             className={`h-full rounded-full ${currentPhase === "TRADING" ? "bg-emerald-500" : currentPhase === "PRE_MARKET" ? "bg-amber-500" : "bg-sky-500"}`}
             animate={{ width: `${pct}%` }}
@@ -334,18 +334,18 @@ function LiveStatusPanel({
       {/* Session label */}
       {sessionCfg && (
         <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">Sesi saat ini</span>
-          <span className="text-zinc-200 font-medium">{sessionCfg.label}</span>
+          <span className="text-muted-foreground">Sesi saat ini</span>
+          <span className="text-foreground font-medium">{sessionCfg.label}</span>
         </div>
       )}
 
       {/* Active stocks */}
       {stocks.length > 0 && (
         <div>
-          <div className="text-[10px] text-zinc-500 mb-1.5">Saham Aktif</div>
+          <div className="text-[10px] text-muted-foreground mb-1.5">Saham Aktif</div>
           <div className="flex flex-wrap gap-1.5">
             {stocks.map(s => (
-              <span key={s.id} className="rounded-lg bg-zinc-700/50 border border-white/5 px-2 py-1 text-xs font-medium text-zinc-200">
+              <span key={s.id} className="rounded-lg bg-muted border border-border px-2 py-1 text-xs font-medium text-foreground">
                 {s.kodeSaham}
               </span>
             ))}
@@ -374,18 +374,18 @@ function SessionProgress({ state }: { state: ExperimentState }) {
   const periodCfg = PERIOD_MATRIX.find(p => p.periodNumber === activePeriod)!;
 
   return (
-    <div className="rounded-2xl border border-white/5 bg-zinc-800/20 p-4 space-y-3">
-      <div className="text-xs font-semibold text-zinc-400">Progress {periodCfg.label}</div>
+    <div className="rounded-2xl border border-border bg-card shadow-sm dark:shadow-none p-4 space-y-3">
+      <div className="text-xs font-semibold text-muted-foreground">Progress {periodCfg.label}</div>
       {periodCfg.sessions.map((session, si) => {
         const isCurrentSession = si === activeSessionIdx;
         const isPastSession = activeSessionIdx !== null && si < activeSessionIdx;
         return (
-          <div key={session.sessionNumber} className={`rounded-xl p-3 border transition-all ${isCurrentSession ? "border-indigo-500/30 bg-indigo-500/5" : isPastSession ? "border-white/5 bg-zinc-800/20 opacity-50" : "border-white/5 bg-transparent opacity-30"}`}>
+          <div key={session.sessionNumber} className={`rounded-xl p-3 border transition-all ${isCurrentSession ? "border-primary/30 bg-primary/5" : isPastSession ? "border-border bg-muted/20 opacity-50" : "border-border bg-transparent opacity-30"}`}>
             <div className="flex items-center gap-2 mb-2">
-              {isPastSession ? <CheckCircle2 className="size-3.5 text-emerald-400 shrink-0" />
-                : isCurrentSession ? <RadioTower className="size-3.5 text-indigo-400 animate-pulse shrink-0" />
-                : <Circle className="size-3.5 text-zinc-600 shrink-0" />}
-              <span className="text-xs font-medium text-zinc-300">{session.label}</span>
+              {isPastSession ? <CheckCircle2 className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                : isCurrentSession ? <RadioTower className="size-3.5 text-primary animate-pulse shrink-0" />
+                : <Circle className="size-3.5 text-muted-foreground shrink-0" />}
+              <span className="text-xs font-medium text-foreground/90">{session.label}</span>
               {session.intervention !== "NONE" && (
                 <span className={`ml-auto ${INTERVENTION_CONFIG[session.intervention].color} flex items-center gap-0.5 text-[10px]`}>
                   {INTERVENTION_CONFIG[session.intervention].icon}
@@ -400,10 +400,10 @@ function SessionProgress({ state }: { state: ExperimentState }) {
                   const isCurrent = ri === activeRoundIdx;
                   return (
                     <div key={ri} className={`rounded-lg px-2 py-1 text-[10px] font-medium border transition-colors ${isCurrent
-                      ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
+                      ? "bg-primary/20 border-primary/40 text-primary"
                       : isPast
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                      : "bg-zinc-700/30 border-white/5 text-zinc-600"}`}>
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500 dark:text-emerald-400"
+                      : "bg-muted border-border text-muted-foreground"}`}>
                       R{ri + 1} · {r.stockCodes.join(", ")}
                     </div>
                   );
@@ -606,7 +606,7 @@ export default function AdminSchedulerBoard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[300px]">
-        <div className="flex items-center gap-2 text-zinc-500 text-sm">
+        <div className="flex items-center gap-2 text-muted-foreground text-sm">
           <Loader2 className="size-4 animate-spin" /> Memuat panel kontrol...
         </div>
       </div>
@@ -643,14 +643,14 @@ export default function AdminSchedulerBoard() {
       {/* ── PERIOD SELECTOR ───────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-            <Zap className="size-3.5 text-indigo-400" />
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Zap className="size-3.5 text-primary" />
             Mulai Periode Eksperimen
           </h3>
           {activePeriod === null && (
             <Button
               size="sm" variant="ghost"
-              className="text-xs h-7 text-zinc-500 hover:text-zinc-300 gap-1"
+              className="text-xs h-7 text-muted-foreground hover:text-foreground gap-1"
               onClick={handleReset}
             >
               <RefreshCw className="size-3" /> Reset
@@ -670,21 +670,10 @@ export default function AdminSchedulerBoard() {
         </div>
       </div>
 
-
-
-      {/* ── INTERVENTION CONFIG ───────────────────────────────── */}
-      <div>
-        <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2 mb-3">
-          <RadioTower className="size-3.5 text-amber-400" />
-          Konten Running Text Intervensi
-        </h3>
-        <InterventionConfigForm />
-      </div>
-
       {/* ── LEGEND ───────────────────────────────────────────── */}
-      <div className="rounded-xl border border-white/5 bg-zinc-900/30 p-3 space-y-2">
-        <div className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Keterangan Alur</div>
-        <div className="grid grid-cols-2 gap-1.5 text-[10px] text-zinc-500">
+      <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-2">
+        <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Keterangan Alur</div>
+        <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" /> Pra-Perdagangan (60 detik)</div>
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" /> Perdagangan (120 detik)</div>
           <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" /> Jeda / Cooldown (3 menit)</div>

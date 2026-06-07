@@ -111,8 +111,7 @@ export async function GET(req: NextRequest) {
       .innerJoin(stocks, eq(portfolios.stockId, stocks.id))
       .where(
         and(
-          eq(portfolios.userId, userId),
-          roundId ? eq(portfolios.roundId, roundId) : undefined
+          eq(portfolios.userId, userId)
         )
       );
 

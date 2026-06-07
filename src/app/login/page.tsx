@@ -52,42 +52,43 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4">
+    <div className="relative flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(79,70,229,0.15)_0%,transparent_60%)] dark:bg-[radial-gradient(ellipse_at_50%_0%,rgba(6,182,212,0.12)_0%,transparent_60%)]" />
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full max-w-sm"
+        className="w-full max-w-sm relative"
       >
-        <Card className="border-white/5 bg-zinc-900">
-          <CardHeader className="text-center">
-            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-emerald-500/10">
-              <ShieldCheck className="size-5 text-emerald-500" />
+        <Card className="border-indigo-100/60 dark:border-border bg-white/80 backdrop-blur-xl shadow-2xl dark:shadow-none dark:bg-slate-950/50">
+          <CardHeader className="text-center bg-gradient-to-b from-indigo-50/50 to-transparent dark:from-transparent rounded-t-xl">
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-primary/10">
+              <ShieldCheck className="size-5 text-primary" />
             </div>
-            <CardTitle className="text-base">Akses Responden</CardTitle>
-            <CardDescription className="text-xs">Masukkan kredensial Anda</CardDescription>
+            <CardTitle className="text-base text-foreground">Akses Responden</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">Masukkan kredensial Anda</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400">Nama / NIM</label>
+                <label className="text-xs text-muted-foreground">Nama / NIM</label>
                 <Input
                   placeholder="Masukkan nama"
                   value={nama}
                   onChange={(e) => setNama(e.target.value)}
                   disabled={loading}
-                  className="focus-visible:ring-emerald-500"
+                  className="focus-visible:ring-primary bg-background/50"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400">Password</label>
+                <label className="text-xs text-muted-foreground">Password</label>
                 <Input
                   type="password"
                   placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
-                  className="focus-visible:ring-emerald-500"
+                  className="focus-visible:ring-primary bg-background/50"
                 />
               </div>
               <Button type="submit" disabled={loading} className="gap-2">

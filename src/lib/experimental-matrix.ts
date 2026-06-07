@@ -34,11 +34,11 @@ export interface PeriodDef {
 
 // === TIMER DURATIONS (seconds) ===
 export const DURATIONS = {
-  PRE_MARKET: 60,       // 1 minute prediction phase
+  PRE_MARKET: 180,       // 3 minute prediction phase
   TRADING: 120,          // 2 minute live trading phase
   COOLDOWN: 180,         // 3 minute cooldown (between rounds AND between sessions)
   // Legacy aliases
-  PRE_OPENING: 60,
+  PRE_OPENING: 180,
   TRADING_SESSION: 120,
   ROUND_COOLDOWN: 180,
 } as const;

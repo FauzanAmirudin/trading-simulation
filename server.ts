@@ -180,13 +180,13 @@ async function loadInterventionCache() {
 }
 
 // Optimasi 1: Batch insert — dari 12 query terpisah menjadi 2 query total
-async function seedInitialPortfolios(roundId: number, stockRows: StockRow[], initialLot = 10) {
+async function seedInitialPortfolios(initialLot = 10) {
   const allUsers = await db.select().from(users).where(eq(users.role, "responden"));
+  const allStocks = await db.select().from(stocks);
   const toInsert = allUsers.flatMap(user =>
-    stockRows.map(stock => ({
+    allStocks.map(stock => ({
       userId: user.id,
       stockId: stock.id,
-      roundId,
       jumlahLot: initialLot,
       averagePrice: String(stock.basePrice),
     }))
@@ -194,7 +194,7 @@ async function seedInitialPortfolios(roundId: number, stockRows: StockRow[], ini
   if (toInsert.length > 0) {
     await db.insert(portfolios).values(toInsert).onConflictDoNothing();
   }
-  console.log(`[Scheduler] Portfolios seeded: ${allUsers.length} users × ${stockRows.length} stocks × ${initialLot} lot`);
+  console.log(`[Scheduler] Portfolios seeded: ${allUsers.length} users × ${allStocks.length} stocks × ${initialLot} lot`);
 }
 
 async function resetAllBalances() {
@@ -208,8 +208,7 @@ async function resetAllBalances() {
 
 async function resetSessionState() {
   await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
-  await resetAllBalances();
-  console.log("[Scheduler] Session state reset: open orders cancelled, balances reset");
+  console.log("[Scheduler] Session state reset: open orders cancelled");
 }
 
 async function cleanupActiveRound() {
@@ -288,11 +287,9 @@ function emitBalanceUpdateDirect(userId: number, newBalance: number) {
 }
 
 async function emitPortfolioUpdate(userId: number, stockId: number) {
-  const query = activeRoundDbId
-    ? await db.select().from(portfolios)
-        .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId), eq(portfolios.roundId, activeRoundDbId)))
-        .limit(1)
-    : [];
+  const query = await db.select().from(portfolios)
+      .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId)))
+      .limit(1);
   const p = query[0];
   io.to(`user:${userId}`).emit("portfolio-update", { userId, stockId, jumlahLot: p ? p.jumlahLot : 0 });
 }
@@ -326,26 +323,25 @@ async function executeTrade(
       newBidBalance = Number(updatedBid?.saldo || 0);
       newAskBalance = Number(updatedAsk?.saldo || 0);
 
-      // Buyer portfolio — scoped to current roundId
+      // Buyer portfolio
       const [bp] = await tx.select().from(portfolios)
-        .where(and(eq(portfolios.userId, bidOrder.userId), eq(portfolios.stockId, stockId), eq(portfolios.roundId, roundId)))
+        .where(and(eq(portfolios.userId, bidOrder.userId), eq(portfolios.stockId, stockId)))
         .limit(1);
       if (bp) {
         const newLots = bp.jumlahLot + quantity;
         const newAvg = Math.round(((Number(bp.averagePrice) * bp.jumlahLot) + (price * quantity)) / newLots);
         await tx.update(portfolios).set({ jumlahLot: newLots, averagePrice: String(newAvg) }).where(eq(portfolios.id, bp.id));
       } else {
-        await tx.insert(portfolios).values({ userId: bidOrder.userId, stockId, roundId, jumlahLot: quantity, averagePrice: String(price) });
+        await tx.insert(portfolios).values({ userId: bidOrder.userId, stockId, jumlahLot: quantity, averagePrice: String(price) });
       }
 
-      // Seller portfolio — scoped to current roundId
+      // Seller portfolio
       const [sp] = await tx.select().from(portfolios)
-        .where(and(eq(portfolios.userId, askOrder.userId), eq(portfolios.stockId, stockId), eq(portfolios.roundId, roundId)))
+        .where(and(eq(portfolios.userId, askOrder.userId), eq(portfolios.stockId, stockId)))
         .limit(1);
       if (sp) {
         const newLots = sp.jumlahLot - quantity;
-        if (newLots === 0) await tx.delete(portfolios).where(eq(portfolios.id, sp.id));
-        else await tx.update(portfolios).set({ jumlahLot: newLots }).where(eq(portfolios.id, sp.id));
+        await tx.update(portfolios).set({ jumlahLot: newLots }).where(eq(portfolios.id, sp.id));
       }
 
       // Perbarui status dan jumlah tersisa di order_book
@@ -473,7 +469,7 @@ async function runRound(
     for (let i = 0; i < orderedStocks.length; i++) {
       await db.insert(roundStocks).values({ roundId: roundRow.id, stockId: orderedStocks[i].id, slot: i + 1 });
     }
-    await seedInitialPortfolios(roundRow.id, orderedStocks);
+    await seedInitialPortfolios();
   }
 
 
@@ -649,8 +645,6 @@ async function startPeriod(
       totalSessions: periodConfig.sessions.length,
     });
 
-    await resetAllBalances();
-
     for (let si = startFromSessionIdx; si < periodConfig.sessions.length; si++) {
       if (periodAborted) break;
       const session = periodConfig.sessions[si];
@@ -799,6 +793,7 @@ app.prepare().then(async () => {
 
   await loadInterventionCache();
   await loadPeriodStates();
+  await seedInitialPortfolios();
   console.log("[Scheduler] State machine ready — PERIOD_MATRIX loaded");
   await recoverActiveSession();
 
@@ -1117,7 +1112,7 @@ app.prepare().then(async () => {
 
       if (tipe === "ASK") {
         const [portfolio] = await db.select().from(portfolios)
-          .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId), eq(portfolios.roundId, activeRoundDbId))).limit(1);
+          .where(and(eq(portfolios.userId, userId), eq(portfolios.stockId, stockId))).limit(1);
         const owned = portfolio ? portfolio.jumlahLot : 0;
         const openAsks = await db.select().from(orderBook)
           .where(and(eq(orderBook.userId, userId), eq(orderBook.roundId, activeRoundDbId), eq(orderBook.stockId, stockId), eq(orderBook.status, "open"), eq(orderBook.tipe, "ASK")));
@@ -1186,10 +1181,20 @@ app.prepare().then(async () => {
         stockId: portfolios.stockId, kode: stocks.kodeSaham,
         nama: stocks.namaSaham, jumlahLot: portfolios.jumlahLot,
         avgPrice: portfolios.averagePrice,
+        basePrice: stocks.basePrice,
       }).from(portfolios).innerJoin(stocks, eq(portfolios.stockId, stocks.id))
-        .where(eq(portfolios.userId, data.userId));
+        .where(eq(portfolios.userId, data.userId))
+        .orderBy(stocks.id);
       socket.emit("portfolio-data", {
-        portfolio: portfolio.map(p => ({ stockId: p.stockId, stockCode: p.kode, namaSaham: p.nama, jumlahLot: p.jumlahLot, currentValue: Number(p.avgPrice) * p.jumlahLot * 100 })),
+        portfolio: portfolio.map(p => ({
+          stockId: p.stockId,
+          stockCode: p.kode,
+          namaSaham: p.nama,
+          jumlahLot: p.jumlahLot,
+          avgPrice: Number(p.avgPrice),
+          basePrice: Number(p.basePrice),
+          currentValue: Number(p.avgPrice) * p.jumlahLot * 100,
+        })),
       });
     });
 

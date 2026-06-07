@@ -3,8 +3,6 @@ import { db } from "@/db/connect";
 import { users, predictions, transactionsHistory, orderBook, rounds, stocks } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
-import dayjs from "dayjs";
-const { ZipArchive } = require("archiver");
 
 export async function GET(req: NextRequest) {
   try {
@@ -44,21 +42,10 @@ export async function GET(req: NextRequest) {
     // Fetch all predictions
     const allPredictions = await db.select().from(predictions).orderBy(predictions.createdAt);
 
-    // Create a Promise to handle the Zip stream
-    const chunks: Buffer[] = [];
-    const archive = new ZipArchive({
-      zlib: { level: 9 } // Sets the compression level.
-    });
-
-    archive.on('error', function(err: any) {
-      throw err;
-    });
-
-    const streamPromise = new Promise<Buffer>((resolve, reject) => {
-      archive.on('data', (chunk: any) => chunks.push(chunk));
-      archive.on('end', () => resolve(Buffer.concat(chunks)));
-      archive.on('error', (err: any) => reject(err));
-    });
+    // Create the Workbook
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Trading Simulator Admin";
+    workbook.created = new Date();
 
     // Helper for formatting
     const borderStyle: Partial<ExcelJS.Borders> = {
@@ -79,10 +66,6 @@ export async function GET(req: NextRequest) {
 
     // Process per user
     for (const user of allRespondents) {
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = "Trading Simulator Admin";
-      workbook.created = new Date();
-
       let userPredictions = allPredictions.filter(p => p.userId === user.id);
       let userTransactions = allTransactions.filter(tx => {
         const buyerId = orderUserMap[tx.orderBuyId];
@@ -98,23 +81,22 @@ export async function GET(req: NextRequest) {
         userTransactions = userTransactions.filter(tx => tx.createdAt && getWibDateString(new Date(tx.createdAt)) === dateParam);
       }
 
-      // ── SHEET 1: PREDIKSI ──
-      const sheet1 = workbook.addWorksheet("Prediksi Harga");
-      sheet1.columns = [
-        { header: 'Waktu Input', key: 'waktu', width: 22 },
-        { header: 'Periode', key: 'periode', width: 12 },
-        { header: 'Ronde', key: 'ronde', width: 10 },
-        { header: 'Kode Saham', key: 'saham', width: 15 },
-        { header: 'Harga Buka', key: 'hargaBuka', width: 20 },
-        { header: 'Harga Prediksi', key: 'hargaPrediksi', width: 20 },
-        { header: 'Harga Akhir', key: 'hargaAkhir', width: 20 },
-        { header: 'Selisih', key: 'selisih', width: 20 },
-        { header: 'Akurasi', key: 'akurasi', width: 15 },
-      ];
+      // Skip creating a sheet if there is absolutely no data for this user and we are filtering
+      if (dateParam && userPredictions.length === 0 && userTransactions.length === 0) {
+        continue;
+      }
 
-      // Style Header
-      const headerRow1 = sheet1.getRow(1);
-      headerRow1.eachCell((cell) => {
+      // Create Worksheet for this user
+      // Excel limits sheet name to 31 characters and forbids some special characters
+      const safeSheetName = (user.nama || `User_${user.id}`).replace(/[\\/?*\[\]]/g, '').substring(0, 31);
+      const sheet = workbook.addWorksheet(safeSheetName);
+
+      // --- SECTION 1: PREDICTIONS ---
+      const predHeaderRow = sheet.addRow([
+        'Waktu Input', 'Periode', 'Ronde', 'Kode Saham', 'Harga Buka', 'Harga Prediksi', 'Harga Akhir', 'Selisih', 'Akurasi'
+      ]);
+      
+      predHeaderRow.eachCell((cell) => {
         cell.fill = headerFill;
         cell.font = headerFont;
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -136,18 +118,22 @@ export async function GET(req: NextRequest) {
         const selisih = Math.abs(predPrice - finalPrice);
 
         const timeStr = p.createdAt ? p.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
+        const akurasiRaw = p.accuracyScore ? Number(p.accuracyScore) : null;
+        
+        // Asumsi nilai akurasi berupa 0-100 dari DB. Bagi 100 agar jadi decimal untuk format persentase Excel.
+        const akurasiVal = akurasiRaw !== null ? akurasiRaw / 100 : null;
 
-        const row = sheet1.addRow({
-          waktu: timeStr,
-          periode: `Periode ${round?.period || "-"}`,
-          ronde: `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
-          saham: stock?.kodeSaham || "-",
-          hargaBuka: openingPrice,
-          hargaPrediksi: predPrice,
-          hargaAkhir: finalPrice,
-          selisih: selisih,
-          akurasi: p.accuracyScore ? Number(p.accuracyScore) : null,
-        });
+        const row = sheet.addRow([
+          timeStr,
+          `Periode ${round?.period || "-"}`,
+          `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
+          stock?.kodeSaham || "-",
+          openingPrice,
+          predPrice,
+          finalPrice,
+          selisih,
+          akurasiVal
+        ]);
 
         // Apply number format & borders
         row.eachCell((cell, colNumber) => {
@@ -158,29 +144,21 @@ export async function GET(req: NextRequest) {
             cell.numFmt = 'Rp #,##0.00';
           }
           if (colNumber === 9 && cell.value !== null) {
-            cell.numFmt = '0.0000';
+            cell.numFmt = '0.00%';
           }
         });
       }
 
-      // ── SHEET 2: TRANSAKSI ──
-      const sheet2 = workbook.addWorksheet("Riwayat Transaksi");
-      sheet2.columns = [
-        { header: 'Waktu Transaksi', key: 'waktu', width: 22 },
-        { header: 'Periode', key: 'periode', width: 12 },
-        { header: 'Ronde', key: 'ronde', width: 10 },
-        { header: 'Kode Saham', key: 'saham', width: 15 },
-        { header: 'Tipe', key: 'tipe', width: 12 },
-        { header: 'Harga', key: 'harga', width: 20 },
-        { header: 'Jumlah (Lot)', key: 'jumlah', width: 15 },
-        { header: 'Total Value', key: 'total', width: 25 },
-        { header: 'Intervensi Aktif', key: 'intervensi', width: 20 },
-        { header: 'Lawan Transaksi', key: 'lawan', width: 30 },
-      ];
+      // Add spacer rows
+      sheet.addRow([]);
+      sheet.addRow([]);
 
-      // Style Header
-      const headerRow2 = sheet2.getRow(1);
-      headerRow2.eachCell((cell) => {
+      // --- SECTION 2: TRANSACTIONS ---
+      const txHeaderRow = sheet.addRow([
+        'Waktu Transaksi', 'Periode', 'Ronde', 'Kode Saham', 'Tipe', 'Harga', 'Jumlah (Lot)', 'Total Value', 'Intervensi Aktif', 'Lawan Transaksi'
+      ]);
+
+      txHeaderRow.eachCell((cell) => {
         cell.fill = headerFill;
         cell.font = headerFont;
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -201,18 +179,18 @@ export async function GET(req: NextRequest) {
 
         const timeStr = tx.createdAt ? tx.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
 
-        const row = sheet2.addRow({
-          waktu: timeStr,
-          periode: `Periode ${round?.period || "-"}`,
-          ronde: `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
-          saham: stock?.kodeSaham || "-",
-          tipe: tipe,
-          harga: Number(tx.harga),
-          jumlah: tx.jumlah,
-          total: Number(tx.total),
-          intervensi: tx.activeIntervention || "NONE",
-          lawan: lawanName,
-        });
+        const row = sheet.addRow([
+          timeStr,
+          `Periode ${round?.period || "-"}`,
+          `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
+          stock?.kodeSaham || "-",
+          tipe,
+          Number(tx.harga),
+          tx.jumlah,
+          Number(tx.total),
+          tx.activeIntervention || "NONE",
+          lawanName
+        ]);
 
         // Apply styles
         row.eachCell((cell, colNumber) => {
@@ -233,26 +211,33 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Freeze top rows for easy scrolling
-      sheet1.views = [{ state: 'frozen', ySplit: 1 }];
-      sheet2.views = [{ state: 'frozen', ySplit: 1 }];
+      // Adjust column widths
+      sheet.columns = [
+        { width: 22 }, // Waktu
+        { width: 12 }, // Periode
+        { width: 10 }, // Ronde
+        { width: 15 }, // Saham
+        { width: 20 }, // Harga / Tipe
+        { width: 20 }, // Harga Prediksi / Harga
+        { width: 20 }, // Harga Akhir / Lot
+        { width: 25 }, // Selisih / Total
+        { width: 20 }, // Akurasi / Intervensi
+        { width: 30 }, // Lawan (only in TX)
+      ];
 
-      // Write to buffer
-      const buffer = await workbook.xlsx.writeBuffer();
-      
-      const safeName = user.nama.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      archive.append(Buffer.from(buffer), { name: `Laporan_Trading_${safeName}_${user.id}.xlsx` });
+      // Freeze top rows (just for prediction table header context if possible, or just standard freeze)
+      // Since there are two tables, we just don't freeze, or freeze the first row. We'll freeze row 1.
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
     }
 
-    archive.finalize();
+    // Write to buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    const downloadFileName = dateParam ? `Laporan_Trading_${dateParam}.xlsx` : `Laporan_Trading_All.xlsx`;
 
-    const zipBuffer = await streamPromise;
-    const downloadFileName = dateParam ? `Laporan_Trading_${dateParam}.zip` : `Laporan_Trading_All.zip`;
-
-    return new NextResponse(zipBuffer as any, {
+    return new NextResponse(buffer as any, {
       status: 200,
       headers: {
-        'Content-Type': 'application/zip',
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="${downloadFileName}"`,
       },
     });

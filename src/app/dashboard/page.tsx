@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import {
   TrendingUp, TrendingDown, BarChart3, DollarSign, Briefcase,
   Activity, Timer, ArrowRight, ScrollText, Clock, Wallet,
-  Zap, AlertTriangle, TrendingDown as TrendingDownIcon,
+  Zap, AlertTriangle, TrendingDown as TrendingDownIcon, Package2,
 } from "lucide-react";
 import {
   InterventionType,
@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<{ sessionId: number; status: string; timeLeft: number } | null>(null);
   const [balance, setBalance] = useState(100_000_000);
-  const [portfolio, setPortfolio] = useState<{ stock: string; lot: number; value: number }[]>([]);
+  const [portfolio, setPortfolio] = useState<{ stockId: number; stock: string; namaSaham: string; lot: number; avgPrice: number; basePrice: number; value: number }[]>([]);
   // New experimental state
   const [roundNumber, setRoundNumber] = useState<number | null>(null);
   const [period, setPeriod] = useState<number | null>(null);
@@ -134,7 +134,13 @@ export default function DashboardPage() {
     const onExperimentPaused = () => {};
     const onPortfolioData = (data: { portfolio: any[] }) => {
       setPortfolio((data.portfolio || []).map((p: any) => ({
-        stock: p.stockCode, lot: p.jumlahLot, value: Number(p.currentValue),
+        stockId: p.stockId,
+        stock: p.stockCode,
+        namaSaham: p.namaSaham || p.stockCode,
+        lot: p.jumlahLot,
+        avgPrice: Number(p.avgPrice) || Number(p.basePrice) || 0,
+        basePrice: Number(p.basePrice) || 0,
+        value: Number(p.currentValue),
       })));
     };
 
@@ -185,9 +191,9 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="p-6 space-y-4">
-        <Skeleton className="h-8 w-56 bg-zinc-800" />
+        <Skeleton className="h-8 w-56 bg-muted" />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-28 bg-zinc-800" />)}
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-28 bg-muted" />)}
         </div>
       </div>
     );
@@ -198,16 +204,16 @@ export default function DashboardPage() {
       {/* Header with Round/Session info */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-200">
+          <h1 className="text-lg font-semibold text-foreground">
             Hallo, {user.nama}
           </h1>
-          <p className="text-sm text-zinc-500">Ringkasan akun dan aktivitas kamu</p>
+          <p className="text-sm text-muted-foreground">Ringkasan akun dan aktivitas kamu</p>
         </div>
         <div className="flex items-center gap-3">
           {/* Round + Session indicator */}
           {roundNumber && (
             <div className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1">
-              <span className="text-[10px] font-medium text-zinc-400">Round {roundNumber}</span>
+              <span className="text-[10px] font-medium text-muted-foreground">Round {roundNumber}</span>
               {subSession && (
                 <>
                   <span className="text-[10px] text-zinc-700">·</span>
@@ -230,7 +236,7 @@ export default function DashboardPage() {
           )}
           <div className="flex items-center gap-2">
             <Wallet className="size-4 text-emerald-500" />
-            <span className="font-mono text-sm text-zinc-400">
+            <span className="font-mono text-sm text-muted-foreground">
               Rp {balance.toLocaleString("id-ID")}
             </span>
           </div>
@@ -239,39 +245,54 @@ export default function DashboardPage() {
 
       {/* Ringkasan Akun */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="border-white/5 bg-zinc-900">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-              <DollarSign className="size-4" /> Sisa Kas
+        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent dark:from-blue-500/10" />
+          <CardContent className="p-6 relative">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-600 dark:text-blue-400 shadow-sm border border-blue-200/50 dark:border-blue-700/30">
+                <DollarSign className="size-5" />
+              </div>
+              <div className="text-sm font-medium text-muted-foreground">Sisa Kas</div>
             </div>
-            <div className="font-mono text-2xl font-bold text-emerald-500">
+            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
               Rp {balance.toLocaleString("id-ID")}
             </div>
           </CardContent>
         </Card>
-        <Card className="border-white/5 bg-zinc-900">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-              <Briefcase className="size-4" /> Portofolio
+
+        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent dark:from-emerald-500/10" />
+          <CardContent className="p-6 relative">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/40 dark:to-teal-900/40 text-emerald-600 dark:text-emerald-400 shadow-sm border border-emerald-200/50 dark:border-emerald-700/30">
+                <Briefcase className="size-5" />
+              </div>
+              <div className="text-sm font-medium text-muted-foreground">Portofolio</div>
             </div>
-            <div className="font-mono text-2xl font-bold text-zinc-200">
+            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
               Rp {totalValue.toLocaleString("id-ID")}
             </div>
-            <div className="text-xs text-zinc-600 mt-1">
-              {portfolio.length} saham
+            <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1.5">
+              <div className="size-1.5 rounded-full bg-emerald-500" />
+              {portfolio.length} saham aktif
             </div>
           </CardContent>
         </Card>
-        <Card className="border-white/5 bg-zinc-900">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-              <Activity className="size-4" /> Total Kekayaan
+
+        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 to-transparent dark:from-violet-500/10" />
+          <CardContent className="p-6 relative">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-100 to-purple-100 dark:from-violet-900/40 dark:to-purple-900/40 text-violet-600 dark:text-violet-400 shadow-sm border border-violet-200/50 dark:border-violet-700/30">
+                <Activity className="size-5" />
+              </div>
+              <div className="text-sm font-medium text-muted-foreground">Total Kekayaan</div>
             </div>
-            <div className="font-mono text-2xl font-bold text-zinc-200">
+            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
               Rp {totalWealth.toLocaleString("id-ID")}
             </div>
-            <div className="text-xs text-zinc-600 mt-1">
-              Kas + Portofolio
+            <div className="text-xs text-muted-foreground mt-2">
+              Gabungan kas & portofolio
             </div>
           </CardContent>
         </Card>
@@ -279,9 +300,9 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Sesi Aktif */}
-        <Card className="border-white/5 bg-zinc-900">
+        <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm border-t-2 border-t-amber-500/50 hover:shadow-md hover:-translate-y-0.5 transition-all dark:shadow-none dark:bg-slate-950/40 dark:border-t-border">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-foreground">
               <Timer className="size-4 text-emerald-500" />
               Sesi Aktif
             </CardTitle>
@@ -290,18 +311,18 @@ export default function DashboardPage() {
             {session ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-400">Sesi #{session.sessionId}</span>
+                  <span className="text-sm text-muted-foreground">Sesi #{session.sessionId}</span>
                   <span className="flex items-center gap-1.5 text-xs">
                     <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     <span className="text-emerald-500 capitalize">{session.status}</span>
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
-                  <Clock className="size-4 text-zinc-500" />
-                  <span className="font-mono text-zinc-300">
+                  <Clock className="size-4 text-muted-foreground" />
+                  <span className="font-mono text-foreground">
                     {Math.floor(session.timeLeft / 60)}:{String(session.timeLeft % 60).padStart(2, "0")}
                   </span>
-                  <span className="text-xs text-zinc-600">tersisa</span>
+                  <span className="text-xs text-muted-foreground">tersisa</span>
                 </div>
                 <Button size="sm" className="w-full gap-2 mt-2"
                   onClick={() => router.push("/dashboard/trading")}>
@@ -310,11 +331,11 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center py-6 text-center">
-                <div className="rounded-full bg-zinc-800 p-3 mb-3">
-                  <Timer className="size-6 text-zinc-600" />
+                <div className="rounded-full bg-muted p-3 mb-3">
+                  <Timer className="size-6 text-muted-foreground" />
                 </div>
-                <p className="text-sm text-zinc-500">Tidak ada sesi aktif</p>
-                <p className="text-xs text-zinc-600 mt-1">
+                <p className="text-sm text-muted-foreground">Tidak ada sesi aktif</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
                   Tunggu admin untuk memulai sesi trading
                 </p>
               </div>
@@ -324,36 +345,36 @@ export default function DashboardPage() {
 
         {/* Ringkasan Resume — only shown during active session */}
         {session ? (
-          <Card className="border-white/5 bg-zinc-900">
+          <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm border-t-2 border-t-blue-500/50 hover:shadow-md hover:-translate-y-0.5 transition-all dark:shadow-none dark:bg-slate-950/40 dark:border-t-border">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BarChart3 className="size-4 text-zinc-400" />
+              <CardTitle className="text-sm flex items-center gap-2 text-foreground">
+                <BarChart3 className="size-4 text-muted-foreground" />
                 Ringkasan Sesi Ini
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-lg bg-zinc-800/50 p-3">
-                  <div className="text-xs text-zinc-500 mb-0.5">Total Beli</div>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <div className="text-xs text-muted-foreground mb-0.5">Total Beli</div>
                   <div className="font-mono text-sm font-bold text-emerald-500">
                     Rp {totalBuy.toLocaleString("id-ID")}
                   </div>
                 </div>
-                <div className="rounded-lg bg-zinc-800/50 p-3">
-                  <div className="text-xs text-zinc-500 mb-0.5">Total Jual</div>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <div className="text-xs text-muted-foreground mb-0.5">Total Jual</div>
                   <div className="font-mono text-sm font-bold text-rose-500">
                     Rp {totalSell.toLocaleString("id-ID")}
                   </div>
                 </div>
-                <div className="rounded-lg bg-zinc-800/50 p-3">
-                  <div className="text-xs text-zinc-500 mb-0.5">P&L Bersih</div>
-                  <div className={`font-mono text-sm font-bold ${netPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <div className="text-xs text-muted-foreground mb-0.5">P&L Bersih</div>
+                  <div className={`font-mono text-sm font-bold ${netPnl >= 0 ? "text-emerald-500 dark:text-green-400" : "text-rose-500"}`}>
                     {netPnl >= 0 ? "+" : ""}Rp {Math.abs(netPnl).toLocaleString("id-ID")}
                   </div>
                 </div>
-                <div className="rounded-lg bg-zinc-800/50 p-3">
-                  <div className="text-xs text-zinc-500 mb-0.5">Total Transaksi</div>
-                  <div className="font-mono text-sm font-bold text-zinc-200">
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <div className="text-xs text-muted-foreground mb-0.5">Total Transaksi</div>
+                  <div className="font-mono text-sm font-bold text-foreground">
                     {history.length}
                   </div>
                 </div>
@@ -361,10 +382,10 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         ) : (
-          <Card className="border-white/5 bg-zinc-900">
+          <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm dark:shadow-none dark:bg-slate-950/40">
             <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-              <BarChart3 className="size-6 text-zinc-700 mb-2" />
-              <p className="text-xs text-zinc-600">Ringkasan sesi akan muncul saat sesi berjalan</p>
+              <BarChart3 className="size-6 text-muted-foreground/50 mb-2" />
+              <p className="text-xs text-muted-foreground">Ringkasan sesi akan muncul saat sesi berjalan</p>
             </CardContent>
           </Card>
         )}
@@ -372,25 +393,25 @@ export default function DashboardPage() {
 
       {/* Riwayat Transaksi Sesi Ini — only shown during active session */}
       {session && (
-        <Card className="border-white/5 bg-zinc-900">
+        <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm dark:shadow-none dark:bg-slate-950/40">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <ScrollText className="size-4 text-zinc-400" />
+              <CardTitle className="text-sm flex items-center gap-2 text-foreground">
+                <ScrollText className="size-4 text-muted-foreground" />
                 Riwayat Transaksi Sesi Ini
               </CardTitle>
-              <span className="text-[10px] text-zinc-600 font-mono">
+              <span className="text-[10px] text-muted-foreground font-mono">
                 {history.length} transaksi
               </span>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="divide-y divide-white/5">
+            <div className="divide-y divide-border">
               {history.slice(0, 10).map((tx, i) => (
                 <div key={i} className="flex items-center justify-between py-2.5 text-xs">
                   <div className="flex items-center gap-3">
-                    <span className="font-mono text-zinc-600 w-14">{tx.time}</span>
-                    <span className="font-medium text-zinc-300 w-12">{tx.stock}</span>
+                    <span className="font-mono text-muted-foreground w-14">{tx.time}</span>
+                    <span className="font-medium text-foreground w-12">{tx.stock}</span>
                     <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
                       tx.tipe === "SELF" ? "bg-amber-500/10 text-amber-500" :
                       tx.tipe === "BID" || tx.tipe === "buy" ? "bg-emerald-500/10 text-emerald-500" : 
@@ -400,21 +421,128 @@ export default function DashboardPage() {
                       tx.tipe === "buy" || tx.tipe === "BID" ? "BELI" : "JUAL"
                     }</span>
                   </div>
-                  <div className="flex items-center gap-4 font-mono text-zinc-400">
+                  <div className="flex items-center gap-4 font-mono text-muted-foreground">
                     <span>Rp {tx.harga.toLocaleString("id-ID")}</span>
-                    <span className="text-zinc-600">{tx.jumlah} lot</span>
+                    <span className="text-muted-foreground/70">{tx.jumlah} lot</span>
                   </div>
                 </div>
               ))}
             </div>
             {history.length === 0 && (
-              <div className="py-6 text-center text-zinc-600 text-xs">
+              <div className="py-6 text-center text-muted-foreground text-xs">
                 Belum ada transaksi dalam sesi ini
               </div>
             )}
           </CardContent>
         </Card>
       )}
+
+      {/* Tabel Portofolio Lengkap */}
+      <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm dark:shadow-none dark:bg-slate-950/40">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2 text-foreground">
+              <Briefcase className="size-4 text-violet-500" />
+              Portofolio Saham
+            </CardTitle>
+            <span className="text-[10px] text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded-full">
+              {portfolio.filter(p => p.lot > 0).length} saham aktif
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {portfolio.length === 0 ? (
+            <div className="flex flex-col items-center py-10 text-center gap-2">
+              <Briefcase className="size-8 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">Memuat data portofolio...</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40">
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Kode</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Lot</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Lembar</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Harga Rata-rata</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Harga Dasar</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Nilai Total</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Unrealized P&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {portfolio.map((p, i) => {
+                    const lembar = p.lot * 100;
+                    const nilaiTotal = p.avgPrice * lembar;
+                    const nilaiDasar = p.basePrice * lembar;
+                    const pnl = nilaiTotal - nilaiDasar;
+                    const pnlPct = nilaiDasar > 0 ? (pnl / nilaiDasar) * 100 : 0;
+                    const isProfit = pnl >= 0;
+                    return (
+                      <tr
+                        key={p.stockId ?? i}
+                        className={cn(
+                          "transition-colors hover:bg-muted/30",
+                          p.lot === 0 && "opacity-40"
+                        )}
+                      >
+                        <td className="px-4 py-2.5">
+                          <span className="font-semibold text-foreground">{p.stock}</span>
+                          <div className="text-[10px] text-muted-foreground truncate max-w-[80px]">{p.namaSaham}</div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-medium text-foreground">{p.lot}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{lembar.toLocaleString("id-ID")}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-foreground">
+                          Rp {p.avgPrice.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">
+                          Rp {p.basePrice.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-foreground">
+                          Rp {nilaiTotal.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className={cn(
+                            "font-mono font-semibold",
+                            isProfit ? "text-emerald-500 dark:text-emerald-400" : "text-rose-500"
+                          )}>
+                            {isProfit ? "+" : ""}Rp {Math.abs(pnl).toLocaleString("id-ID")}
+                          </div>
+                          <div className={cn(
+                            "text-[10px]",
+                            isProfit ? "text-emerald-500/70 dark:text-emerald-400/70" : "text-rose-500/70"
+                          )}>
+                            {isProfit ? "▲" : "▼"} {Math.abs(pnlPct).toFixed(2)}%
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/20">
+                    <td colSpan={5} className="px-4 py-3 text-xs font-semibold text-muted-foreground">Total Portofolio</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-foreground text-sm">
+                      Rp {portfolio.reduce((s, p) => s + p.avgPrice * p.lot * 100, 0).toLocaleString("id-ID")}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {(() => {
+                        const totalPnl = portfolio.reduce((s, p) => s + (p.avgPrice - p.basePrice) * p.lot * 100, 0);
+                        const isP = totalPnl >= 0;
+                        return (
+                          <span className={cn("font-mono font-bold text-sm", isP ? "text-emerald-500 dark:text-emerald-400" : "text-rose-500")}>
+                            {isP ? "+" : ""}Rp {Math.abs(totalPnl).toLocaleString("id-ID")}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }

@@ -8,6 +8,7 @@ import { getTickSize, incrementPrice, decrementPrice, snapToTickSize } from "@/l
 interface PriceInputProps {
   value: string;
   onChange: (value: string) => void;
+  basePrice?: number;
   min?: number;
   max?: number;
   placeholder?: string;
@@ -23,6 +24,7 @@ interface PriceInputProps {
 export function PriceInput({
   value,
   onChange,
+  basePrice,
   min = 1,
   max,
   placeholder = "Harga",
@@ -31,24 +33,38 @@ export function PriceInput({
   id,
 }: PriceInputProps) {
   const numericValue = parseInt(value) || 0;
-  const tickSize = numericValue > 0 ? getTickSize(numericValue) : 1;
+  const currentRefPrice = numericValue > 0 ? numericValue : (basePrice || 0);
+  const tickSize = currentRefPrice > 0 ? getTickSize(currentRefPrice) : 1;
 
   const handleIncrement = useCallback(() => {
     if (disabled) return;
     const current = parseInt(value) || 0;
-    const next = current > 0 ? incrementPrice(current) : snapToTickSize(min);
+    let next: number;
+    if (current > 0) {
+      next = incrementPrice(current);
+    } else {
+      // If empty, increment from basePrice using its tick
+      const ref = basePrice && basePrice > 0 ? basePrice : min;
+      next = snapToTickSize(ref) + getTickSize(ref);
+    }
     if (max !== undefined && next > max) return;
     onChange(String(next));
-  }, [value, min, max, disabled, onChange]);
+  }, [value, basePrice, min, max, disabled, onChange]);
 
   const handleDecrement = useCallback(() => {
     if (disabled) return;
     const current = parseInt(value) || 0;
-    if (current <= 0) return;
-    const next = decrementPrice(current);
+    let next: number;
+    if (current > 0) {
+      next = decrementPrice(current);
+    } else {
+      // If empty, decrement from basePrice
+      const ref = basePrice && basePrice > 0 ? basePrice : min;
+      next = snapToTickSize(ref) - getTickSize(ref);
+    }
     if (next < min) return;
     onChange(String(next));
-  }, [value, min, disabled, onChange]);
+  }, [value, basePrice, min, disabled, onChange]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -58,20 +74,19 @@ export function PriceInput({
     }
   }, [onChange]);
 
-  const canDecrement = numericValue > min;
-  const canIncrement = max === undefined || numericValue < max;
+  const canDecrement = currentRefPrice > min;
+  const canIncrement = max === undefined || currentRefPrice < max;
 
   return (
-    <div className={cn("flex items-center rounded-md border border-white/10 bg-zinc-800 overflow-hidden", className)}>
+    <div className={cn("flex items-center rounded-md border border-border bg-background focus-within:ring-1 focus-within:ring-primary overflow-hidden", className)}>
       {/* Tombol Kurang */}
       <button
         type="button"
         onClick={handleDecrement}
         disabled={disabled || !canDecrement}
         className={cn(
-          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors",
-          "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700",
-          "disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground border-r border-border",
+          "disabled:opacity-30 disabled:cursor-not-allowed"
         )}
         tabIndex={-1}
         aria-label="Turunkan harga"
@@ -89,11 +104,7 @@ export function PriceInput({
         onChange={handleChange}
         placeholder={placeholder}
         disabled={disabled}
-        className={cn(
-          "flex-1 min-w-0 bg-transparent text-center text-xs font-mono text-zinc-200",
-          "focus:outline-none placeholder:text-zinc-600",
-          "disabled:opacity-50 disabled:cursor-not-allowed"
-        )}
+        className="h-8 w-full min-w-[60px] bg-transparent text-center text-sm font-mono font-medium text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-50"
       />
 
       {/* Tombol Tambah */}
@@ -102,9 +113,8 @@ export function PriceInput({
         onClick={handleIncrement}
         disabled={disabled || !canIncrement}
         className={cn(
-          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors",
-          "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700",
-          "disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground border-l border-border",
+          "disabled:opacity-30 disabled:cursor-not-allowed"
         )}
         tabIndex={-1}
         aria-label="Naikkan harga"
@@ -118,11 +128,12 @@ export function PriceInput({
 /**
  * Badge kecil yang menampilkan fraksi aktif berdasarkan harga.
  */
-export function TickSizeBadge({ price }: { price: number }) {
-  if (price <= 0) return null;
-  const tick = getTickSize(price);
+export function TickSizeBadge({ price, basePrice }: { price: number; basePrice?: number }) {
+  const effectivePrice = basePrice && basePrice > 0 ? basePrice : price;
+  if (effectivePrice <= 0) return null;
+  const tick = getTickSize(effectivePrice);
   return (
-    <span className="text-[10px] text-zinc-600 font-mono">
+    <span className="text-[10px] text-muted-foreground font-mono">
       Fraksi: Rp {tick.toLocaleString("id-ID")}
     </span>
   );

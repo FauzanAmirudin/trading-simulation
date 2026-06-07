@@ -368,11 +368,11 @@ export default function AdminTradingPage() {
     return (
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="p-6 h-[80vh] flex flex-col items-center justify-center text-center space-y-6">
         <div className="rounded-full bg-zinc-800/40 p-6 border border-white/5 shadow-inner">
-          <Activity className="size-16 text-zinc-600 animate-pulse" />
+          <Activity className="size-16 text-muted-foreground animate-pulse" />
         </div>
         <div className="max-w-md space-y-2">
           <h2 className="text-xl font-semibold text-zinc-300">Tidak Ada Ronde Aktif Berjalan</h2>
-          <p className="text-sm text-zinc-500 leading-relaxed">
+          <p className="text-sm text-muted-foreground leading-relaxed">
             Halaman Monitor Trading memantau aktivitas transaksi real-time secara dinamis selama ronde eksperimen berjalan.
           </p>
         </div>
@@ -409,23 +409,23 @@ export default function AdminTradingPage() {
               </span>
             )}
           </div>
-          <p className="text-sm text-zinc-500">Memantau detail volume, spread harga, dan transaksi Ronde {activeRound}</p>
+          <p className="text-sm text-muted-foreground">Memantau detail volume, spread harga, dan transaksi Ronde {activeRound}</p>
         </div>
         
         {/* Dynamic Timer and Subsession details */}
-        <div className="flex items-center gap-3 bg-zinc-900 border border-white/5 rounded-xl px-4 py-2.5 shadow-md">
+        <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-2.5 shadow-sm">
           <div className="text-right">
-            <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
               Sesi {subSession || 1} • {getPhaseLabel(phase)}
             </div>
-            <div className="text-xs text-zinc-400 font-medium">
-              Intervensi: <span className="text-emerald-400 font-bold">{getInterventionLabel(activeIntervention)}</span>
+            <div className="text-xs text-muted-foreground font-medium">
+              Intervensi: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{getInterventionLabel(activeIntervention)}</span>
             </div>
           </div>
-          <div className="h-8 w-px bg-zinc-800" />
+          <div className="h-8 w-px bg-border" />
           <div className="flex items-center gap-2">
-            <Timer className="size-5 text-emerald-500" />
-            <span className="font-mono text-2xl font-bold text-zinc-200">{formatTimer(sessionTimer)}</span>
+            <Timer className="size-5 text-emerald-600 dark:text-emerald-500" />
+            <span className="font-mono text-2xl font-bold text-foreground">{formatTimer(sessionTimer)}</span>
           </div>
         </div>
       </div>
@@ -434,48 +434,48 @@ export default function AdminTradingPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {activeStocks.length === 0 ? (
           Array.from({ length: 3 }).map((_, idx) => (
-            <Card key={idx} className="border-white/5 bg-zinc-900 shadow">
+            <Card key={idx} className="border-border bg-card shadow-sm">
               <CardContent className="pt-6">
-                <Skeleton className="h-6 w-16 bg-zinc-800 mb-2" />
-                <Skeleton className="h-8 w-24 bg-zinc-800" />
+                <Skeleton className="h-6 w-16 bg-muted mb-2" />
+                <Skeleton className="h-8 w-24 bg-muted" />
               </CardContent>
             </Card>
           ))
         ) : (
           activeStocks.map((s) => (
-            <Card key={s.id} className="border-white/5 bg-zinc-900 hover:border-zinc-800 transition-colors shadow-lg overflow-hidden">
+            <Card key={s.id} className="border-border bg-card hover:border-primary/50 transition-colors shadow-sm overflow-hidden">
               <div className="h-1 bg-gradient-to-r from-emerald-500 to-teal-500" />
               <CardContent className="pt-5 space-y-4">
                 <div className="flex items-start justify-between">
                   <div>
-                    <span className="bg-zinc-800 px-2 py-0.5 rounded border border-white/5 text-xs font-bold text-zinc-300 uppercase">
+                    <span className="bg-muted px-2 py-0.5 rounded border border-border text-xs font-bold text-foreground uppercase">
                       {s.kodeSaham}
                     </span>
-                    <h3 className="text-xs text-zinc-500 font-medium mt-1.5 truncate max-w-[150px]">{s.namaSaham}</h3>
+                    <h3 className="text-xs text-muted-foreground font-medium mt-1.5 truncate max-w-[150px]">{s.namaSaham}</h3>
                   </div>
                   <div className="text-right">
-                    <div className="font-mono text-lg font-bold text-zinc-100">
+                    <div className="font-mono text-lg font-bold text-foreground">
                       Rp {s.lastPrice.toLocaleString("id-ID")}
                     </div>
-                    <div className={`font-mono text-xs flex items-center justify-end gap-1 ${s.change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    <div className={`font-mono text-xs flex items-center justify-end gap-1 ${s.change >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                       {s.change >= 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
                       {s.change >= 0 ? "+" : ""}{s.change.toFixed(2)}%
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-3 border-t border-white/5">
-                  <div className="bg-zinc-950/40 rounded-lg p-2 border border-white/5 text-center">
-                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Spread Bid/Ask</div>
-                    <div className="font-mono text-xs font-bold text-zinc-300 mt-1">
+                <div className="grid grid-cols-2 gap-2 pt-3 border-t border-border">
+                  <div className="bg-muted/50 rounded-lg p-2 border border-border/50 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Spread Bid/Ask</div>
+                    <div className="font-mono text-xs font-bold text-foreground mt-1">
                       {s.highestBid > 0 ? `Rp ${s.highestBid.toLocaleString("id-ID")}` : "-"}
-                      <span className="text-zinc-600 mx-1">/</span>
+                      <span className="text-muted-foreground mx-1">/</span>
                       {s.lowestAsk > 0 ? `Rp ${s.lowestAsk.toLocaleString("id-ID")}` : "-"}
                     </div>
                   </div>
-                  <div className="bg-zinc-950/40 rounded-lg p-2 border border-white/5 text-center">
-                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Volume Saham</div>
-                    <div className="font-mono text-xs font-bold text-emerald-400 mt-1">
+                  <div className="bg-muted/50 rounded-lg p-2 border border-border/50 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Volume Saham</div>
+                    <div className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-1">
                       {s.volume.toLocaleString("id-ID")} Lot
                     </div>
                   </div>
@@ -487,12 +487,12 @@ export default function AdminTradingPage() {
       </div>
 
       {/* Live Transaction Logs */}
-      <Card className="border-white/5 bg-zinc-900 shadow-xl overflow-hidden">
-        <CardHeader className="pb-3 border-b border-white/5 bg-zinc-900/50">
+      <Card className="border-border bg-card shadow-sm overflow-hidden">
+        <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Activity className="size-4 text-emerald-500" />
-              <CardTitle className="text-sm font-semibold text-zinc-300">Aktivitas Transaksi Pasar Terkini</CardTitle>
+              <Activity className="size-4 text-emerald-600 dark:text-emerald-500" />
+              <CardTitle className="text-sm font-semibold text-foreground">Aktivitas Transaksi Pasar Terkini</CardTitle>
             </div>
             <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
               <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -503,22 +503,22 @@ export default function AdminTradingPage() {
         </CardHeader>
         <CardContent className="p-0">
           {transactions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-600">
-              <Activity className="size-10 mb-2 text-zinc-700 animate-pulse" />
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Activity className="size-10 mb-2 opacity-50 animate-pulse" />
               <p className="text-xs font-medium">Belum ada aktivitas transaksi di ronde ini</p>
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[300px]">
               <Table>
-                <TableHeader className="bg-zinc-950/20 sticky top-0 z-10">
-                  <TableRow className="border-white/5">
-                    <TableHead className="text-xs text-zinc-500 w-[100px]">Waktu</TableHead>
-                    <TableHead className="text-xs text-zinc-500">Pembeli</TableHead>
-                    <TableHead className="text-xs text-zinc-500">Penjual</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-center">Saham</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-right">Harga</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-right">Lot</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-right">Total Nilai</TableHead>
+                <TableHeader className="bg-muted/50 sticky top-0 z-10 border-b border-border/50">
+                  <TableRow className="border-border">
+                    <TableHead className="text-xs text-muted-foreground w-[100px]">Waktu</TableHead>
+                    <TableHead className="text-xs text-muted-foreground">Pembeli</TableHead>
+                    <TableHead className="text-xs text-muted-foreground">Penjual</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-center">Saham</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-right">Harga</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-right">Lot</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-right">Total Nilai</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -529,21 +529,21 @@ export default function AdminTradingPage() {
                         initial={{ opacity: 0, y: -10, backgroundColor: "rgba(16, 185, 129, 0.05)" }}
                         animate={{ opacity: 1, y: 0, backgroundColor: "transparent" }}
                         transition={{ duration: 0.4 }}
-                        className="border-white/5 hover:bg-zinc-800/20 transition-colors"
+                        className="border-border hover:bg-muted/50 transition-colors"
                       >
-                        <TableCell className="font-mono text-xs text-zinc-400">{tx.time}</TableCell>
-                        <TableCell className="text-xs text-zinc-300 font-medium">{tx.buyer}</TableCell>
-                        <TableCell className="text-xs text-zinc-300 font-medium">{tx.seller}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.time}</TableCell>
+                        <TableCell className="text-xs text-foreground font-medium">{tx.buyer}</TableCell>
+                        <TableCell className="text-xs text-foreground font-medium">{tx.seller}</TableCell>
                         <TableCell className="text-center">
-                          <span className="bg-zinc-800 px-2 py-0.5 rounded border border-white/5 text-[10px] font-bold text-zinc-300">
+                          <span className="bg-muted px-2 py-0.5 rounded border border-border text-[10px] font-bold text-foreground">
                             {tx.stock}
                           </span>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-zinc-300 text-right">
+                        <TableCell className="font-mono text-xs text-foreground text-right">
                           Rp {tx.harga.toLocaleString("id-ID")}
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-zinc-200 text-right font-bold">{tx.jumlah}</TableCell>
-                        <TableCell className="font-mono text-xs text-emerald-400 text-right font-semibold">
+                        <TableCell className="font-mono text-xs text-foreground text-right font-bold">{tx.jumlah}</TableCell>
+                        <TableCell className="font-mono text-xs text-emerald-600 dark:text-emerald-400 text-right font-semibold">
                           Rp {tx.total.toLocaleString("id-ID")}
                         </TableCell>
                       </motion.tr>
@@ -558,49 +558,49 @@ export default function AdminTradingPage() {
 
       {/* Summary KPI Stats cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-white/5 bg-zinc-900 shadow-md">
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="pt-6 flex items-center gap-3">
-            <div className="rounded-full bg-emerald-500/10 p-2.5">
-              <Users className="size-5 text-emerald-500" />
+            <div className="rounded-full bg-emerald-100 dark:bg-emerald-500/10 p-2.5">
+              <Users className="size-5 text-emerald-600 dark:text-emerald-500" />
             </div>
             <div>
-              <div className="text-xs text-zinc-500 font-medium">Peserta Aktif</div>
-              <div className="font-mono text-lg font-bold text-zinc-200">{stats.participantsCount}</div>
+              <div className="text-xs text-muted-foreground font-medium">Peserta Aktif</div>
+              <div className="font-mono text-lg font-bold text-foreground">{stats.participantsCount}</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-white/5 bg-zinc-900 shadow-md">
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="pt-6 flex items-center gap-3">
-            <div className="rounded-full bg-blue-500/10 p-2.5">
-              <Activity className="size-5 text-blue-500" />
+            <div className="rounded-full bg-blue-100 dark:bg-blue-500/10 p-2.5">
+              <Activity className="size-5 text-blue-600 dark:text-blue-500" />
             </div>
             <div>
-              <div className="text-xs text-zinc-500 font-medium">Transaksi Terjadi</div>
-              <div className="font-mono text-lg font-bold text-zinc-200">{stats.totalTransactionsCount}</div>
+              <div className="text-xs text-muted-foreground font-medium">Transaksi Terjadi</div>
+              <div className="font-mono text-lg font-bold text-foreground">{stats.totalTransactionsCount}</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-white/5 bg-zinc-900 shadow-md">
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="pt-6 flex items-center gap-3">
-            <div className="rounded-full bg-amber-500/10 p-2.5">
-              <RadioTower className="size-5 text-amber-500" />
+            <div className="rounded-full bg-amber-100 dark:bg-amber-500/10 p-2.5">
+              <RadioTower className="size-5 text-amber-600 dark:text-amber-500" />
             </div>
             <div>
-              <div className="text-xs text-zinc-500 font-medium">Total Volume Rupiah</div>
-              <div className="font-mono text-lg font-bold text-zinc-200">
+              <div className="text-xs text-muted-foreground font-medium">Total Volume Rupiah</div>
+              <div className="font-mono text-lg font-bold text-foreground">
                 Rp {stats.totalVolume.toLocaleString("id-ID")}
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-white/5 bg-zinc-900 shadow-md">
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="pt-6 flex items-center gap-3">
-            <div className="rounded-full bg-violet-500/10 p-2.5">
-              <Timer className="size-5 text-violet-500" />
+            <div className="rounded-full bg-violet-100 dark:bg-violet-500/10 p-2.5">
+              <Timer className="size-5 text-violet-600 dark:text-violet-500" />
             </div>
             <div>
-              <div className="text-xs text-zinc-500 font-medium">Rerata Per Transaksi</div>
-              <div className="font-mono text-lg font-bold text-zinc-200">
+              <div className="text-xs text-muted-foreground font-medium">Rerata Per Transaksi</div>
+              <div className="font-mono text-lg font-bold text-foreground">
                 Rp {stats.avgTransactionValue.toLocaleString("id-ID")}
               </div>
             </div>

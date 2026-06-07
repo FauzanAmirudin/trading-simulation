@@ -52,25 +52,25 @@ export default function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex-shrink-0 border-r border-white/5 bg-zinc-950 flex flex-col transition-all duration-300",
+        "flex-shrink-0 border-r border-sidebar-border bg-sidebar flex flex-col transition-all duration-300",
         collapsed ? "w-16" : "w-56"
       )}
     >
       {/* Header */}
-      <div className="flex h-14 items-center border-b border-white/5 px-3">
+      <div className="flex h-14 items-center border-b border-sidebar-border px-3">
         {!collapsed && (
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-500/10">
-              <TrendingUp className="size-4 text-emerald-500" />
+            <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-500/10">
+              <TrendingUp className="size-4 text-emerald-600 dark:text-emerald-500" />
             </div>
-            <span className="text-sm font-semibold text-zinc-200 truncate">
+            <span className="text-sm font-semibold text-sidebar-foreground truncate">
               {isAdmin ? "Panel Admin" : "Trader"}
             </span>
           </div>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex size-7 items-center justify-center rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors ml-auto"
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors ml-auto"
         >
           {collapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
         </button>
@@ -87,8 +87,8 @@ export default function AppSidebar() {
               className={cn(
                 "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
                 active
-                  ? "bg-emerald-500/10 text-emerald-500 font-medium"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                  ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-medium"
+                  : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
               )}
             >
               <span className="shrink-0">{item.icon}</span>
@@ -105,19 +105,19 @@ export default function AppSidebar() {
 
       {/* User info */}
       {!collapsed && user && (
-        <div className="border-t border-white/5 px-4 py-3">
-          <div className="text-xs text-zinc-500 truncate">{user.nama}</div>
-          <div className="text-[10px] text-zinc-600 uppercase tracking-wider">{user.role}</div>
+        <div className="border-t border-sidebar-border px-4 py-3">
+          <div className="text-xs text-sidebar-foreground truncate font-medium">{user.nama}</div>
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{user.role}</div>
         </div>
       )}
 
       {/* Logout */}
-      <div className="border-t border-white/5 p-3">
+      <div className="border-t border-sidebar-border p-3">
         <Button
           variant="ghost"
           size="sm"
           className={cn(
-            "w-full gap-2 text-zinc-500 hover:text-rose-500 hover:bg-rose-500/5",
+            "w-full gap-2 text-muted-foreground hover:text-rose-600 dark:hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10",
             collapsed && "justify-center px-0"
           )}
           onClick={handleLogout}

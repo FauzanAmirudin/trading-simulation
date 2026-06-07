@@ -68,18 +68,18 @@ const stockMeta: Record<string, { sektor: string; deskripsi: string }> = {
 };
 
 const sektorWarna: Record<string, string> = {
-  Perbankan: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  "Consumer Goods": "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  Farmasi: "bg-violet-500/10 text-violet-400 border-violet-500/20",
-  Telekomunikasi: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20",
-  Infrastruktur: "bg-orange-500/10 text-orange-400 border-orange-500/20",
-  Energi: "bg-yellow-600/10 text-yellow-500 border-yellow-600/20",
-  Pertambangan: "bg-stone-500/10 text-stone-400 border-stone-500/20",
-  Otomotif: "bg-red-500/10 text-red-400 border-red-500/20",
-  Properti: "bg-teal-500/10 text-teal-400 border-teal-500/20",
-  Ritel: "bg-pink-500/10 text-pink-400 border-pink-500/20",
-  Teknologi: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
-  Transportasi: "bg-sky-500/10 text-sky-400 border-sky-500/20",
+  Perbankan: "bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20",
+  "Consumer Goods": "bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
+  Farmasi: "bg-violet-100 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-500/20",
+  Telekomunikasi: "bg-cyan-100 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/20",
+  Infrastruktur: "bg-orange-100 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-500/20",
+  Energi: "bg-yellow-100 dark:bg-yellow-600/10 text-yellow-700 dark:text-yellow-500 border-yellow-200 dark:border-yellow-600/20",
+  Pertambangan: "bg-stone-100 dark:bg-stone-500/10 text-stone-700 dark:text-stone-400 border-stone-200 dark:border-stone-500/20",
+  Otomotif: "bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20",
+  Properti: "bg-teal-100 dark:bg-teal-500/10 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-500/20",
+  Ritel: "bg-pink-100 dark:bg-pink-500/10 text-pink-700 dark:text-pink-400 border-pink-200 dark:border-pink-500/20",
+  Teknologi: "bg-indigo-100 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/20",
+  Transportasi: "bg-sky-100 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-500/20",
 };
 
 function getMeta(kode: string) {
@@ -100,7 +100,7 @@ const PriceChart = memo(function PriceChart({ data, isUp }: { data: PricePoint[]
   }
 
   if (chartData.length < 2 || chartData.some(d => isNaN(d.price))) {
-    return <div className="flex items-center justify-center h-56 text-zinc-600 text-xs">Memuat data...</div>;
+    return <div className="flex items-center justify-center h-56 text-muted-foreground text-xs">Memuat data...</div>;
   }
 
   const prices = chartData.map(d => d.price);
@@ -153,8 +153,8 @@ const PriceChart = memo(function PriceChart({ data, isUp }: { data: PricePoint[]
 function TradingPageFallback() {
   return (
     <div className="p-6 space-y-4">
-      <Skeleton className="h-8 w-48 bg-zinc-800" />
-      <div className="flex gap-4"><Skeleton className="h-96 w-full bg-zinc-800" /></div>
+      <Skeleton className="h-8 w-48 bg-muted" />
+      <div className="flex gap-4"><Skeleton className="h-96 w-full bg-muted" /></div>
     </div>
   );
 }
@@ -197,6 +197,7 @@ function TradingPageContent() {
 
   // Real-time portfolios map (stockId -> lot) and last prices (stockId -> lastPrice)
   const [portfoliosMap, setPortfoliosMap] = useState<Record<number, number>>({});
+  const [basePricesMap, setBasePricesMap] = useState<Record<number, number>>({});
   const [lastPrices, setLastPrices] = useState<Record<number, number>>({});
   // Initialize lastPrices when stocks list updates
 
@@ -291,17 +292,10 @@ function TradingPageContent() {
       setActiveIntervention(data.intervention);
       setCooldownActive(false);
       isRunningRef.current = true;
-      if (localTimerRef.current) clearInterval(localTimerRef.current);
-      let remaining = data.duration;
-      localTimerRef.current = setInterval(() => {
-        if (!isRunningRef.current) return;
-        remaining = Math.max(0, remaining - 1);
-        setSessionTimer(remaining);
-        if (remaining <= 0 && localTimerRef.current) {
-          clearInterval(localTimerRef.current);
-          localTimerRef.current = null;
-        }
-      }, 1000);
+      if (localTimerRef.current) {
+        clearInterval(localTimerRef.current);
+        localTimerRef.current = null;
+      }
       if (data.phase === "PRE_MARKET") {
         setShowPredictionUI(true);
         setPredictionInput({});
@@ -354,17 +348,10 @@ function TradingPageContent() {
       setPhase("COOLDOWN");
       setSessionTimer(data.duration);
       isRunningRef.current = true;
-      if (localTimerRef.current) clearInterval(localTimerRef.current);
-      let remaining = data.duration;
-      localTimerRef.current = setInterval(() => {
-        if (!isRunningRef.current) return;
-        remaining = Math.max(0, remaining - 1);
-        setSessionTimer(remaining);
-        if (remaining <= 0 && localTimerRef.current) {
-          clearInterval(localTimerRef.current);
-          localTimerRef.current = null;
-        }
-      }, 1000);
+      if (localTimerRef.current) {
+        clearInterval(localTimerRef.current);
+        localTimerRef.current = null;
+      }
       setRunningText(prev => ({ ...prev, active: false }));
     };
     const onInterventionEnded = () => {
@@ -425,12 +412,15 @@ function TradingPageContent() {
         setRunningText({ active: false, type: "NONE", title: "", content: "" });
       }
     };
-    const onPortfolioData = (data: { portfolio: { stockId: number; jumlahLot: number }[] }) => {
+    const onPortfolioData = (data: { portfolio: { stockId: number; jumlahLot: number; basePrice?: number }[] }) => {
       const initialMap: Record<number, number> = {};
+      const baseMap: Record<number, number> = {};
       data.portfolio.forEach(p => {
         initialMap[p.stockId] = p.jumlahLot;
+        if (p.basePrice) baseMap[p.stockId] = Number(p.basePrice);
       });
       setPortfoliosMap(initialMap);
+      setBasePricesMap(baseMap);
     };
     const onPortfolioUpdate = (data: { userId: number; stockId: number; jumlahLot: number }) => {
       setPortfoliosMap(prev => ({
@@ -625,10 +615,10 @@ function TradingPageContent() {
   if (loading) {
     return (
       <div className="p-6 space-y-4">
-        <Skeleton className="h-8 w-48 bg-zinc-800" />
+        <Skeleton className="h-8 w-48 bg-muted" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-40 bg-zinc-800 rounded-xl" />
+            <Skeleton key={i} className="h-40 bg-muted rounded-xl" />
           ))}
         </div>
       </div>
@@ -638,13 +628,16 @@ function TradingPageContent() {
   // ── NAV Floating Header Calculations ──
   const totalStockValue = Object.entries(portfoliosMap).reduce((sum, [sIdStr, lot]) => {
     const sId = Number(sIdStr);
-    const price = lastPrices[sId] || 1000;
+    const price = lastPrices[sId] || openingPricesRef.current[sId] || basePricesMap[sId] || 1000;
     return sum + (lot * 100 * price);
   }, 0);
 
   const netAssetValue = balance + totalStockValue;
-  const modalAwal = 100_000_000;
-  const floatingPnL = ((netAssetValue - modalAwal) / modalAwal) * 100;
+  
+  // Modal awal selalu mencakup kas inisial + nilai dari semua portofolio saham (total 360 lot)
+  const initialPortfolioValue = Object.values(basePricesMap).reduce((sum, price) => sum + (10 * 100 * price), 0);
+  const modalAwal = 100_000_000 + initialPortfolioValue;
+  const floatingPnL = modalAwal > 0 ? ((netAssetValue - modalAwal) / modalAwal) * 100 : 0;
 
   return (
     <div className="p-4 sm:p-6 space-y-4 relative">
@@ -658,15 +651,15 @@ function TradingPageContent() {
 
       {/* Cooldown overlay banner */}
       {cooldownActive && (
-        <div className="rounded-xl border border-sky-500/30 bg-sky-950/60 px-4 py-3 flex items-center justify-between">
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Timer className="size-4 text-sky-400" />
+            <Timer className="size-4 text-sky-500 dark:text-sky-400" />
             <div>
-              <div className="text-xs font-semibold text-sky-300">Jeda ({cooldownReason})</div>
-              <div className="text-[10px] text-sky-500">Perdagangan akan dilanjutkan setelah waktu jeda selesai</div>
+              <div className="text-xs font-semibold text-sky-600 dark:text-sky-300">Jeda ({cooldownReason})</div>
+              <div className="text-[10px] text-sky-600/80 dark:text-sky-500">Perdagangan akan dilanjutkan setelah waktu jeda selesai</div>
             </div>
           </div>
-          <div className="font-mono text-lg font-bold text-sky-300">
+          <div className="font-mono text-lg font-bold text-sky-600 dark:text-sky-300">
             {Math.floor(sessionTimer / 60)}:{String(sessionTimer % 60).padStart(2, "0")}
           </div>
         </div>
@@ -674,38 +667,38 @@ function TradingPageContent() {
 
       {/* Dynamic Floating NAV Header */}
       {sessionActive && (
-        <div className="sticky top-0 z-50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 backdrop-blur-md bg-zinc-950/80 border-b border-white/5 shadow-md flex flex-wrap items-center justify-between gap-4 transition-all">
+        <div className="sticky top-0 z-50 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3 backdrop-blur-xl bg-white/90 dark:bg-background/80 border-b border-border shadow-md flex flex-wrap items-center justify-between gap-4 transition-all">
           <div className="flex items-center gap-2">
             <span className="inline-block size-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-bold">Riset Portfolio Live</span>
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">Riset Portfolio Live</span>
           </div>
           <div className="flex items-center gap-6 flex-wrap sm:flex-nowrap">
             <div>
-              <div className="text-[9px] text-zinc-500 uppercase">Kas Tersedia</div>
-              <div className="font-mono text-xs sm:text-sm font-bold text-zinc-200">
+              <div className="text-[9px] text-muted-foreground uppercase">Kas Tersedia</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-foreground">
                 Rp {balance.toLocaleString("id-ID")}
               </div>
             </div>
-            <div className="h-6 w-px bg-zinc-800 hidden sm:block" />
+            <div className="h-6 w-px bg-border hidden sm:block" />
             <div>
-              <div className="text-[9px] text-zinc-500 uppercase">Nilai Portofolio</div>
-              <div className="font-mono text-xs sm:text-sm font-bold text-zinc-300">
+              <div className="text-[9px] text-muted-foreground uppercase">Nilai Portofolio</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-foreground">
                 Rp {totalStockValue.toLocaleString("id-ID")}
               </div>
             </div>
-            <div className="h-6 w-px bg-zinc-800 hidden sm:block" />
+            <div className="h-6 w-px bg-border hidden sm:block" />
             <div>
-              <div className="text-[9px] text-zinc-500 uppercase">Total Aset (NAV)</div>
-              <div className="font-mono text-xs sm:text-sm font-bold text-emerald-400">
+              <div className="text-[9px] text-muted-foreground uppercase">Total Aset (NAV)</div>
+              <div className="font-mono text-xs sm:text-sm font-bold text-emerald-600 dark:text-green-400">
                 Rp {netAssetValue.toLocaleString("id-ID")}
               </div>
             </div>
-            <div className="h-6 w-px bg-zinc-800" />
+            <div className="h-6 w-px bg-border" />
             <div>
-              <div className="text-[9px] text-zinc-500 uppercase">Profit / Loss</div>
+              <div className="text-[9px] text-muted-foreground uppercase">Profit / Loss</div>
               <div className={cn(
                 "font-mono text-xs sm:text-sm font-bold flex items-center gap-1",
-                floatingPnL >= 0 ? "text-emerald-500" : "text-rose-500"
+                floatingPnL >= 0 ? "text-emerald-600 dark:text-green-400" : "text-rose-600 dark:text-rose-500"
               )}>
                 {floatingPnL >= 0 ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
                 {floatingPnL >= 0 ? "+" : ""}{floatingPnL.toFixed(2)}%
@@ -719,44 +712,55 @@ function TradingPageContent() {
         <div className="flex items-center gap-3">
           {stock ? (
             <button onClick={() => { setStock(null); setSelectedId(null); router.replace("/dashboard/trading"); }}
-              className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="size-3.5" />
               Semua Saham
             </button>
           ) : null}
-          <h1 className="text-lg font-semibold text-zinc-200">
+          <h1 className="text-lg font-semibold text-foreground">
             {stock ? (stock as any).kodeSaham || (stock as any).kode || "Trading" : "Trading"}
           </h1>
           {stock && (
-            <span className="hidden sm:inline text-xs text-zinc-600">{(stock as any).namaSaham || (stock as any).nama}</span>
+            <span className="hidden sm:inline text-xs text-muted-foreground">{(stock as any).namaSaham || (stock as any).nama}</span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {/* Round + Session indicator */}
           {roundNumber && (
-            <div className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1">
-              <span className="text-[10px] font-medium text-zinc-400">R{roundNumber}</span>
+            <div className="flex items-center gap-2 rounded-full bg-indigo-500/10 px-3 py-1 border border-indigo-500/20">
+              <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">R{roundNumber}</span>
               {subSession && (
                 <>
-                  <span className="text-[10px] text-zinc-700">·</span>
-                  <span className="text-[10px] font-medium text-emerald-400">Sesi {subSession}</span>
+                  <span className="text-[10px] text-indigo-500/50">·</span>
+                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">Sesi {subSession}</span>
                 </>
               )}
             </div>
           )}
           {/* Phase badge */}
           {phase && phase !== "IDLE" && (
-            <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+            <span className={cn(
+              "rounded-full px-2.5 py-0.5 text-[10px] font-bold border flex items-center gap-1.5",
+              phase === "TRADING" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" :
+              phase === "PRE_MARKET" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" :
+              "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+            )}>
+              {phase === "TRADING" && <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />}
               {getPhaseLabel(phase)}
             </span>
           )}
           {stock && (
-            <span className="text-xs text-zinc-600 font-mono hidden sm:block">
+            <span className="text-xs text-muted-foreground font-mono hidden sm:block bg-muted px-2 py-0.5 rounded-md border border-border">
               Rp {currentPrice.toLocaleString("id-ID")}
             </span>
           )}
-          <div className="flex items-center gap-1.5 font-mono text-sm text-zinc-400">
-            <Timer className="size-3.5 text-emerald-500" />
+          <div className={cn(
+            "flex items-center gap-1.5 font-mono text-sm px-2 py-0.5 rounded-md font-bold transition-colors",
+            sessionTimer <= 10 ? "text-rose-600 dark:text-rose-500 bg-rose-500/10 animate-pulse" : 
+            sessionTimer <= 30 ? "text-amber-600 dark:text-amber-500 bg-amber-500/10" : 
+            "text-emerald-600 dark:text-emerald-500 bg-emerald-500/10"
+          )}>
+            <Timer className="size-4" />
             {Math.floor(sessionTimer / 60)}:{String(sessionTimer % 60).padStart(2, "0")}
           </div>
         </div>
@@ -764,27 +768,39 @@ function TradingPageContent() {
 
       {/* PRE_OPENING: Prediction Input UI */}
       {showPredictionUI && stocks.length > 0 && (
-        <Card className="border-white/5 bg-zinc-900">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <AlertTriangle className="size-4 text-amber-500" />
+        <Card className="border-border bg-white/80 backdrop-blur-md shadow-md border-t-4 border-t-amber-500 dark:bg-slate-950/80 dark:border-t-amber-500 dark:shadow-none overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-8 bg-amber-500/5 rounded-bl-[100px] pointer-events-none" />
+          <CardHeader className="pb-3 border-b border-border/50">
+            <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
+              <div className="p-1.5 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-500">
+                <AlertTriangle className="size-4" />
+              </div>
               Pra Pembukaan — Masukkan Prediksi Harga
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-xs text-zinc-500">Prediksi harga Equilibrium untuk setiap saham sebelum sesi trading dimulai.</p>
+          <CardContent className="space-y-4 pt-4">
+            <p className="text-xs text-muted-foreground">Prediksi harga Equilibrium untuk setiap saham sebelum sesi trading dimulai.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks.map(s => {
                 const baseP = Number(s.basePrice);
                 const { upper, lower } = getAutoRejectionLimits(baseP);
                 const predVal = parseInt(predictionInput[s.id]) || 0;
                 const isInvalid = predVal > 0 && (!isValidTickSize(predVal) || predVal > upper || predVal < lower);
+                const colors = ["indigo", "emerald", "blue", "violet", "rose", "cyan"];
+                const color = colors[s.id % colors.length];
                 return (
-                  <div key={s.id} className="rounded-lg border border-white/5 bg-zinc-800/50 p-3">
-                    <div className="text-xs font-medium text-zinc-300 mb-2">{(s as any).kodeSaham || (s as any).kode} — {(s as any).namaSaham || (s as any).nama}</div>
-                    <div className="flex gap-2 mb-1.5">
+                  <div key={s.id} className="rounded-xl border border-border bg-white dark:bg-slate-900 shadow-sm p-4 hover:shadow-md transition-shadow relative overflow-hidden">
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-${color}-500/50`} />
+                    <div className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${color}-100 dark:bg-${color}-500/20 text-black`}>
+                        {(s as any).kodeSaham || (s as any).kode}
+                      </span>
+                      <span className="truncate">{(s as any).namaSaham || (s as any).nama}</span>
+                    </div>
+                    <div className="flex gap-2 mb-2">
                       <PriceInput
                         value={predictionInput[s.id] || ""}
+                        basePrice={baseP}
                         onChange={val => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
                         min={1}
                         max={upper}
@@ -801,13 +817,13 @@ function TradingPageContent() {
                       </Button>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-zinc-600 font-mono">
+                      <span className="text-[10px] text-muted-foreground font-mono">
                         Rentang: Rp {lower.toLocaleString("id-ID")} – Rp {upper.toLocaleString("id-ID")}
                       </span>
-                      {predVal > 0 && <TickSizeBadge price={predVal} />}
+                      <TickSizeBadge price={predVal} basePrice={baseP} />
                     </div>
                     {isInvalid && (
-                      <p className="text-[10px] text-rose-400 mt-1">
+                      <p className="text-[10px] text-rose-600 dark:text-rose-500 mt-1">
                         {!isValidTickSize(predVal)
                           ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}`
                           : `Di luar batas: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}`}
@@ -823,47 +839,47 @@ function TradingPageContent() {
 
       {!sessionActive ? (
         /* ── Empty State ── */
-        <div className="flex flex-col items-center justify-center py-24 text-zinc-600">
-          <Timer className="size-12 mb-4 text-zinc-700" />
-          <p className="text-sm font-medium text-zinc-500">Belum Ada Sesi Aktif</p>
-          <p className="text-xs text-zinc-700 mt-1">Tunggu admin memulai eksperimen</p>
+        <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
+          <Timer className="size-12 mb-4 text-muted-foreground/50" />
+          <p className="text-sm font-medium text-muted-foreground">Belum Ada Sesi Aktif</p>
+          <p className="text-xs text-muted-foreground/80 mt-1">Tunggu admin memulai eksperimen</p>
         </div>
       ) : !stock ? (
         /* ── Stock Cards Grid ── */
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <Building2 className="size-4 text-zinc-500" />
-            <span className="text-xs text-zinc-500 uppercase tracking-wider font-medium">
+            <Building2 className="size-4 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
               Pilih Saham untuk Trading
             </span>
-            <span className="text-[10px] text-zinc-700 ml-auto">{stocks.length} saham dalam sesi ini</span>
+            <span className="text-[10px] text-muted-foreground/80 ml-auto">{stocks.length} saham dalam sesi ini</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {stocks.map(s => {
               const safeKode = (s as any).kodeSaham || (s as any).kode || "N/A";
               const safeNama = (s as any).namaSaham || (s as any).nama || "Tidak ada data";
               const meta = getMeta(safeKode);
-              const warna = sektorWarna[meta.sektor] ?? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20";
+              const warna = sektorWarna[meta.sektor] ?? "bg-zinc-500/10 text-slate-600 dark:text-slate-400 border-zinc-500/20";
               return (
                 <button key={s.id} onClick={() => selectStock(s)}
-                  className="group relative text-left rounded-xl border border-white/5 bg-zinc-900/50 p-4 transition-all hover:border-emerald-500/30 hover:bg-zinc-900 hover:shadow-lg hover:shadow-emerald-500/5 active:scale-[0.98]">
+                  className="group relative text-left rounded-xl border border-border bg-card p-4 transition-all hover:border-indigo-200 dark:hover:border-emerald-500/30 hover:bg-muted/50 hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]">
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <div className="font-mono text-sm font-bold text-zinc-200 group-hover:text-emerald-500 transition-colors">
+                      <div className="font-mono text-sm font-bold text-foreground group-hover:text-emerald-600 dark:text-green-400 transition-colors">
                         {safeKode}
                       </div>
-                      <div className="text-[11px] text-zinc-500 mt-0.5 line-clamp-1">{safeNama}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{safeNama}</div>
                     </div>
                     <div className={cn("rounded-full px-2 py-0.5 text-[9px] font-medium border", warna)}>
                       {meta.sektor}
                     </div>
                   </div>
-                  <p className="text-[11px] text-zinc-600 leading-relaxed mb-3 line-clamp-2">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed mb-3 line-clamp-2">
                     {meta.deskripsi}
                   </p>
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                    <span className="text-[10px] text-zinc-600">Harga Dasar</span>
-                    <span className="font-mono text-xs font-semibold text-zinc-300">
+                  <div className="flex items-center justify-between pt-2 border-t border-border">
+                    <span className="text-[10px] text-muted-foreground">Harga Dasar</span>
+                    <span className="font-mono text-xs font-semibold text-foreground/90">
                       Rp {Number(s.basePrice).toLocaleString("id-ID")}
                     </span>
                   </div>
@@ -878,53 +894,53 @@ function TradingPageContent() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="font-mono text-2xl font-bold text-zinc-200">
+              <div className="font-mono text-2xl font-bold text-foreground">
                 Rp {currentPrice.toLocaleString("id-ID")}
               </div>
-              <div className={`font-mono text-sm flex items-center gap-1 ${isUp ? "text-emerald-500" : "text-rose-500"}`}>
+              <div className={`font-mono text-sm flex items-center gap-1 ${isUp ? "text-emerald-600 dark:text-green-400" : "text-rose-600 dark:text-rose-500"}`}>
                 {isUp ? <TrendingUp className="size-4" /> : <TrendingDown className="size-4" />}
                 {priceChange.toFixed(2)}%
               </div>
             </div>
           </div>
 
-          <Card className="border-white/5 bg-zinc-900">
-            <CardHeader className="pb-2"><CardTitle className="text-[10px] text-zinc-500 uppercase tracking-wider">{stock.kodeSaham} — {stock.namaSaham}</CardTitle></CardHeader>
+          <Card className="border-border bg-card shadow-sm border-t-2 border-t-indigo-500/50 dark:shadow-none dark:border-t-border">
+            <CardHeader className="pb-2"><CardTitle className="text-[10px] text-muted-foreground uppercase tracking-wider">{stock.kodeSaham} — {stock.namaSaham}</CardTitle></CardHeader>
             <CardContent><div className="h-48 sm:h-56"><PriceChart data={priceHistory} isUp={isUp} /></div></CardContent>
           </Card>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3">
-              <Card className="border-white/5 bg-zinc-900 h-full">
+              <Card className="border-border bg-card shadow-sm dark:shadow-none h-full">
                 <CardHeader className="pb-3"><CardTitle className="text-xs">Order Book</CardTitle></CardHeader>
                 <CardContent className="p-0">
-                  <div className="grid grid-cols-2 divide-x divide-white/5">
+                  <div className="grid grid-cols-2 divide-x divide-border">
                     <div className="p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-emerald-500">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-green-400">
                         <TrendingUp className="size-3" /> BID
                       </div>
                       <div className="space-y-0.5">
-                        {bids.length === 0 ? <p className="text-xs text-zinc-600 py-4 text-center">Belum ada bid</p>
+                        {bids.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada bid</p>
                           : [...bids].sort((a, b) => b.harga - a.harga).slice(0, 8).map(o => (
-                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden">
-                              <div className="absolute inset-y-0 left-0 bg-emerald-500/10" style={{ width: `${(o.jumlah / maxBid) * 100}%` }} />
-                              <span className="relative font-mono font-medium text-zinc-200">{o.harga.toLocaleString("id-ID")}</span>
-                              <span className="relative text-zinc-500">{o.jumlah}</span>
+                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-emerald-50/50 dark:hover:bg-muted/50 transition-colors">
+                              <div className="absolute inset-y-0 left-0 bg-emerald-50 dark:bg-emerald-500/10" style={{ width: `${(o.jumlah / maxBid) * 100}%` }} />
+                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
+                              <span className="relative text-muted-foreground">{o.jumlah}</span>
                             </div>
                           ))}
                       </div>
                     </div>
                     <div className="p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rose-500">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-500">
                         <TrendingDown className="size-3" /> ASK
                       </div>
                       <div className="space-y-0.5">
-                        {asks.length === 0 ? <p className="text-xs text-zinc-600 py-4 text-center">Belum ada ask</p>
+                        {asks.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada ask</p>
                           : [...asks].sort((a, b) => a.harga - b.harga).slice(0, 8).map(o => (
-                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden">
-                              <div className="absolute inset-y-0 left-0 bg-rose-500/10" style={{ width: `${(o.jumlah / maxAsk) * 100}%` }} />
-                              <span className="relative font-mono font-medium text-zinc-200">{o.harga.toLocaleString("id-ID")}</span>
-                              <span className="relative text-zinc-500">{o.jumlah}</span>
+                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-rose-50/50 dark:hover:bg-muted/50 transition-colors">
+                              <div className="absolute inset-y-0 left-0 bg-rose-50 dark:bg-rose-500/10" style={{ width: `${(o.jumlah / maxAsk) * 100}%` }} />
+                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
+                              <span className="relative text-muted-foreground">{o.jumlah}</span>
                             </div>
                           ))}
                       </div>
@@ -935,54 +951,63 @@ function TradingPageContent() {
             </div>
 
             <div className="lg:col-span-2 space-y-3">
-              <Card className="border-white/5 bg-zinc-900">
-                <CardHeader className="pb-3"><CardTitle className="text-xs">Buat Order</CardTitle></CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex rounded-lg border border-white/5 p-0.5 bg-zinc-800">
+              <Card className={cn(
+                "border transition-colors duration-500 bg-white/90 backdrop-blur-md dark:bg-slate-950/80 shadow-sm",
+                orderType === "BID" ? "border-emerald-500/30 dark:border-emerald-500/20 shadow-emerald-500/5" : "border-rose-500/30 dark:border-rose-500/20 shadow-rose-500/5"
+              )}>
+                <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
+                  <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                    {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
+                    Formulir {orderType === "BID" ? "Pembelian" : "Penjualan"}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4 relative">
+                  <div className="flex rounded-lg border border-border p-1 bg-muted/50">
                     <button onClick={() => setOrderType("BID")}
-                      className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${orderType === "BID" ? "bg-emerald-500/20 text-emerald-500" : "text-zinc-500 hover:text-zinc-300"}`}>
-                      <ArrowDownToLine className="size-3.5" /> Beli
+                      className={`flex-1 rounded-md px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${orderType === "BID" ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/20" : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-slate-800/50"}`}>
+                      Beli (BID)
                     </button>
                     <button onClick={() => setOrderType("ASK")}
-                      className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${orderType === "ASK" ? "bg-rose-500/20 text-rose-500" : "text-zinc-500 hover:text-zinc-300"}`}>
-                      <ArrowUpFromLine className="size-3.5" /> Jual
+                      className={`flex-1 rounded-md px-3 py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${orderType === "ASK" ? "bg-rose-500 text-white shadow-md shadow-rose-500/20" : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-slate-800/50"}`}>
+                      Jual (ASK)
                     </button>
                   </div>
                   {portfolio && (
-                    <div className="text-[11px] text-zinc-400 flex justify-between items-center bg-zinc-800/30 px-2 py-1 rounded">
+                    <div className="text-[11px] text-muted-foreground flex justify-between items-center px-1">
                       <span>Kepemilikan Anda:</span>
-                      <span className={portfolio.lot > 0 ? "text-emerald-400 font-mono font-bold" : "text-rose-400 font-mono font-bold"}>
+                      <span className={portfolio.lot > 0 ? "text-emerald-600 dark:text-emerald-400 font-mono font-bold text-xs" : "text-rose-600 dark:text-rose-400 font-mono font-bold text-xs"}>
                         {portfolio.lot} lot
                       </span>
                     </div>
                   )}
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <div className="space-y-1">
                       <PriceInput
                         value={orderPrice}
                         onChange={setOrderPrice}
+                        basePrice={stockId ? (openingPrices[stockId] || Number(stock?.basePrice || 0)) : undefined}
                         min={1}
                         placeholder="Harga"
                       />
                       <div className="flex items-center justify-between px-1">
-                        {parseInt(orderPrice) > 0 && <TickSizeBadge price={parseInt(orderPrice)} />}
+                        <TickSizeBadge price={parseInt(orderPrice) || 0} basePrice={stockId ? (openingPrices[stockId] || Number(stock?.basePrice || 0)) : undefined} />
                         {(() => {
-                          const op = stockId ? openingPrices[stockId] : undefined;
+                          const op = stockId ? (openingPrices[stockId] || Number(stock?.basePrice || 0)) : undefined;
                           if (!op) return null;
                           const { upper, lower } = getAutoRejectionLimits(op);
                           return (
-                            <span className="text-[10px] text-zinc-600 font-mono">
+                            <span className="text-[10px] text-muted-foreground font-mono">
                               ARA/ARB: Rp {lower.toLocaleString("id-ID")} – Rp {upper.toLocaleString("id-ID")}
                             </span>
                           );
                         })()}
                       </div>
                     </div>
-                    <Input type="number" min="1" placeholder="Jumlah (Lot)" value={orderLot} onChange={e => setOrderLot(e.target.value)} className="text-xs" />
+                    <Input type="number" min="1" placeholder="Jumlah (Lot)" value={orderLot} onChange={e => setOrderLot(e.target.value)} className="text-sm font-mono bg-background/50 focus-visible:ring-primary h-10" />
                   </div>
                   <Button 
-                    size="sm" 
-                    className={`w-full gap-1 ${orderType === "BID" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"}`} 
+                    size="lg" 
+                    className={`w-full gap-2 font-bold text-white shadow-lg transition-all active:scale-[0.98] ${orderType === "BID" ? "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 shadow-emerald-500/25" : "bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-400 hover:to-rose-500 shadow-rose-500/25"}`} 
                     onClick={handlePlaceOrder}
                     disabled={(() => {
                       if (orderType === "ASK" && (!portfolio || portfolio.lot === 0 || parseInt(orderLot) > portfolio.lot)) return true;
@@ -994,28 +1019,27 @@ function TradingPageContent() {
                       return false;
                     })()}
                   >
-                    {orderType === "BID" ? <ArrowDownToLine className="size-3.5" /> : <ArrowUpFromLine className="size-3.5" />}
-                    {orderType === "BID" ? "Pasang BID" : "Pasang ASK"}
+                    {orderType === "BID" ? "Kirim Order Beli" : "Kirim Order Jual"}
                   </Button>
                 </CardContent>
               </Card>
 
-              <Card className="border-white/5 bg-zinc-900">
+              <Card className="border-border bg-card shadow-sm dark:shadow-none">
                 <CardHeader className="pb-3"><CardTitle className="text-xs">Portofolio</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="rounded-lg bg-zinc-800/50 p-3 mb-2">
-                    <div className="text-[10px] text-zinc-500 mb-0.5">Sisa Kas</div>
-                    <div className="font-mono text-base font-bold text-emerald-500">Rp {balance.toLocaleString("id-ID")}</div>
+                  <div className="rounded-lg bg-muted/50 p-3 mb-2">
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Sisa Kas</div>
+                    <div className="font-mono text-base font-bold text-emerald-600 dark:text-green-400">Rp {balance.toLocaleString("id-ID")}</div>
                   </div>
                   {portfolio ? (
-                    <div className="rounded-lg bg-zinc-800/50 p-3">
-                      <div className="text-[10px] text-zinc-500 mb-0.5">{stock.kodeSaham}</div>
-                      <div className="font-mono text-base font-bold text-zinc-200">{portfolio.lot} lot</div>
-                      <div className="font-mono text-xs text-zinc-500">Rp {(portfolio.lot * 100 * currentPrice).toLocaleString("id-ID")}</div>
+                    <div className="rounded-lg bg-muted/50 p-3">
+                      <div className="text-[10px] text-muted-foreground mb-0.5">{stock.kodeSaham}</div>
+                      <div className="font-mono text-base font-bold text-foreground">{portfolio.lot} lot</div>
+                      <div className="font-mono text-xs text-muted-foreground">Rp {(portfolio.lot * 100 * currentPrice).toLocaleString("id-ID")}</div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center py-4 text-zinc-600">
-                      <DollarSign className="size-5 mb-1 text-zinc-700" />
+                    <div className="flex flex-col items-center py-4 text-muted-foreground">
+                      <DollarSign className="size-5 mb-1 text-muted-foreground/50" />
                       <p className="text-[10px]">Belum punya {stock.kodeSaham}</p>
                     </div>
                   )}

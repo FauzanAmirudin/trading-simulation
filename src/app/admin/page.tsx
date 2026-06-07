@@ -90,16 +90,16 @@ export default function AdminPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-4">
       <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
-        <div className="flex items-center gap-2 text-sm font-medium text-zinc-300">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
           <LayoutDashboard className="size-4" /> Panel Admin
         </div>
-        <p className="text-xs text-zinc-600">Kontrol sesi, matriks eksperimen, intervensi, dan monitoring</p>
+        <p className="text-xs text-muted-foreground">Kontrol sesi, matriks eksperimen, intervensi, dan monitoring</p>
       </motion.div>
 
       <div className="flex flex-col items-center gap-4 max-w-4xl mx-auto">
         {/* Main: Scheduler Board */}
         <div className="w-full space-y-4">
-          <Card className="border-white/5 bg-zinc-900">
+          <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm border-t-2 border-t-indigo-500/50 hover:shadow-md transition-all dark:shadow-none dark:bg-slate-950/40 dark:border-t-border">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Experimental Scheduler</CardTitle>
               <CardDescription className="text-xs">
@@ -112,12 +112,12 @@ export default function AdminPage() {
           </Card>
 
           {/* Live Monitor */}
-          <Card className="border-white/5 bg-zinc-900">
+          <Card className="border-border bg-white/70 backdrop-blur-md shadow-sm border-t-2 border-t-emerald-500/50 hover:shadow-md transition-all dark:shadow-none dark:bg-slate-950/40 dark:border-t-border">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Activity className="size-4 text-zinc-500" />
-                  <CardTitle className="text-sm">Monitor Transaksi</CardTitle>
+                  <Activity className="size-4 text-muted-foreground" />
+                  <CardTitle className="text-sm text-foreground">Monitor Transaksi</CardTitle>
                 </div>
                 <div className="flex items-center gap-1.5 text-xs">
                   <span className="relative flex size-2">
@@ -131,13 +131,13 @@ export default function AdminPage() {
             <CardContent className="max-h-64 overflow-y-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-white/5">
-                    <TableHead className="text-xs text-zinc-500">User</TableHead>
-                    <TableHead className="text-xs text-zinc-500">Saham</TableHead>
-                    <TableHead className="text-xs text-zinc-500">Tipe</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-right">Harga</TableHead>
-                    <TableHead className="text-xs text-zinc-500 text-right">Lot</TableHead>
-                    <TableHead className="text-xs text-zinc-500">Waktu</TableHead>
+                  <TableRow className="border-border bg-muted/60">
+                    <TableHead className="text-xs text-muted-foreground">User</TableHead>
+                    <TableHead className="text-xs text-muted-foreground">Saham</TableHead>
+                    <TableHead className="text-xs text-muted-foreground">Tipe</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-right">Harga</TableHead>
+                    <TableHead className="text-xs text-muted-foreground text-right">Lot</TableHead>
+                    <TableHead className="text-xs text-muted-foreground">Waktu</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -147,23 +147,23 @@ export default function AdminPage() {
                         initial={{ opacity: 0, y: -12 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
-                        className="border-white/5"
+                        className="border-border"
                       >
-                        <TableCell className="text-xs text-zinc-300">{t.user}</TableCell>
-                        <TableCell className="text-xs font-medium text-zinc-200">{t.saham}</TableCell>
+                        <TableCell className="text-xs text-foreground">{t.user}</TableCell>
+                        <TableCell className="text-xs font-medium text-foreground/90">{t.saham}</TableCell>
                         <TableCell>
                           <span className={cn(
-                            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium",
-                            t.tipe === "BID" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
+                            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium border",
+                            t.tipe === "BID" ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-green-400 border-emerald-200 dark:border-transparent" : "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-500 border-rose-200 dark:border-transparent"
                           )}>{t.tipe}</span>
                         </TableCell>
-                        <TableCell className="font-mono tabular-nums text-xs text-right text-zinc-400">
+                        <TableCell className="font-mono tabular-nums text-xs text-right text-muted-foreground">
                           {t.harga.toLocaleString("id-ID")}
                         </TableCell>
-                        <TableCell className="font-mono tabular-nums text-xs text-right text-zinc-400">
+                        <TableCell className="font-mono tabular-nums text-xs text-right text-muted-foreground">
                           {t.jumlah}
                         </TableCell>
-                        <TableCell className="text-xs text-zinc-600">{t.waktu}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground/80">{t.waktu}</TableCell>
                       </motion.tr>
                     ))}
                   </AnimatePresence>
