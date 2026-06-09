@@ -22,7 +22,7 @@ async function seedUsers() {
   // Buat 30 akun responden
   for (let i = 1; i <= 30; i++) {
     respondents.push({
-      nama: `Responden ${i}`,
+      nama: `responden${i}`,
       password: userHashed,
       role: "responden",
       saldo: "100000000.00",
@@ -31,7 +31,7 @@ async function seedUsers() {
 
   await db.insert(users).values(respondents);
   console.log("30 Akun responden berhasil dibuat!");
-  console.log("Format Login -> Username: Responden 1 (sampai 30) | Password: password123");
+  console.log("Format Login -> Username: responden1 (sampai 30) | Password: password123");
   process.exit(0);
 }
 
