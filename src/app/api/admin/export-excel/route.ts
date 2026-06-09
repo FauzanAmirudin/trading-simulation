@@ -115,13 +115,14 @@ export async function GET(req: NextRequest) {
           : openingPrice;
 
         const predPrice = Number(p.tebakanHarga);
-        const selisih = Math.abs(predPrice - finalPrice);
+        // Selisih antara tebakan dengan Harga Buka (karena ini prediksi Equilibrium pre-market)
+        const selisih = Math.abs(predPrice - openingPrice);
 
         const timeStr = p.createdAt ? p.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
         const akurasiRaw = p.accuracyScore ? Number(p.accuracyScore) : null;
         
-        // Asumsi nilai akurasi berupa 0-100 dari DB. Bagi 100 agar jadi decimal untuk format persentase Excel.
-        const akurasiVal = akurasiRaw !== null ? akurasiRaw / 100 : null;
+        // Nilai dari DB sudah berupa desimal (contoh 0.95 untuk 95%), tidak perlu dibagi 100.
+        const akurasiVal = akurasiRaw !== null ? akurasiRaw : null;
 
         const row = sheet.addRow([
           timeStr,

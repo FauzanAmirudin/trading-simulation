@@ -62,6 +62,10 @@ let activeOrderBooks: Record<number, { bids: OrderType[]; asks: OrderType[] }> =
 let activePredictions: Record<number, { userId: number; predictedPrice: number }[]> = {};
 let activeOpeningPrices: Record<number, number> = {};
 
+// ─── Carry-over prices ───────────────────────────────────────
+let lastTradedPrices: Record<number, number> = {};
+let lastTradedPeriodForStock: Record<number, number> = {};
+
 // ─── Timer ───────────────────────────────────────────────────
 let currentTimeLeft = 0;
 let currentTimerInterval: NodeJS.Timeout | null = null;
@@ -98,11 +102,43 @@ async function setPeriodState(periodNumber: number, state: PeriodStateType) {
   try {
     periodStates[periodNumber] = state;
     await db.update(experimentalConfig)
-      .set({ content: state })
+      .set({ content: state, updatedAt: new Date() })
       .where(eq(experimentalConfig.key, `period_${periodNumber}_status`));
     io.emit("period-state-changed", periodStates);
   } catch (err) {
-    console.error("[Scheduler] Error setting period state:", err);
+    console.error(`[Scheduler] Error saving state for Period ${periodNumber}:`, err);
+  }
+}
+
+async function loadLastTradedPrices() {
+  try {
+    const rows = await db.select().from(experimentalConfig).where(sql`key LIKE 'last_price_%'`);
+    for (const row of rows) {
+      const stockId = parseInt(row.key.replace('last_price_', ''));
+      const [price, period] = row.content.split(':');
+      lastTradedPrices[stockId] = parseFloat(price);
+      lastTradedPeriodForStock[stockId] = parseInt(period);
+    }
+  } catch (err) {
+    console.error("[Scheduler] Error loading last traded prices:", err);
+  }
+}
+
+async function saveLastTradedPrice(stockId: number, price: number, period: number) {
+  try {
+    lastTradedPrices[stockId] = price;
+    lastTradedPeriodForStock[stockId] = period;
+    
+    const key = `last_price_${stockId}`;
+    const content = `${price}:${period}`;
+    const [row] = await db.select().from(experimentalConfig).where(eq(experimentalConfig.key, key)).limit(1);
+    if (row) {
+      await db.update(experimentalConfig).set({ content, updatedAt: new Date() }).where(eq(experimentalConfig.key, key));
+    } else {
+      await db.insert(experimentalConfig).values({ key, title: `Last Price Stock ${stockId}`, content });
+    }
+  } catch (err) {
+    console.error(`[Scheduler] Error saving last traded price for stock ${stockId}:`, err);
   }
 }
 
@@ -115,8 +151,6 @@ function emitTimerTick() {
     activePeriod !== null && activeSessionIdx !== null
       ? getPeriodConfig(activePeriod).sessions[activeSessionIdx].sessionNumber
       : null;
-  // Optimasi 4: Hanya emit ke semua client saat state berubah (pause/resume)
-  // Tick per detik hanya dikirim saat diperlukan sinkronisasi
   io.emit("timer-tick", {
     phase: currentPhase,
     timeLeft: currentTimeLeft,
@@ -126,7 +160,6 @@ function emitTimerTick() {
   });
 }
 
-// Optimasi 4: Emit tick hanya ke satu socket (saat connect), bukan broadcast
 function emitTimerTickToSocket(socket: import("socket.io").Socket) {
   const sessionGroup =
     activePeriod !== null && activeSessionIdx !== null
@@ -146,16 +179,15 @@ async function runCountdown(seconds: number): Promise<void> {
   return new Promise<void>((resolve) => {
     resolveCountdown = resolve;
     if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
-    emitTimerTick(); // Sync awal ke semua client
+    emitTimerTick();
     currentTimerInterval = setInterval(() => {
       if (periodAborted) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
         if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
         return;
       }
-      if (isPaused) return; // freeze — do not decrement
+      if (isPaused) return;
       currentTimeLeft = Math.max(0, currentTimeLeft - 1);
-      // Emit timer-tick setiap detik agar hitung mundur di UI berjalan real-time
       emitTimerTick();
       if (currentTimeLeft <= 0) {
         clearInterval(currentTimerInterval!); currentTimerInterval = null;
@@ -179,7 +211,6 @@ async function loadInterventionCache() {
   }
 }
 
-// Optimasi 1: Batch insert — dari 12 query terpisah menjadi 2 query total
 async function seedInitialPortfolios(initialLot = 10) {
   const allUsers = await db.select().from(users).where(eq(users.role, "responden"));
   const allStocks = await db.select().from(stocks);
@@ -252,21 +283,15 @@ function startMatchingEngine() {
         const askIdx = book.asks.findIndex(a => a.harga === bid.harga);
         if (askIdx !== -1) {
           const ask = book.asks[askIdx];
-          const initialBidId = bid.id;
-          await executeTrade(stock.id, bid, ask, bid.harga, activeRoundDbId);
+          await executeTrade(stock.id, bid, ask, bid.harga, activeRoundDbId!);
           changed = true;
-          // If bid was completely filled, it gets spliced out of book.bids.
-          // We only increment i if the bid wasn't removed AND there are no more matching asks.
-          // But since the matching ask was removed (or this bid was removed), 
-          // we can just let the loop re-evaluate index `i`.
-          // If the bid is still at `i` and there are no more asks, the next iteration will hit the `else` block.
         } else {
           i++;
         }
       }
       if (changed) emitOrderBookUpdate(stock.id);
     }
-  }, 750); // Optimasi 3: Naikkan dari 500ms ke 750ms — kurangi beban DB 33% tanpa dampak UX
+  }, 750);
 }
 
 function emitOrderBookUpdate(stockId: number) {
@@ -281,7 +306,6 @@ function emitOrderBookUpdate(stockId: number) {
   });
 }
 
-// Optimasi 2: Emit balance langsung dari nilai yang diketahui — tanpa SELECT DB
 function emitBalanceUpdateDirect(userId: number, newBalance: number) {
   io.to(`user:${userId}`).emit("balance-update", { userId, balance: newBalance });
 }
@@ -323,7 +347,6 @@ async function executeTrade(
       newBidBalance = Number(updatedBid?.saldo || 0);
       newAskBalance = Number(updatedAsk?.saldo || 0);
 
-      // Buyer portfolio
       const [bp] = await tx.select().from(portfolios)
         .where(and(eq(portfolios.userId, bidOrder.userId), eq(portfolios.stockId, stockId)))
         .limit(1);
@@ -335,7 +358,6 @@ async function executeTrade(
         await tx.insert(portfolios).values({ userId: bidOrder.userId, stockId, jumlahLot: quantity, averagePrice: String(price) });
       }
 
-      // Seller portfolio
       const [sp] = await tx.select().from(portfolios)
         .where(and(eq(portfolios.userId, askOrder.userId), eq(portfolios.stockId, stockId)))
         .limit(1);
@@ -344,7 +366,6 @@ async function executeTrade(
         await tx.update(portfolios).set({ jumlahLot: newLots }).where(eq(portfolios.id, sp.id));
       }
 
-      // Perbarui status dan jumlah tersisa di order_book
       await tx.update(orderBook)
         .set({ jumlah: bidOrder.jumlah, status: bidOrder.jumlah <= 0 ? "completed" : "open" })
         .where(eq(orderBook.id, bidOrder.id));
@@ -369,12 +390,13 @@ async function executeTrade(
       timestamp: new Date().toISOString(),
     });
 
-    // Optimasi 2 (Fixed): Emit saldo baru langsung dari hasil RETURNING transaksi database
     emitBalanceUpdateDirect(bidOrder.userId, newBidBalance);
     emitBalanceUpdateDirect(askOrder.userId, newAskBalance);
     
     await emitPortfolioUpdate(bidOrder.userId, stockId);
     await emitPortfolioUpdate(askOrder.userId, stockId);
+    
+    if (activePeriod) await saveLastTradedPrice(stockId, price, activePeriod);
 
   } catch (err) {
     console.error("[MatchingEngine] Trade execution error:", err);
@@ -434,19 +456,28 @@ async function runRound(
   const roundDef = session.rounds[roundIdx];
   const periodNumber = periodConfig.periodNumber;
 
-  // Load stocks in defined order
   const rows = await db.select({ id: stocks.id, kodeSaham: stocks.kodeSaham, namaSaham: stocks.namaSaham, basePrice: stocks.basePrice })
     .from(stocks).where(inArray(stocks.kodeSaham, roundDef.stockCodes));
-  const orderedStocks = roundDef.stockCodes
+    
+  let orderedStocks = roundDef.stockCodes
     .map(code => rows.find(s => s.kodeSaham === code))
     .filter(Boolean) as StockRow[];
+
+  // Override basePrice with last traded price if in the SAME period
+  orderedStocks = orderedStocks.map(s => {
+    const lastPrice = lastTradedPrices[s.id];
+    const lastPeriod = lastTradedPeriodForStock[s.id];
+    if (lastPrice && lastPeriod === periodNumber) {
+      return { ...s, basePrice: String(lastPrice) };
+    }
+    return s;
+  });
 
   if (orderedStocks.length === 0) {
     console.error(`[Scheduler] Stocks not found: ${roundDef.stockCodes.join(", ")} — skipping`);
     return;
   }
 
-  // If recovering, we already have activeRoundDbId set. Otherwise, create new DB record.
   if (initialPhase === null) {
     const [roundRow] = await db.insert(rounds).values({
       period: periodNumber,
@@ -472,12 +503,9 @@ async function runRound(
     await seedInitialPortfolios();
   }
 
-
-
   const roundLabel = `P${periodNumber}-S${session.sessionNumber}-R${roundIdx + 1}`;
   console.log(`[Scheduler] ${roundLabel}: ${orderedStocks.map(s => s.kodeSaham).join(", ")}`);
 
-  // Broadcast round start
   io.emit("round-started", {
     roundNumber: roundIdx + 1,
     period: periodNumber,
@@ -489,7 +517,6 @@ async function runRound(
     })),
   });
 
-  // ── PRE_MARKET PHASE ──────────────────────────────────────
   if (initialPhase === null || initialPhase === "PRE_MARKET") {
     currentPhase = "PRE_MARKET";
     io.emit("sub-session-started", {
@@ -532,7 +559,6 @@ async function runRound(
       }).join("   ✦   ");
     }
 
-    // Gunakan teks dari admin jika ada dan merupakan berita nyata (bukan label/key intervensi)
     const cached = interventionCache[session.intervention];
     const cachedContent = cached?.content?.trim() ?? "";
     const isRealNews = cachedContent.length > 20 && cachedContent !== session.intervention;
@@ -551,7 +577,6 @@ async function runRound(
       content: finalContent,
       roundNumber: roundIdx + 1,
     });
-    console.log(`[Scheduler] Running text ACTIVE: ${session.intervention} - ${finalContent}`);
   }
 
     await runCountdown(initialPhase === "PRE_MARKET" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.PRE_MARKET);
@@ -561,7 +586,6 @@ async function runRound(
     io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 1, phase: "PRE_MARKET" });
   }
 
-  // Period 1 — NO TRADING
   if (!session.hasTrading) {
     await db.update(rounds)
       .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
@@ -575,10 +599,8 @@ async function runRound(
     return;
   }
 
-  // ── TRADING PHASE ─────────────────────────────────────────
   if (initialPhase === null || initialPhase === "PRE_MARKET" || initialPhase === "TRADING") {
     currentPhase = "TRADING";
-  // Do NOT reset intervention here; let the running text continue.
 
     await db.update(rounds)
       .set({ subSessionStatus: "TRADING", activeSubSession: 2, activeIntervention: session.intervention })
@@ -607,7 +629,7 @@ async function runRound(
       .where(and(eq(orderBook.roundId, activeRoundDbId!), eq(orderBook.status, "open")));
 
     io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 2, phase: "TRADING" });
-    io.emit("intervention-ended", { roundNumber: roundIdx + 1 }); // hide running text at the end of the round
+    io.emit("intervention-ended", { roundNumber: roundIdx + 1 });
     io.emit("round-ended", {
       roundNumber: roundIdx + 1, periodNumber,
       sessionNumber: session.sessionNumber,
@@ -626,7 +648,6 @@ async function startPeriod(
   initialPhase: PhaseType | null = null,
   initialTimeLeft: number | null = null
 ) {
-  // Prevent starting if ANY period is already running, even the same one.
   if (activePeriod !== null) {
     io.emit("admin-error", { message: `Periode ${activePeriod} masih berjalan. Hentikan dahulu sebelum memulai periode baru.` });
     return;
@@ -657,13 +678,11 @@ async function startPeriod(
           duration: DURATIONS.COOLDOWN, reason: "between-sessions",
           periodNumber, sessionGroup: session.sessionNumber,
         });
-        console.log(`[Scheduler] Cooldown between sessions (${DURATIONS.COOLDOWN}s)...`);
         await runCountdown(DURATIONS.COOLDOWN);
         if (periodAborted) break;
       }
 
       currentPhase = "IDLE";
-      console.log(`[Scheduler] --- Session ${session.sessionNumber}: ${session.label} ---`);
       io.emit("session-group-started", {
         periodNumber, sessionNumber: session.sessionNumber, sessionIdx: si,
         label: session.label, intervention: session.intervention,
@@ -720,12 +739,8 @@ app.prepare().then(async () => {
       if (!activeRound) return;
 
       const periodNumber = activeRound.period as 1 | 2 | 3;
-
-      // Only recover if the period was actually in "running" state when server went down.
-      // If period state is "completed", "idle", or "paused", the round is stale — close it.
       const periodState = periodStates[periodNumber];
       if (periodState !== "running") {
-        console.log(`[Scheduler] Found stale active round ${activeRound.id} but period ${periodNumber} state is "${periodState}" — closing stale round.`);
         await db.update(rounds)
           .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
           .where(eq(rounds.id, activeRound.id));
@@ -740,17 +755,12 @@ app.prepare().then(async () => {
       const roundIdx = activeRound.roundIndex;
       const phase = activeRound.subSessionStatus as PhaseType;
 
-      console.log(`[Scheduler] RECOVERING active round ${activeRound.id} (Period ${periodNumber}, Session ${activeRound.sessionGroup}, Round ${roundIdx + 1})`);
-
-      // Set global active DB ID
       activeRoundDbId = activeRound.id;
 
-      // Restore activeStocks
       const rs = await db.select().from(roundStocks).where(eq(roundStocks.roundId, activeRoundDbId));
       const sRows = await db.select().from(stocks).where(inArray(stocks.id, rs.map(r => r.stockId)));
       activeStocks = rs.map(r => sRows.find(s => s.id === r.stockId)).filter(Boolean) as StockRow[];
 
-      // Restore order books
       activeOrderBooks = Object.fromEntries(activeStocks.map(s => [s.id, { bids: [], asks: [] }]));
       const openOrders = await db.select().from(orderBook).where(and(eq(orderBook.roundId, activeRoundDbId), eq(orderBook.status, "open")));
       for (const order of openOrders) {
@@ -761,7 +771,6 @@ app.prepare().then(async () => {
         }
       }
 
-      // Restore predictions
       activePredictions = Object.fromEntries(activeStocks.map(s => [s.id, []]));
       const preds = await db.select().from(predictions).where(eq(predictions.roundId, activeRoundDbId));
       for (const pred of preds) {
@@ -770,19 +779,14 @@ app.prepare().then(async () => {
         }
       }
       
-      // Attempt to calculate opening prices if in TRADING phase
       activeOpeningPrices = {};
       if (phase === "TRADING") {
          await calculateOpeningPrices(activeRoundDbId, activeStocks);
       }
 
       isPaused = true;
-      console.log("[Scheduler] Session recovered and PAUSED. Awaiting admin resume.");
-
-      // Calculate time left (default to max for phase if exact calculation is tricky)
       const timeLeft = phase === "PRE_MARKET" ? DURATIONS.PRE_MARKET : phase === "TRADING" ? DURATIONS.TRADING : DURATIONS.COOLDOWN;
 
-      // Start the period asynchronously
       startPeriod(periodNumber, sessionIdx, roundIdx, phase, timeLeft).catch(err => {
         console.error("[Scheduler] Error resuming period:", err);
       });
@@ -793,7 +797,8 @@ app.prepare().then(async () => {
 
   await loadInterventionCache();
   await loadPeriodStates();
-  await seedInitialPortfolios();
+  await loadLastTradedPrices();
+  console.log(`[Server] periodStates:`, periodStates);
   console.log("[Scheduler] State machine ready — PERIOD_MATRIX loaded");
   await recoverActiveSession();
 
@@ -985,6 +990,11 @@ app.prepare().then(async () => {
       
       io.emit("experiment-reset", {});
       console.log("[Scheduler] Experiment RESET by admin");
+
+      // Clear carry-over prices
+      lastTradedPrices = {};
+      lastTradedPeriodForStock = {};
+      await db.delete(experimentalConfig).where(sql`key LIKE 'last_price_%'`);
 
       // Background DB cleanup
       await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));

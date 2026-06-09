@@ -13,6 +13,7 @@ import {
   PanelLeft,
   ChevronRight,
   Activity,
+  Trophy,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -31,6 +32,7 @@ const adminNav: NavItem[] = [
   { label: "Dashboard", href: "/admin", icon: <Activity className="size-4" /> },
   { label: "Trading", href: "/admin/trading", icon: <TrendingUp className="size-4" /> },
   { label: "Resume", href: "/admin/resume", icon: <ScrollText className="size-4" /> },
+  { label: "Hasil", href: "/admin/hasil", icon: <Trophy className="size-4" /> },
 ];
 
 export default function AppSidebar() {

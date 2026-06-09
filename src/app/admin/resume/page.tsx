@@ -38,6 +38,7 @@ export default function AdminResumePage() {
   );
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportingOrderBook, setExportingOrderBook] = useState(false);
   const [data, setData] = useState({
     participantsCount: 0,
     totalTransactionsCount: 0,
@@ -76,7 +77,7 @@ export default function AdminResumePage() {
   const handleDownloadExcel = async () => {
     try {
       setExporting(true);
-      toast.info("Menyiapkan file ZIP, mohon tunggu...");
+      toast.info("Menyiapkan file Excel, mohon tunggu...");
       const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
       const res = await fetch(`/api/admin/export-excel${dateQuery}`);
       
@@ -88,7 +89,7 @@ export default function AdminResumePage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = selectedDate ? `Laporan_Trading_${selectedDate}.zip` : `Laporan_Trading_All.zip`;
+      a.download = selectedDate ? `Laporan_Trading_${selectedDate}.xlsx` : `Laporan_Trading_All.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -99,6 +100,35 @@ export default function AdminResumePage() {
       toast.error("Gagal mengekspor data");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleDownloadOrderBook = async () => {
+    try {
+      setExportingOrderBook(true);
+      toast.info("Menyiapkan file Excel Order Book, mohon tunggu...");
+      const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
+      const res = await fetch(`/api/admin/export-orderbook${dateQuery}`);
+      
+      if (!res.ok) {
+        throw new Error("Gagal mengunduh data order book");
+      }
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = selectedDate ? `Laporan_OrderBook_${selectedDate}.xlsx` : `Laporan_OrderBook_All.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Berhasil mengunduh data Order Book Excel!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal mengekspor data order book");
+    } finally {
+      setExportingOrderBook(false);
     }
   };
 
@@ -136,10 +166,20 @@ export default function AdminResumePage() {
             variant="outline"
             className="border-emerald-500/20 text-emerald-600 dark:text-emerald-400 gap-2 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20"
             onClick={handleDownloadExcel}
-            disabled={exporting}
+            disabled={exporting || exportingOrderBook}
           >
             <DownloadCloud className="size-4" />
-            {exporting ? "Mengekspor..." : "Download Excel (ZIP)"}
+            {exporting ? "Mengekspor..." : "Download Excel"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-blue-500/20 text-blue-600 dark:text-blue-400 gap-2 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20"
+            onClick={handleDownloadOrderBook}
+            disabled={exporting || exportingOrderBook}
+          >
+            <DownloadCloud className="size-4" />
+            {exportingOrderBook ? "Mengekspor..." : "Download Order Book"}
           </Button>
         </div>
       </div>

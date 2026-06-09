@@ -1,16 +1,22 @@
 "use client"
 
 import { useTheme } from "next-themes"
+import { usePathname } from "next/navigation"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
+  const pathname = usePathname()
+
+  const isRespondentPage = pathname?.startsWith("/dashboard")
+  const position = isRespondentPage ? "top-center" : "bottom-right"
 
   return (
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
+      position={position}
       icons={{
         success: (
           <CircleCheckIcon className="size-4" />
