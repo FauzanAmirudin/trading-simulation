@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getSocket } from "@/lib/socket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import SpotlightCard from "@/components/SpotlightCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
@@ -245,57 +246,70 @@ export default function DashboardPage() {
 
       {/* Ringkasan Akun */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
-          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent dark:from-blue-500/10" />
-          <CardContent className="p-6 relative">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-600 dark:text-blue-400 shadow-sm border border-blue-200/50 dark:border-blue-700/30">
-                <DollarSign className="size-5" />
-              </div>
-              <div className="text-sm font-medium text-muted-foreground">Sisa Kas</div>
-            </div>
-            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
-              Rp {balance.toLocaleString("id-ID")}
-            </div>
-          </CardContent>
-        </Card>
+        <SpotlightCard spotlightColor="rgba(255, 255, 255, 0.2)" className="relative overflow-hidden rounded-[2rem] border-none shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 bg-[#f99b5a]">
+          {/* Intersecting Circles Background */}
+          <div className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden pointer-events-none rounded-[inherit]">
+            <div className="absolute -top-12 -right-6 size-48 rounded-full bg-white/20" />
+            <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-white/20" />
+            <div className="absolute -top-8 right-12 size-64 rounded-full border border-white/20" />
+          </div>
 
-        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
-          <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent dark:from-emerald-500/10" />
-          <CardContent className="p-6 relative">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/40 dark:to-teal-900/40 text-emerald-600 dark:text-emerald-400 shadow-sm border border-emerald-200/50 dark:border-emerald-700/30">
-                <Briefcase className="size-5" />
+          <CardContent className="p-6 md:p-8 relative z-10 flex flex-col justify-between h-full min-h-[160px]">
+            <div className="text-lg md:text-xl font-medium text-white/90 tracking-wide">
+              Sisa Kas
+            </div>
+            <div className="flex items-end gap-3 mt-8">
+              <div className="font-sans text-4xl md:text-5xl font-semibold tracking-tight text-white drop-shadow-sm">
+                Rp {balance.toLocaleString("id-ID")}
               </div>
-              <div className="text-sm font-medium text-muted-foreground">Portofolio</div>
-            </div>
-            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
-              Rp {totalValue.toLocaleString("id-ID")}
-            </div>
-            <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1.5">
-              <div className="size-1.5 rounded-full bg-emerald-500" />
-              {portfolio.length} saham aktif
+              <DollarSign className="size-6 text-white/80 mb-1 md:mb-2" />
             </div>
           </CardContent>
-        </Card>
+        </SpotlightCard>
+        <SpotlightCard spotlightColor="rgba(255, 255, 255, 0.2)" className="relative overflow-hidden rounded-[2rem] border-none shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 bg-[#403989]">
+          <div className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden pointer-events-none rounded-[inherit]">
+            <div className="absolute -top-12 -right-6 size-48 rounded-full bg-white/10" />
+            <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-white/10" />
+            <div className="absolute -top-8 right-12 size-64 rounded-full border border-white/10" />
+          </div>
 
-        <Card className="relative overflow-hidden border-border bg-white/80 backdrop-blur-md shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all dark:bg-slate-950/50 dark:shadow-none">
-          <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 to-transparent dark:from-violet-500/10" />
-          <CardContent className="p-6 relative">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-100 to-purple-100 dark:from-violet-900/40 dark:to-purple-900/40 text-violet-600 dark:text-violet-400 shadow-sm border border-violet-200/50 dark:border-violet-700/30">
-                <Activity className="size-5" />
+          <CardContent className="p-6 md:p-8 relative z-10 flex flex-col justify-between h-full min-h-[160px]">
+            <div className="flex justify-between items-start">
+              <div className="text-lg md:text-xl font-medium text-white/90 tracking-wide">
+                Portofolio
               </div>
-              <div className="text-sm font-medium text-muted-foreground">Total Kekayaan</div>
+              <div className="text-xs font-medium text-white/80 bg-white/10 px-3 py-1 rounded-full border border-white/10 flex items-center gap-2">
+                <div className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+                {portfolio.length} saham
+              </div>
             </div>
-            <div className="font-mono text-3xl font-bold tracking-tight text-foreground">
-              Rp {totalWealth.toLocaleString("id-ID")}
-            </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              Gabungan kas & portofolio
+            <div className="flex items-end gap-3 mt-8">
+              <div className="font-sans text-4xl md:text-5xl font-semibold tracking-tight text-white drop-shadow-sm">
+                Rp {totalValue.toLocaleString("id-ID")}
+              </div>
+              <Briefcase className="size-6 text-white/80 mb-1 md:mb-2" />
             </div>
           </CardContent>
-        </Card>
+        </SpotlightCard>
+        <SpotlightCard spotlightColor="rgba(255, 255, 255, 0.2)" className="relative overflow-hidden rounded-[2rem] border-none shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 bg-[#ef4f7b]">
+          <div className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden pointer-events-none rounded-[inherit]">
+            <div className="absolute -top-12 -right-6 size-48 rounded-full bg-white/20" />
+            <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-white/20" />
+            <div className="absolute -top-8 right-12 size-64 rounded-full border border-white/20" />
+          </div>
+
+          <CardContent className="p-6 md:p-8 relative z-10 flex flex-col justify-between h-full min-h-[160px]">
+            <div className="text-lg md:text-xl font-medium text-white/90 tracking-wide">
+              Total Kekayaan
+            </div>
+            <div className="flex items-end gap-3 mt-8">
+              <div className="font-sans text-4xl md:text-5xl font-semibold tracking-tight text-white drop-shadow-sm">
+                Rp {totalWealth.toLocaleString("id-ID")}
+              </div>
+              <Activity className="size-6 text-white/80 mb-1 md:mb-2" />
+            </div>
+          </CardContent>
+        </SpotlightCard>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

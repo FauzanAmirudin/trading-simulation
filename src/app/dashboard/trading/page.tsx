@@ -302,9 +302,6 @@ function TradingPageContent() {
       } else {
         setShowPredictionUI(false);
       }
-      if (data.phase === "TRADING") {
-        setRunningText(prev => ({ ...prev, active: false }));
-      }
     };
     const onSubSessionEnded = (data: { roundNumber: number; sessionNumber: number }) => {
       if (data.sessionNumber === 1) {
@@ -779,7 +776,6 @@ function TradingPageContent() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 pt-4">
-            <p className="text-xs text-muted-foreground">Prediksi harga Equilibrium untuk setiap saham sebelum sesi trading dimulai.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks.map(s => {
                 const baseP = Number(s.basePrice);
@@ -791,11 +787,16 @@ function TradingPageContent() {
                 return (
                   <div key={s.id} className="rounded-xl border border-border bg-white dark:bg-slate-900 shadow-sm p-4 hover:shadow-md transition-shadow relative overflow-hidden">
                     <div className={`absolute left-0 top-0 bottom-0 w-1 bg-${color}-500/50`} />
-                    <div className="text-sm font-bold text-foreground mb-3 flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${color}-100 dark:bg-${color}-500/20 text-black`}>
-                        {(s as any).kodeSaham || (s as any).kode}
-                      </span>
-                      <span className="truncate">{(s as any).namaSaham || (s as any).nama}</span>
+                    <div className="flex flex-col gap-1 mb-3">
+                      <div className="text-sm font-bold text-foreground flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${color}-100 dark:bg-${color}-500/20 text-black`}>
+                          {(s as any).kodeSaham || (s as any).kode}
+                        </span>
+                        <span className="truncate">{(s as any).namaSaham || (s as any).nama}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground font-medium mt-1">
+                        Harga Penutupan: <span className="font-mono font-bold text-foreground">Rp {baseP.toLocaleString("id-ID")}</span>
+                      </div>
                     </div>
                     <div className="flex gap-2 mb-2">
                       <PriceInput
@@ -878,7 +879,7 @@ function TradingPageContent() {
                     {meta.deskripsi}
                   </p>
                   <div className="flex items-center justify-between pt-2 border-t border-border">
-                    <span className="text-[10px] text-muted-foreground">Harga Dasar</span>
+                    <span className="text-[10px] text-muted-foreground">Harga Penutupan</span>
                     <span className="font-mono text-xs font-semibold text-foreground/90">
                       Rp {Number(s.basePrice).toLocaleString("id-ID")}
                     </span>
@@ -904,61 +905,21 @@ function TradingPageContent() {
             </div>
           </div>
 
-          <Card className="border-border bg-card shadow-sm border-t-2 border-t-indigo-500/50 dark:shadow-none dark:border-t-border">
-            <CardHeader className="pb-2"><CardTitle className="text-[10px] text-muted-foreground uppercase tracking-wider">{stock.kodeSaham} — {stock.namaSaham}</CardTitle></CardHeader>
-            <CardContent><div className="h-48 sm:h-56"><PriceChart data={priceHistory} isUp={isUp} /></div></CardContent>
-          </Card>
-
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3">
-              <Card className="border-border bg-card shadow-sm dark:shadow-none h-full">
-                <CardHeader className="pb-3"><CardTitle className="text-xs">Order Book</CardTitle></CardHeader>
-                <CardContent className="p-0">
-                  <div className="grid grid-cols-2 divide-x divide-border">
-                    <div className="p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-green-400">
-                        <TrendingUp className="size-3" /> BID
-                      </div>
-                      <div className="space-y-0.5">
-                        {bids.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada bid</p>
-                          : [...bids].sort((a, b) => b.harga - a.harga).slice(0, 8).map(o => (
-                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-emerald-50/50 dark:hover:bg-muted/50 transition-colors">
-                              <div className="absolute inset-y-0 left-0 bg-emerald-50 dark:bg-emerald-500/10" style={{ width: `${(o.jumlah / maxBid) * 100}%` }} />
-                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
-                              <span className="relative text-muted-foreground">{o.jumlah}</span>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                    <div className="p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-500">
-                        <TrendingDown className="size-3" /> ASK
-                      </div>
-                      <div className="space-y-0.5">
-                        {asks.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada ask</p>
-                          : [...asks].sort((a, b) => a.harga - b.harga).slice(0, 8).map(o => (
-                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-rose-50/50 dark:hover:bg-muted/50 transition-colors">
-                              <div className="absolute inset-y-0 left-0 bg-rose-50 dark:bg-rose-500/10" style={{ width: `${(o.jumlah / maxAsk) * 100}%` }} />
-                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
-                              <span className="relative text-muted-foreground">{o.jumlah}</span>
-                            </div>
-                          ))}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
             <div className="lg:col-span-2 space-y-3">
               <Card className={cn(
                 "border transition-colors duration-500 bg-white/90 backdrop-blur-md dark:bg-slate-950/80 shadow-sm",
                 orderType === "BID" ? "border-emerald-500/30 dark:border-emerald-500/20 shadow-emerald-500/5" : "border-rose-500/30 dark:border-rose-500/20 shadow-rose-500/5"
               )}>
                 <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
-                  <CardTitle className="text-xs font-semibold flex items-center gap-2">
-                    {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
-                    Formulir {orderType === "BID" ? "Pembelian" : "Penjualan"}
+                  <CardTitle className="text-xs font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
+                      Formulir {orderType === "BID" ? "Pembelian" : "Penjualan"}
+                    </div>
+                    <div className="text-[10px] font-mono text-muted-foreground bg-white dark:bg-slate-900 px-2 py-1 rounded-md border border-border">
+                      Harga Saat Ini: <span className="font-bold text-foreground">Rp {currentPrice.toLocaleString("id-ID")}</span>
+                    </div>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-4 relative">
@@ -1046,7 +1007,52 @@ function TradingPageContent() {
                 </CardContent>
               </Card>
             </div>
+
+            <div className="lg:col-span-3">
+              <Card className="border-border bg-card shadow-sm dark:shadow-none h-full">
+                <CardHeader className="pb-3"><CardTitle className="text-xs">Order Book</CardTitle></CardHeader>
+                <CardContent className="p-0">
+                  <div className="grid grid-cols-2 divide-x divide-border">
+                    <div className="p-3">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-green-400">
+                        <TrendingUp className="size-3" /> BID
+                      </div>
+                      <div className="space-y-0.5">
+                        {bids.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada bid</p>
+                          : [...bids].sort((a, b) => b.harga - a.harga).slice(0, 8).map(o => (
+                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-emerald-50/50 dark:hover:bg-muted/50 transition-colors">
+                              <div className="absolute inset-y-0 left-0 bg-emerald-50 dark:bg-emerald-500/10" style={{ width: `${(o.jumlah / maxBid) * 100}%` }} />
+                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
+                              <span className="relative text-muted-foreground">{o.jumlah}</span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-500">
+                        <TrendingDown className="size-3" /> ASK
+                      </div>
+                      <div className="space-y-0.5">
+                        {asks.length === 0 ? <p className="text-xs text-muted-foreground py-4 text-center">Belum ada ask</p>
+                          : [...asks].sort((a, b) => a.harga - b.harga).slice(0, 8).map(o => (
+                            <div key={o.id} className="relative flex items-center justify-between rounded px-2 py-1.5 text-xs overflow-hidden hover:bg-rose-50/50 dark:hover:bg-muted/50 transition-colors">
+                              <div className="absolute inset-y-0 left-0 bg-rose-50 dark:bg-rose-500/10" style={{ width: `${(o.jumlah / maxAsk) * 100}%` }} />
+                              <span className="relative font-mono font-medium text-foreground">{o.harga.toLocaleString("id-ID")}</span>
+                              <span className="relative text-muted-foreground">{o.jumlah}</span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
+
+          <Card className="border-border bg-card shadow-sm border-t-2 border-t-indigo-500/50 dark:shadow-none dark:border-t-border">
+            <CardHeader className="pb-2"><CardTitle className="text-[10px] text-muted-foreground uppercase tracking-wider">{stock.kodeSaham} — {stock.namaSaham}</CardTitle></CardHeader>
+            <CardContent><div className="h-48 sm:h-56"><PriceChart data={priceHistory} isUp={isUp} /></div></CardContent>
+          </Card>
         </div>
       )}
     </div>

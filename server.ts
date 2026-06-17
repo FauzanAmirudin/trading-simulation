@@ -80,6 +80,7 @@ let interventionCache: Record<string, { title: string; content: string }> = {};
 // ─── Persistent Period States ────────────────────────────────
 export type PeriodStateType = "idle" | "running" | "paused" | "completed";
 let periodStates: Record<number, PeriodStateType> = { 1: "idle", 2: "idle", 3: "idle" };
+let completedSessions: Record<number, number[]> = { 1: [], 2: [], 3: [] };
 
 async function loadPeriodStates() {
   try {
@@ -91,6 +92,15 @@ async function loadPeriodStates() {
       } else {
         await db.insert(experimentalConfig).values({ key, title: `Status Period ${i}`, content: "idle" });
         periodStates[i] = "idle";
+      }
+
+      const compKey = `period_${i}_completed_sessions`;
+      const [compRow] = await db.select().from(experimentalConfig).where(eq(experimentalConfig.key, compKey)).limit(1);
+      if (compRow) {
+        completedSessions[i] = JSON.parse(compRow.content);
+      } else {
+        await db.insert(experimentalConfig).values({ key: compKey, title: `Completed Sessions Period ${i}`, content: "[]" });
+        completedSessions[i] = [];
       }
     }
   } catch (err) {
@@ -107,6 +117,20 @@ async function setPeriodState(periodNumber: number, state: PeriodStateType) {
     io.emit("period-state-changed", periodStates);
   } catch (err) {
     console.error(`[Scheduler] Error saving state for Period ${periodNumber}:`, err);
+  }
+}
+
+async function addCompletedSession(periodNumber: number, sessionIndex: number) {
+  try {
+    if (!completedSessions[periodNumber].includes(sessionIndex)) {
+      completedSessions[periodNumber].push(sessionIndex);
+      await db.update(experimentalConfig)
+        .set({ content: JSON.stringify(completedSessions[periodNumber]), updatedAt: new Date() })
+        .where(eq(experimentalConfig.key, `period_${periodNumber}_completed_sessions`));
+      io.emit("completed-sessions-changed", completedSessions);
+    }
+  } catch (err) {
+    console.error(`[Scheduler] Error saving completed session for Period ${periodNumber}:`, err);
   }
 }
 
@@ -611,7 +635,7 @@ async function runRound(
       sessionNumber: 2,
       phase: "TRADING",
       duration: initialPhase === "TRADING" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING,
-      intervention: "NONE",
+      intervention: session.intervention,
       label: "Perdagangan",
     });
 
@@ -641,81 +665,67 @@ async function runRound(
   console.log(`[Scheduler] ${roundLabel} DONE`);
 }
 
-async function startPeriod(
+async function startSingleSession(
   periodNumber: 1 | 2 | 3,
-  startFromSessionIdx = 0,
+  sessionIdx: number,
   startFromRoundIdx = 0,
   initialPhase: PhaseType | null = null,
   initialTimeLeft: number | null = null
 ) {
-  if (activePeriod !== null) {
-    io.emit("admin-error", { message: `Periode ${activePeriod} masih berjalan. Hentikan dahulu sebelum memulai periode baru.` });
+  if (activePeriod !== null && (activePeriod !== periodNumber || activeSessionIdx !== sessionIdx)) {
+    io.emit("admin-error", { message: `Sesi lain masih berjalan. Hentikan dahulu sebelum memulai sesi baru.` });
     return;
   }
 
   const periodConfig = getPeriodConfig(periodNumber);
   activePeriod = periodNumber;
+  activeSessionIdx = sessionIdx;
   periodAborted = false;
   currentPhase = initialPhase !== null ? initialPhase : "IDLE";
 
   try {
-    console.log(`[Scheduler] ===== PERIOD ${periodNumber} STARTED =====`);
+    console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} STARTED =====`);
     await setPeriodState(periodNumber, "running");
     io.emit("period-started", {
       periodNumber, label: periodConfig.label,
       totalSessions: periodConfig.sessions.length,
     });
 
-    for (let si = startFromSessionIdx; si < periodConfig.sessions.length; si++) {
+    const session = periodConfig.sessions[sessionIdx];
+
+    currentPhase = "IDLE";
+    io.emit("session-group-started", {
+      periodNumber, sessionNumber: session.sessionNumber, sessionIdx: sessionIdx,
+      label: session.label, intervention: session.intervention,
+      hasTrading: session.hasTrading, totalRounds: session.rounds.length,
+    });
+
+    for (let ri = startFromRoundIdx; ri < session.rounds.length; ri++) {
       if (periodAborted) break;
-      const session = periodConfig.sessions[si];
-      activeSessionIdx = si;
+      activeRoundIdx = ri;
 
-      if (si > 0 && !(si === startFromSessionIdx && initialPhase !== null)) {
-        await resetSessionState();
-        currentPhase = "COOLDOWN";
-        io.emit("cooldown-started", {
-          duration: DURATIONS.COOLDOWN, reason: "between-sessions",
-          periodNumber, sessionGroup: session.sessionNumber,
-        });
-        await runCountdown(DURATIONS.COOLDOWN);
-        if (periodAborted) break;
-      }
-
-      currentPhase = "IDLE";
-      io.emit("session-group-started", {
-        periodNumber, sessionNumber: session.sessionNumber, sessionIdx: si,
-        label: session.label, intervention: session.intervention,
-        hasTrading: session.hasTrading, totalRounds: session.rounds.length,
-      });
-
-      const startRi = (si === startFromSessionIdx) ? startFromRoundIdx : 0;
-      for (let ri = startRi; ri < session.rounds.length; ri++) {
-        if (periodAborted) break;
-        activeRoundIdx = ri;
-
-        const isFirstRecoveredRound = (si === startFromSessionIdx && ri === startFromRoundIdx && initialPhase !== null);
-        const passPhase = isFirstRecoveredRound ? initialPhase : null;
-        const passTime = isFirstRecoveredRound ? initialTimeLeft : null;
-        
-        await runRound(periodConfig, si, ri, passPhase, passTime);
-      }
+      const isFirstRecoveredRound = (ri === startFromRoundIdx && initialPhase !== null);
+      const passPhase = isFirstRecoveredRound ? initialPhase : null;
+      const passTime = isFirstRecoveredRound ? initialTimeLeft : null;
+      
+      await runRound(periodConfig, sessionIdx, ri, passPhase, passTime);
     }
   } catch (err) {
-    console.error(`[Scheduler] Kritis: Error pada Period ${periodNumber}:`, err);
-    io.emit("admin-error", { message: `Terjadi error kritis pada Periode ${periodNumber}. Server menghentikan sesi secara otomatis.` });
+    console.error(`[Scheduler] Kritis: Error pada Period ${periodNumber} Sesi ${sessionIdx}:`, err);
+    io.emit("admin-error", { message: `Terjadi error kritis pada Periode ${periodNumber} Sesi ${sessionIdx}. Server menghentikan sesi secara otomatis.` });
   } finally {
     activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
     currentPhase = "IDLE"; currentIntervention = "NONE";
 
     if (!periodAborted) {
-      console.log(`[Scheduler] ===== PERIOD ${periodNumber} COMPLETE (Atau Dihentikan Otomatis) =====`);
-      await setPeriodState(periodNumber, "completed");
-      io.emit("period-ended", { periodNumber });
+      console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} COMPLETE =====`);
+      await addCompletedSession(periodNumber, sessionIdx);
+      await setPeriodState(periodNumber, "idle");
+      io.emit("session-completed", { periodNumber, sessionIdx });
     } else {
-      console.log(`[Scheduler] ===== PERIOD ${periodNumber} ABORTED =====`);
+      console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} ABORTED =====`);
       await cleanupActiveRound();
-      await setPeriodState(periodNumber, "completed");
+      await setPeriodState(periodNumber, "idle");
       io.emit("period-aborted", { periodNumber });
     }
   }
@@ -787,8 +797,8 @@ app.prepare().then(async () => {
       isPaused = true;
       const timeLeft = phase === "PRE_MARKET" ? DURATIONS.PRE_MARKET : phase === "TRADING" ? DURATIONS.TRADING : DURATIONS.COOLDOWN;
 
-      startPeriod(periodNumber, sessionIdx, roundIdx, phase, timeLeft).catch(err => {
-        console.error("[Scheduler] Error resuming period:", err);
+      startSingleSession(periodNumber, sessionIdx, roundIdx, phase, timeLeft).catch(err => {
+        console.error("[Scheduler] Error resuming session:", err);
       });
     } catch (err) {
       console.error("[Scheduler] Error recovering session:", err);
@@ -827,6 +837,7 @@ app.prepare().then(async () => {
         socket.join(`user:${user.id}`);
         socket.emit("auth-success", { user: { id: user.id, nama: user.nama, role: user.role, saldo: Number(user.saldo) } });
         socket.emit("period-state-changed", periodStates);
+        socket.emit("completed-sessions-changed", completedSessions);
 
         // Sync current experiment state to newly connected client
         if (activePeriod !== null) {
@@ -904,8 +915,8 @@ app.prepare().then(async () => {
       }
     });
 
-    // ── Admin: Start Period ───────────────────────────────────
-    socket.on("admin-start-period", async (data: { periodNumber: number; userId?: number }) => {
+    // ── Admin: Start Single Session ───────────────────────────
+    socket.on("admin-start-session", async (data: { periodNumber: number; sessionIndex: number; userId?: number }) => {
       // Inline auth fallback
       if (!isAdmin() && data.userId) {
         const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
@@ -913,14 +924,14 @@ app.prepare().then(async () => {
       }
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
 
-      const { periodNumber } = data;
+      const { periodNumber, sessionIndex } = data;
       if (periodNumber < 1 || periodNumber > 3) {
         socket.emit("admin-error", { message: "Periode harus 1, 2, atau 3" }); return;
       }
-      console.log(`[Admin] Period ${periodNumber} started by admin ${socket.data.userId}`);
+      console.log(`[Admin] Period ${periodNumber} Session ${sessionIndex} started by admin ${socket.data.userId}`);
       // Run async — do not await (allows socket to respond immediately)
-      startPeriod(periodNumber as 1 | 2 | 3).catch(err => {
-        console.error("[Admin] startPeriod error:", err);
+      startSingleSession(periodNumber as 1 | 2 | 3, sessionIndex).catch(err => {
+        console.error("[Admin] startSingleSession error:", err);
         io.emit("admin-error", { message: `Error: ${err.message}` });
       });
     });

@@ -37,6 +37,7 @@ type ExperimentState = {
   openingPrices: Record<number, number>;
   interventionCache: Record<string, { title: string; content: string }>;
   periodStates: Record<number, string>;
+  completedSessions: Record<number, number[]>;
 };
 
 // ─────────────────────────────────────────────
@@ -157,15 +158,15 @@ function InterventionConfigForm({ onSaved }: { onSaved?: () => void }) {
 // PeriodSummaryCard
 // ─────────────────────────────────────────────
 function PeriodSummaryCard({
-  period, activePeriod, onStart, periodState,
+  period, activePeriod, onStartSession, periodState, completedSessions
 }: {
   period: PeriodDef;
   activePeriod: 1 | 2 | 3 | null;
-  onStart: (n: 1 | 2 | 3) => void;
+  onStartSession: (period: 1|2|3, sessionIndex: number) => void;
   periodState?: string;
+  completedSessions: number[];
 }) {
   const isActive = activePeriod === period.periodNumber;
-  const isCompleted = periodState === "completed";
   const isPaused = periodState === "paused";
   const totalRounds = period.sessions.reduce((a, s) => a + s.rounds.length, 0);
   const hasIntervention = period.sessions.some(s => s.intervention !== "NONE");
@@ -191,32 +192,41 @@ function PeriodSummaryCard({
             <PauseCircle className="size-2.5" /> Dijeda
           </span>
         )}
-        {isCompleted && (
-          <span className="flex items-center gap-1 rounded-full px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] font-medium">
-            <CheckCircle2 className="size-2.5" /> Selesai
-          </span>
-        )}
       </div>
 
-      <div className="space-y-1.5 mb-3">
-        {period.sessions.map(s => (
-          <div key={s.sessionNumber} className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-bold shrink-0">
-              {s.sessionNumber}
-            </span>
-            <span className="flex-1 text-foreground/90">{s.label}</span>
-            {s.intervention !== "NONE" && (
-              <span className={`${INTERVENTION_CONFIG[s.intervention].color} flex items-center gap-0.5`}>
-                {INTERVENTION_CONFIG[s.intervention].icon}
+      <div className="space-y-2 mb-3">
+        {period.sessions.map((s, idx) => {
+          const isCompleted = completedSessions.includes(idx);
+          return (
+            <div key={s.sessionNumber} className="flex items-center gap-2 text-xs text-muted-foreground bg-background rounded-lg p-2 border">
+              <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[9px] font-bold shrink-0">
+                {s.sessionNumber}
               </span>
-            )}
-            <span className="text-muted-foreground">{s.rounds.length}R</span>
-          </div>
-        ))}
+              <span className="flex-1 text-foreground/90">{s.label}</span>
+              {s.intervention !== "NONE" && (
+                <span className={`${INTERVENTION_CONFIG[s.intervention].color} flex items-center gap-0.5`}>
+                  {INTERVENTION_CONFIG[s.intervention].icon}
+                </span>
+              )}
+              <span className="text-muted-foreground">{s.rounds.length}R</span>
+              
+              <Button
+                size="sm"
+                variant={isCompleted ? "secondary" : "default"}
+                className={`ml-2 h-6 px-2 text-[10px] font-medium ${isCompleted ? 'opacity-60 cursor-default' : 'hover:bg-primary/90'}`}
+                onClick={() => !isCompleted && onStartSession(period.periodNumber as 1|2|3, idx)}
+                disabled={activePeriod !== null || isCompleted}
+              >
+                {isCompleted ? <CheckCircle2 className="size-3 mr-1 text-emerald-500" /> : <PlayCircle className="size-3 mr-1" />}
+                {isCompleted ? "Selesai" : "Mulai"}
+              </Button>
+            </div>
+          );
+        })}
       </div>
 
       {hasIntervention && (
-        <div className="flex flex-wrap gap-1 mb-3">
+        <div className="flex flex-wrap gap-1 mt-3 pt-3 border-t border-border">
           {[...new Set(period.sessions.filter(s => s.intervention !== "NONE").map(s => s.intervention))].map(int => (
             <span key={int} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-medium border ${int === "BERITA_BAIK" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"}`}>
               {INTERVENTION_CONFIG[int].icon}
@@ -225,15 +235,6 @@ function PeriodSummaryCard({
           ))}
         </div>
       )}
-
-      <Button
-        className="w-full h-8 text-xs font-medium gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40"
-        onClick={() => onStart(period.periodNumber as 1 | 2 | 3)}
-        disabled={activePeriod !== null || isCompleted}
-      >
-        {isCompleted ? <CheckCircle2 className="size-3.5" /> : <PlayCircle className="size-3.5" />}
-        {isCompleted ? "Selesai" : `Mulai ${period.label}`}
-      </Button>
     </div>
   );
 }
@@ -437,6 +438,7 @@ export default function AdminSchedulerBoard() {
     openingPrices: {},
     interventionCache: {},
     periodStates: {},
+    completedSessions: { 1: [], 2: [], 3: [] },
   });
 
   const [loading, setLoading] = useState(true);
@@ -477,23 +479,27 @@ export default function AdminSchedulerBoard() {
     socket.on("period-state-changed", (states: Record<number, string>) => {
       setExpState(prev => ({ ...prev, periodStates: states }));
     });
+    socket.on("completed-sessions-changed", (completed: Record<number, number[]>) => {
+      setExpState(prev => ({ ...prev, completedSessions: completed }));
+    });
 
     // Period events
     socket.on("period-started", (data: { periodNumber: number; label: string; totalSessions: number }) => {
       setExpState(prev => ({ ...prev, activePeriod: data.periodNumber as 1|2|3, currentPhase: "IDLE" }));
       setStartingPeriod(null);
-      toast.success(`${data.label} dimulai!`);
     });
     socket.on("period-ended", (data: { periodNumber: number }) => {
       setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
-      toast.success(`Periode ${data.periodNumber} selesai!`);
+    });
+    socket.on("session-completed", (data: { periodNumber: number, sessionIdx: number }) => {
+      toast.success(`Sesi selesai!`);
     });
     socket.on("period-aborted", () => {
       setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
-      toast.info("Periode dihentikan");
+      toast.info("Sesi dihentikan");
     });
     socket.on("experiment-reset", () => {
-      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE", isPaused: false }));
+      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE", isPaused: false, completedSessions: { 1: [], 2: [], 3: [] } }));
       toast.info("Eksperimen direset");
     });
 
@@ -568,17 +574,16 @@ export default function AdminSchedulerBoard() {
       socket.off("period-aborted"); socket.off("experiment-reset"); socket.off("session-group-started");
       socket.off("round-started"); socket.off("sub-session-started"); socket.off("cooldown-started");
       socket.off("timer-tick"); socket.off("intervention-triggered"); socket.off("intervention-ended");
-      socket.off("experiment-paused"); socket.off("experiment-resumed");
-      socket.off("intervention-cache-loaded"); socket.off("admin-error");
+      socket.off("experiment-paused"); socket.off("experiment-resumed"); socket.off("completed-sessions-changed");
+      socket.off("intervention-cache-loaded"); socket.off("admin-error"); socket.off("session-completed");
     };
   }, [user]);
 
   // ── Actions ─────────────────────────────────────────────────
-  const handleStartPeriod = useCallback((periodNumber: 1 | 2 | 3) => {
+  const handleStartSession = useCallback((periodNumber: 1 | 2 | 3, sessionIndex: number) => {
     if (!user || !socketRef.current) return;
-    setStartingPeriod(periodNumber);
-    socketRef.current.emit("admin-start-period", { periodNumber, userId: user.id });
-    toast.info(`Memulai Periode ${periodNumber}...`);
+    socketRef.current.emit("admin-start-session", { periodNumber, sessionIndex, userId: user.id });
+    toast.info(`Memulai Sesi...`);
   }, [user]);
 
   const handlePause = useCallback(() => {
@@ -594,7 +599,7 @@ export default function AdminSchedulerBoard() {
   const handleStop = useCallback(() => {
     if (!user || !socketRef.current) return;
     socketRef.current.emit("admin-stop-period", { userId: user.id });
-    toast.warning("Periode dihentikan");
+    toast.warning("Sesi dihentikan");
   }, [user]);
 
   const handleReset = useCallback(() => {
@@ -664,7 +669,8 @@ export default function AdminSchedulerBoard() {
                 period={period}
                 activePeriod={expState.activePeriod}
                 periodState={expState.periodStates[period.periodNumber]}
-                onStart={handleStartPeriod}
+                completedSessions={expState.completedSessions[period.periodNumber] || []}
+                onStartSession={handleStartSession}
               />
             ))}
         </div>
