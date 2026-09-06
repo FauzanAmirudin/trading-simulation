@@ -15,6 +15,8 @@ import { useAuth } from "@/lib/auth-context";
 import { motion } from "framer-motion";
 import { ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Navbar } from "@/components/layout/Navbar";
+import { Footer } from "@/components/layout/Footer";
 
 export default function LoginPage() {
   const [nama, setNama] = useState("");
@@ -52,7 +54,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 overflow-hidden">
+    <div className="flex flex-col min-h-screen bg-background">
+      <Navbar />
+      <main className="relative flex flex-1 items-center justify-center w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 overflow-hidden py-12">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(79,70,229,0.15)_0%,transparent_60%)] dark:bg-[radial-gradient(ellipse_at_50%_0%,rgba(6,182,212,0.12)_0%,transparent_60%)]" />
       <motion.div
         initial={{ opacity: 0, y: 24 }}
@@ -103,6 +107,8 @@ export default function LoginPage() {
           </CardContent>
         </Card>
       </motion.div>
+      </main>
+      <Footer />
     </div>
   );
 }

@@ -151,4 +151,11 @@
   ::-webkit-scrollbar-thumb { background: rgba(113,113,122,0.3); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: rgba(113,113,122,0.5); }
   * { scrollbar-width: thin; scrollbar-color: rgba(113,113,122,0.3) transparent; }
+
+  /* Mencegah Dev Tools Next.js menutupi Mobile Bottom Nav */
+  nextjs-portal,
+  [data-nextjs-dev-overlay],
+  [data-nextjs-toast] {
+    display: none !important;
+  }
 }

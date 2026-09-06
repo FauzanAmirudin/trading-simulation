@@ -14,6 +14,7 @@ interface PriceInputProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  compact?: boolean;
   id?: string;
 }
 
@@ -27,14 +28,13 @@ export function PriceInput({
   basePrice,
   min = 1,
   max,
-  placeholder = "Harga",
+  placeholder = "0",
   className,
   disabled = false,
   id,
 }: PriceInputProps) {
   const numericValue = parseInt(value) || 0;
   const currentRefPrice = numericValue > 0 ? numericValue : (basePrice || 0);
-  const tickSize = currentRefPrice > 0 ? getTickSize(currentRefPrice) : 1;
 
   const handleIncrement = useCallback(() => {
     if (disabled) return;
@@ -43,9 +43,9 @@ export function PriceInput({
     if (current > 0) {
       next = incrementPrice(current);
     } else {
-      // If empty, increment from basePrice using its tick
+      // If empty, initialize to basePrice (snapped to tick)
       const ref = basePrice && basePrice > 0 ? basePrice : min;
-      next = snapToTickSize(ref) + getTickSize(ref);
+      next = snapToTickSize(ref);
     }
     if (max !== undefined && next > max) return;
     onChange(String(next));
@@ -58,9 +58,9 @@ export function PriceInput({
     if (current > 0) {
       next = decrementPrice(current);
     } else {
-      // If empty, decrement from basePrice
+      // If empty, initialize to basePrice (snapped to tick)
       const ref = basePrice && basePrice > 0 ? basePrice : min;
-      next = snapToTickSize(ref) - getTickSize(ref);
+      next = snapToTickSize(ref);
     }
     if (next < min) return;
     onChange(String(next));
@@ -78,20 +78,20 @@ export function PriceInput({
   const canIncrement = max === undefined || currentRefPrice < max;
 
   return (
-    <div className={cn("flex items-center rounded-md border border-border bg-background focus-within:ring-1 focus-within:ring-primary overflow-hidden", className)}>
+    <div className={cn("flex items-center rounded-2xl border border-border/80 bg-background focus-within:ring-2 focus-within:ring-primary/40 overflow-hidden shadow-2xs h-11 sm:h-9", className)}>
       {/* Tombol Kurang */}
       <button
         type="button"
         onClick={handleDecrement}
         disabled={disabled || !canDecrement}
         className={cn(
-          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground border-r border-border",
-          "disabled:opacity-30 disabled:cursor-not-allowed"
+          "flex items-center justify-center h-full w-11 sm:w-9 shrink-0 transition-colors bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border-r border-border/70 active:bg-muted/90",
+          "disabled:opacity-30 disabled:cursor-not-allowed min-w-[44px] sm:min-w-[36px]"
         )}
         tabIndex={-1}
         aria-label="Turunkan harga"
       >
-        <Minus className="size-3" />
+        <Minus className="size-4" />
       </button>
 
       {/* Input Angka */}
@@ -104,7 +104,7 @@ export function PriceInput({
         onChange={handleChange}
         placeholder={placeholder}
         disabled={disabled}
-        className="h-8 w-full min-w-[60px] bg-transparent text-center text-sm font-mono font-medium text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-50"
+        className="h-full w-full min-w-[55px] bg-transparent text-center text-sm font-mono font-extrabold text-foreground outline-none placeholder:text-muted-foreground/35 disabled:cursor-not-allowed disabled:opacity-50"
       />
 
       {/* Tombol Tambah */}
@@ -113,13 +113,13 @@ export function PriceInput({
         onClick={handleIncrement}
         disabled={disabled || !canIncrement}
         className={cn(
-          "flex items-center justify-center h-8 w-8 shrink-0 transition-colors bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground border-l border-border",
-          "disabled:opacity-30 disabled:cursor-not-allowed"
+          "flex items-center justify-center h-full w-11 sm:w-9 shrink-0 transition-colors bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border-l border-border/70 active:bg-muted/90",
+          "disabled:opacity-30 disabled:cursor-not-allowed min-w-[44px] sm:min-w-[36px]"
         )}
         tabIndex={-1}
         aria-label="Naikkan harga"
       >
-        <Plus className="size-3" />
+        <Plus className="size-4" />
       </button>
     </div>
   );
@@ -133,7 +133,7 @@ export function TickSizeBadge({ price, basePrice }: { price: number; basePrice?:
   if (effectivePrice <= 0) return null;
   const tick = getTickSize(effectivePrice);
   return (
-    <span className="text-[10px] text-muted-foreground font-mono">
+    <span className="text-[9.5px] sm:text-[10px] text-muted-foreground font-mono">
       Fraksi: Rp {tick.toLocaleString("id-ID")}
     </span>
   );

@@ -321,13 +321,15 @@ function startMatchingEngine() {
 function emitOrderBookUpdate(stockId: number) {
   const book = activeOrderBooks[stockId];
   if (!book) return;
-  const bids = [...book.bids].sort((a, b) => b.harga - a.harga).slice(0, 10);
-  const asks = [...book.asks].sort((a, b) => a.harga - b.harga).slice(0, 10);
-  io.emit("order-book-update", {
+  const bids = [...book.bids].sort((a, b) => b.harga - a.harga);
+  const asks = [...book.asks].sort((a, b) => a.harga - b.harga);
+  const payload = {
     stockId,
     bids: bids.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
     asks: asks.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
-  });
+  };
+  io.emit("order-book-update", payload);
+  io.emit("orderbook-snapshot", payload);
 }
 
 function emitBalanceUpdateDirect(userId: number, newBalance: number) {
@@ -895,8 +897,9 @@ app.prepare().then(async () => {
                 }
               }
               if (currentIntervention !== "NONE") {
-                const content = interventionCache[currentIntervention] || { title: currentIntervention, content: "" };
-                socket.emit("intervention-triggered", { type: currentIntervention, title: content.title, content: content.content });
+                const title = currentInterventionTitle || (interventionCache[currentIntervention]?.title) || getInterventionLabel(currentIntervention);
+                const content = currentInterventionContent || (interventionCache[currentIntervention]?.content) || "";
+                socket.emit("intervention-triggered", { type: currentIntervention, title, content });
               }
             } else if (currentPhase === "COOLDOWN") {
               socket.emit("cooldown-started", { duration: currentTimeLeft, reason: "unknown", periodNumber: activePeriod });
@@ -937,6 +940,7 @@ app.prepare().then(async () => {
     });
 
     // ── Admin: Pause ──────────────────────────────────────────
+    // ── Admin: Pause ──────────────────────────────────────────
     socket.on("admin-pause", async (data?: { userId?: number }) => {
       if (!isAdmin() && data?.userId) {
         const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
@@ -946,6 +950,7 @@ app.prepare().then(async () => {
       
       // Update state & emit instantly so UI doesn't delay
       isPaused = true;
+      emitTimerTick();
       io.emit("experiment-paused", { timeLeft: currentTimeLeft, phase: currentPhase });
       console.log("[Scheduler] PAUSED");
       
@@ -963,7 +968,8 @@ app.prepare().then(async () => {
       
       // Update state & emit instantly so UI doesn't delay
       isPaused = false;
-      io.emit("experiment-resumed", { phase: currentPhase });
+      emitTimerTick();
+      io.emit("experiment-resumed", { phase: currentPhase, timeLeft: currentTimeLeft });
       console.log("[Scheduler] RESUMED");
       
       // Save state to DB asynchronously
@@ -1194,6 +1200,21 @@ app.prepare().then(async () => {
         emitOrderBookUpdate(order.stockId);
       }
       socket.emit("order-cancelled", { orderId });
+    });
+
+    // ── Get Orderbook ─────────────────────────────────────────
+    socket.on("get-orderbook", (data: { stockId: number }) => {
+      const { stockId } = data;
+      const book = activeOrderBooks[stockId] || { bids: [], asks: [] };
+      const bids = [...book.bids].sort((a, b) => b.harga - a.harga);
+      const asks = [...book.asks].sort((a, b) => a.harga - b.harga);
+      const payload = {
+        stockId,
+        bids: bids.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
+        asks: asks.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
+      };
+      socket.emit("order-book-update", payload);
+      socket.emit("orderbook-snapshot", payload);
     });
 
     // ── Get Portfolio ─────────────────────────────────────────
