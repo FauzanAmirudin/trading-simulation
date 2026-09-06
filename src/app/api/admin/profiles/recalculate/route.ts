@@ -3,8 +3,12 @@ import { db } from "@/db/connect";
 import { respondentProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { computePopulationTerciles, RespondentScoreInput } from "@/lib/questionnaire-logic";
+import { requireAdmin } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     // 1. Fetch all completed profiles
     const completedProfiles = await db
@@ -31,23 +35,25 @@ export async function POST(req: NextRequest) {
     // 3. Compute tercile distribution
     const results = computePopulationTerciles(inputs);
 
-    // 4. Update each profile in database
+    // 4. Update each profile atomically in database transaction
     const now = new Date();
-    for (const res of results) {
-      await db
-        .update(respondentProfiles)
-        .set({
-          laCategory: res.laCategory,
-          laAvgScore: res.laAvgScore.toString(),
-          eiCategory: res.eiCategory,
-          eiAvgScore: res.eiAvgScore.toString(),
-          profileCode: res.profileCode,
-          profileLabel: res.profileLabel,
-          profileGroup: res.profileGroup,
-          updatedAt: now,
-        })
-        .where(eq(respondentProfiles.userId, res.userId));
-    }
+    await db.transaction(async (tx) => {
+      for (const res of results) {
+        await tx
+          .update(respondentProfiles)
+          .set({
+            laCategory: res.laCategory,
+            laAvgScore: res.laAvgScore.toString(),
+            eiCategory: res.eiCategory,
+            eiAvgScore: res.eiAvgScore.toString(),
+            profileCode: res.profileCode,
+            profileLabel: res.profileLabel,
+            profileGroup: res.profileGroup,
+            updatedAt: now,
+          })
+          .where(eq(respondentProfiles.userId, res.userId));
+      }
+    });
 
     return NextResponse.json({
       success: true,

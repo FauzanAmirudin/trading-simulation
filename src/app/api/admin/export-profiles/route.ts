@@ -4,8 +4,12 @@ import { users, respondentProfiles, questions, questionnaireResponses } from "@/
 import { eq, asc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
+import { requireAdmin } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     // 1. Fetch all respondents
     const allRespondents = await db

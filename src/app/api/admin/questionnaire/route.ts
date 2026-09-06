@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { questions, questionnaireResponses } from "@/db/schema";
 import { eq, asc, sql } from "drizzle-orm";
+import { requireAdmin } from "@/lib/auth-server";
 
 // ── GET all questions (with response statistics) ──
 export async function GET(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const allQuestions = await db
       .select()
@@ -44,6 +48,9 @@ export async function GET(req: NextRequest) {
 
 // ── POST create a new question ──
 export async function POST(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await req.json();
     const { instrument, questionText, orderNumber, isActive } = body;
@@ -59,7 +66,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Teks pertanyaan wajib diisi." }, { status: 400 });
     }
 
-    const nextOrder = Number(orderNumber) || 1;
+    const parsedOrder = Number(orderNumber);
+    if (orderNumber !== undefined && (isNaN(parsedOrder) || parsedOrder < 1)) {
+      return NextResponse.json(
+        { error: "Nomor urut pertanyaan (orderNumber) harus berupa angka minimal 1." },
+        { status: 400 }
+      );
+    }
+    const nextOrder = Math.max(1, Math.floor(parsedOrder || 1));
 
     const inserted = await db
       .insert(questions)
@@ -88,6 +102,9 @@ export async function POST(req: NextRequest) {
 
 // ── PUT update an existing question ──
 export async function PUT(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const body = await req.json();
     const { id, instrument, questionText, orderNumber, isActive } = body;
@@ -112,7 +129,14 @@ export async function PUT(req: NextRequest) {
       updates.questionText = questionText.trim();
     }
     if (orderNumber !== undefined) {
-      updates.orderNumber = Number(orderNumber);
+      const parsedOrder = Number(orderNumber);
+      if (isNaN(parsedOrder) || parsedOrder < 1) {
+        return NextResponse.json(
+          { error: "Nomor urut pertanyaan harus berupa angka minimal 1." },
+          { status: 400 }
+        );
+      }
+      updates.orderNumber = Math.floor(parsedOrder);
     }
     if (isActive !== undefined) {
       updates.isActive = Boolean(isActive);
@@ -137,6 +161,9 @@ export async function PUT(req: NextRequest) {
 
 // ── DELETE delete a question ──
 export async function DELETE(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const { searchParams } = new URL(req.url);
     const idParam = searchParams.get("id");

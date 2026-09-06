@@ -3,6 +3,7 @@ import { db } from "@/db/connect";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { signSessionToken, setSessionCookie } from "@/lib/auth-server";
 
 export async function POST(req: Request) {
   try {
@@ -34,9 +35,17 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({
+    const token = signSessionToken({
+      id: user.id,
+      nama: user.nama,
+      role: user.role as "admin" | "responden",
+    });
+
+    const res = NextResponse.json({
       user: { id: user.id, nama: user.nama, role: user.role },
     });
+    setSessionCookie(res, token);
+    return res;
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(

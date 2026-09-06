@@ -3,11 +3,15 @@ import { db } from "@/db/connect";
 import { users, respondentProfiles, questionnaireResponses, questions } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
+import { requireAdmin } from "@/lib/auth-server";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const { id } = await params;
     const userId = parseInt(id, 10);

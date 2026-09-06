@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { respondentProfiles, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { getSession } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
   try {
+    const session = getSession(req);
     const { searchParams } = new URL(req.url);
     const userIdParam = searchParams.get("userId");
 
@@ -15,6 +17,14 @@ export async function GET(req: NextRequest) {
     const userId = parseInt(userIdParam, 10);
     if (isNaN(userId)) {
       return NextResponse.json({ error: "userId tidak valid." }, { status: 400 });
+    }
+
+    // If session is present and user is not admin, prevent checking other users' status
+    if (session && session.role !== "admin" && session.id !== userId) {
+      return NextResponse.json(
+        { error: "Akses ditolak: Anda hanya dapat memeriksa status akun Anda sendiri." },
+        { status: 403 }
+      );
     }
 
     // Check user exists

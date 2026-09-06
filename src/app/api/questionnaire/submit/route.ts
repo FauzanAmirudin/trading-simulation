@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { questions, questionnaireResponses, respondentProfiles, users } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { classifyByStandardCutoff, getProfileByCategories } from "@/lib/questionnaire-logic";
+import { getSession } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
   try {
+    const session = getSession(req);
     const body = await req.json();
     const { userId, responses } = body;
 
@@ -21,10 +23,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "userId tidak valid." }, { status: 400 });
     }
 
+    // If session is present and user is not admin, ensure they can only submit for themselves
+    if (session && session.role !== "admin" && session.id !== uid) {
+      return NextResponse.json(
+        { error: "Akses ditolak: Anda hanya dapat mengirimkan jawaban untuk akun Anda sendiri." },
+        { status: 403 }
+      );
+    }
+
     // Check user
     const userList = await db.select().from(users).where(eq(users.id, uid)).limit(1);
     if (userList.length === 0) {
       return NextResponse.json({ error: "User tidak ditemukan." }, { status: 404 });
+    }
+
+    // Check if questionnaire already completed (Prevent Re-submission)
+    const existingProfile = await db
+      .select()
+      .from(respondentProfiles)
+      .where(eq(respondentProfiles.userId, uid))
+      .limit(1);
+
+    if (existingProfile.length > 0 && existingProfile[0].isCompleted) {
+      return NextResponse.json(
+        { error: "Kuesioner sudah pernah diselesaikan dan tidak dapat diubah kembali." },
+        { status: 409 }
+      );
     }
 
     // Fetch all active questions from DB
@@ -81,21 +105,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Save/Upsert raw responses into questionnaire_responses
-    // 1. Delete previous responses if any to ensure clean fresh set
-    await db.delete(questionnaireResponses).where(eq(questionnaireResponses.userId, uid));
-
-    // 2. Insert all responses
-    const rawInserts = activeQuestions.map((q) => ({
-      userId: uid,
-      questionId: q.id,
-      instrument: q.instrument,
-      score: responseMap.get(q.id)!,
-    }));
-
-    await db.insert(questionnaireResponses).values(rawInserts);
-
-    // 3. Calculate separate raw and average scores for LA and EI
+    // Calculate separate raw and average scores for LA and EI
     let laRaw = 0;
     let laCount = 0;
     let eiRaw = 0;
@@ -115,38 +125,30 @@ export async function POST(req: NextRequest) {
     const laAvg = laCount > 0 ? Number((laRaw / laCount).toFixed(2)) : 0;
     const eiAvg = eiCount > 0 ? Number((eiRaw / eiCount).toFixed(2)) : 0;
 
-    // 4. Determine initial categories and 9-group combination (Independently)
+    // Determine initial categories and 9-group combination (Independently)
     const laCat = classifyByStandardCutoff(laRaw, laCount);
     const eiCat = classifyByStandardCutoff(eiRaw, eiCount);
     const profileDef = getProfileByCategories(laCat, eiCat);
 
-    // 5. Upsert into respondent_profiles
-    const existingProfile = await db
-      .select()
-      .from(respondentProfiles)
-      .where(eq(respondentProfiles.userId, uid))
-      .limit(1);
-
+    // Save responses and profile atomically inside database transaction
     const now = new Date();
-    if (existingProfile.length === 0) {
-      await db.insert(respondentProfiles).values({
+    await db.transaction(async (tx) => {
+      // 1. Delete previous responses if any
+      await tx.delete(questionnaireResponses).where(eq(questionnaireResponses.userId, uid));
+
+      // 2. Insert all responses
+      const rawInserts = activeQuestions.map((q) => ({
         userId: uid,
-        laRawScore: laRaw,
-        laAvgScore: laAvg.toString(),
-        laCategory: laCat,
-        eiRawScore: eiRaw,
-        eiAvgScore: eiAvg.toString(),
-        eiCategory: eiCat,
-        profileCode: profileDef.code,
-        profileLabel: profileDef.label,
-        profileGroup: profileDef.group,
-        isCompleted: true,
-        completedAt: now,
-      });
-    } else {
-      await db
-        .update(respondentProfiles)
-        .set({
+        questionId: q.id,
+        instrument: q.instrument,
+        score: responseMap.get(q.id)!,
+      }));
+      await tx.insert(questionnaireResponses).values(rawInserts);
+
+      // 3. Upsert into respondent_profiles
+      if (existingProfile.length === 0) {
+        await tx.insert(respondentProfiles).values({
+          userId: uid,
           laRawScore: laRaw,
           laAvgScore: laAvg.toString(),
           laCategory: laCat,
@@ -158,12 +160,29 @@ export async function POST(req: NextRequest) {
           profileGroup: profileDef.group,
           isCompleted: true,
           completedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(respondentProfiles.userId, uid));
-    }
+        });
+      } else {
+        await tx
+          .update(respondentProfiles)
+          .set({
+            laRawScore: laRaw,
+            laAvgScore: laAvg.toString(),
+            laCategory: laCat,
+            eiRawScore: eiRaw,
+            eiAvgScore: eiAvg.toString(),
+            eiCategory: eiCat,
+            profileCode: profileDef.code,
+            profileLabel: profileDef.label,
+            profileGroup: profileDef.group,
+            isCompleted: true,
+            completedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(respondentProfiles.userId, uid));
+      }
+    });
 
-    // 6. Return sterile success confirmation to respondent (NO score / profile leakage)
+    // Return sterile success confirmation to respondent (NO score / profile leakage)
     return NextResponse.json({
       success: true,
       message: "Kuesioner profil berhasil diselesaikan. Terima kasih atas partisipasi Anda!",

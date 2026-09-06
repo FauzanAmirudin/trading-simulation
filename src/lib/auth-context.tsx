@@ -44,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setUser(null);
     localStorage.removeItem("user");
+    fetch("/api/logout", { method: "POST" }).catch(() => {});
   }, []);
 
   // Auto-logout after 1 hour of inactivity

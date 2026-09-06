@@ -3,11 +3,15 @@ import { db } from "@/db/connect";
 import { users, respondentProfiles } from "@/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
+import { requireAdmin } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
+  const auth = requireAdmin(req);
+  if (!auth.authorized) return auth.response;
+
   try {
     const { searchParams } = new URL(req.url);
-    const search = searchParams.get("search")?.toLowerCase().trim() || "";
+    const search = (searchParams.get("search")?.toLowerCase().trim() || "").slice(0, 100);
     const groupFilter = searchParams.get("group")?.toUpperCase() || ""; // A-I
     const laFilter = searchParams.get("la")?.toUpperCase() || ""; // T/S/R
     const eiFilter = searchParams.get("ei")?.toUpperCase() || ""; // T/S/R
