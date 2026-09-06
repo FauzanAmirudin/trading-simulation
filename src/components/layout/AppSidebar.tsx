@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
   LayoutDashboard,
@@ -14,6 +15,8 @@ import {
   ChevronRight,
   Activity,
   Trophy,
+  ClipboardList,
+  Brain,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -31,9 +34,12 @@ const respondentNav: NavItem[] = [
 const adminNav: NavItem[] = [
   { label: "Dashboard", href: "/admin", icon: <Activity className="size-4" /> },
   { label: "Trading", href: "/admin/trading", icon: <TrendingUp className="size-4" /> },
+  { label: "Kuesioner", href: "/admin/kuesioner", icon: <ClipboardList className="size-4" /> },
+  { label: "Profil Responden", href: "/admin/profil-responden", icon: <Brain className="size-4" /> },
   { label: "Resume", href: "/admin/resume", icon: <ScrollText className="size-4" /> },
   { label: "Hasil", href: "/admin/hasil", icon: <Trophy className="size-4" /> },
 ];
+
 
 export default function AppSidebar() {
   const pathname = usePathname();
@@ -54,16 +60,24 @@ export default function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex-shrink-0 border-r border-sidebar-border bg-sidebar flex flex-col transition-all duration-300",
+        "hidden md:flex flex-shrink-0 border-r border-sidebar-border bg-sidebar flex-col transition-all duration-300 sticky top-0 h-screen z-30",
         collapsed ? "w-16" : "w-56"
       )}
     >
       {/* Header */}
-      <div className="flex h-14 items-center border-b border-sidebar-border px-3">
+      <div className="flex h-13 sm:h-14 items-center border-b border-sidebar-border px-3 shrink-0">
         {!collapsed && (
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-500/10">
-              <TrendingUp className="size-4 text-emerald-600 dark:text-emerald-500" />
+            <div className="relative flex size-7 items-center justify-center rounded-lg overflow-hidden shrink-0 bg-background shadow-2xs">
+              <Image
+                src="/logo-icon-64.png"
+                alt="Logo Simulasi Investasi"
+                width={28}
+                height={28}
+                className="size-full object-contain"
+                priority
+                unoptimized
+              />
             </div>
             <span className="text-sm font-semibold text-sidebar-foreground truncate">
               {isAdmin ? "Panel Admin" : "Trader"}

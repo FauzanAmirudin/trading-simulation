@@ -5,9 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "dev:server": "tsx server.ts",
-    "start:dev": "node -e \"const {execSync}=require('child_process');try{const pid=require('fs').readFileSync('.next/dev/pid','utf8').trim();if(pid){try{execSync('taskkill /PID '+pid+' /F /T 2>nul');console.log('Stopped Next.js PID:',pid);}catch(e){}}}catch(e){}\" && tsx server.ts",
     "build": "next build",
     "start": "next start",
+    "start:server": "NODE_ENV=production tsx server.ts",
+    "prod": "next build && NODE_ENV=production tsx server.ts",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
@@ -15,7 +16,8 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:seed:users": "tsx src/db/seed-users.ts",
     "db:set-password": "tsx src/db/set-password.ts",
-    "db:create-users": "tsx src/db/create-users.ts"
+    "db:create-users": "tsx src/db/create-users.ts",
+    "db:seed:questionnaire": "tsx src/db/seed-questionnaire.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

@@ -8,7 +8,8 @@ import {
   text,
   jsonb,
   index,
-  uniqueIndex
+  uniqueIndex,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 // === EXPERIMENTAL CONFIG — researcher-defined intervention content ===
@@ -142,3 +143,55 @@ export const sessionStocks = pgTable("session_stocks", {
   sessionId: integer("session_id").references(() => sessions.id).notNull(),
   stockId: integer("stock_id").references(() => stocks.id).notNull(),
 });
+
+// === QUESTIONS — Psychological questionnaire items (LA & EI) ===
+export const questions = pgTable("questions", {
+  id: serial("id").primaryKey(),
+  instrument: varchar("instrument", { length: 10 }).notNull(), // 'LA' or 'EI'
+  orderNumber: integer("order_number").notNull(),
+  questionText: text("question_text").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  scaleMin: integer("scale_min").default(1).notNull(),
+  scaleMax: integer("scale_max").default(5).notNull(),
+  scaleMinLabel: varchar("scale_min_label", { length: 50 }).default("Sangat Tidak Setuju").notNull(),
+  scaleMaxLabel: varchar("scale_max_label", { length: 50 }).default("Sangat Setuju").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  instrumentOrderIdx: index("questions_instrument_order_idx").on(table.instrument, table.orderNumber),
+}));
+
+// === QUESTIONNAIRE RESPONSES — Raw answers per respondent ===
+export const questionnaireResponses = pgTable("questionnaire_responses", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  questionId: integer("question_id").references(() => questions.id).notNull(),
+  instrument: varchar("instrument", { length: 10 }).notNull(), // 'LA' or 'EI'
+  score: integer("score").notNull(), // 1 to 5
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userQuestionIdx: uniqueIndex("questionnaire_responses_user_question_idx").on(table.userId, table.questionId),
+  userInstrumentIdx: index("questionnaire_responses_user_instrument_idx").on(table.userId, table.instrument),
+}));
+
+// === RESPONDENT PROFILES — Calculated scores, independent categories & 9-group combinations ===
+export const respondentProfiles = pgTable("respondent_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull().unique(),
+  laRawScore: integer("la_raw_score").notNull().default(0),
+  laAvgScore: decimal("la_avg_score", { precision: 5, scale: 2 }).notNull().default("0.00"),
+  laCategory: varchar("la_category", { length: 10 }).notNull().default("S"), // 'T', 'S', 'R'
+  eiRawScore: integer("ei_raw_score").notNull().default(0),
+  eiAvgScore: decimal("ei_avg_score", { precision: 5, scale: 2 }).notNull().default("0.00"),
+  eiCategory: varchar("ei_category", { length: 10 }).notNull().default("S"), // 'T', 'S', 'R'
+  profileCode: varchar("profile_code", { length: 20 }).notNull().default("LASEIS"), // e.g. LATEIT, LASEIS, LAREIR
+  profileLabel: varchar("profile_label", { length: 50 }).notNull().default("LA(S)+EI(S)"), // e.g. LA(T)+EI(S)
+  profileGroup: varchar("profile_group", { length: 5 }).notNull().default("E"), // A, B, C, D, E, F, G, H, I
+  isCompleted: boolean("is_completed").default(false).notNull(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  userProfileIdx: index("respondent_profiles_user_idx").on(table.userId),
+  profileGroupIdx: index("respondent_profiles_group_idx").on(table.profileGroup),
+}));
