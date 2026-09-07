@@ -17,21 +17,22 @@ export async function GET(req: NextRequest) {
     const eiFilter = searchParams.get("ei")?.toUpperCase() || ""; // T/S/R
     const sortBy = searchParams.get("sortBy") || "name"; // name, laScore, eiScore, completedAt
 
-    // Fetch all respondents
-    const allRespondents = await db
-      .select({
-        id: users.id,
-        nama: users.nama,
-        role: users.role,
-        createdAt: users.createdAt,
-      })
-      .from(users)
-      .where(eq(users.role, "responden"))
-      .orderBy(asc(users.id));
-
-    // Fetch all profiles
-    const allProfiles = await db.select().from(respondentProfiles);
+    // Fetch all respondents and all profiles in parallel
+    const [allRespondents, allProfiles] = await Promise.all([
+      db
+        .select({
+          id: users.id,
+          nama: users.nama,
+          role: users.role,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .where(eq(users.role, "responden"))
+        .orderBy(asc(users.id)),
+      db.select().from(respondentProfiles),
+    ]);
     const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
+
 
     // Combine data
     let combined = allRespondents.map((user) => {
@@ -116,20 +117,27 @@ export async function GET(req: NextRequest) {
       combined.sort((a, b) => a.userId - b.userId);
     }
 
-    return NextResponse.json({
-      success: true,
-      stats: {
-        totalRespondents,
-        completedCount,
-        pendingCount: totalRespondents - completedCount,
-        laOverallAvg,
-        eiOverallAvg,
-        groupDistribution,
-        laCatDistribution,
-        eiCatDistribution,
+    return NextResponse.json(
+      {
+        success: true,
+        stats: {
+          totalRespondents,
+          completedCount,
+          pendingCount: totalRespondents - completedCount,
+          laOverallAvg,
+          eiOverallAvg,
+          groupDistribution,
+          laCatDistribution,
+          eiCatDistribution,
+        },
+        respondents: combined,
       },
-      respondents: combined,
-    });
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=3, stale-while-revalidate=15",
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Error fetching admin respondent profiles:", error);
     return NextResponse.json(

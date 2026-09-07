@@ -10,20 +10,20 @@ export async function GET(req: NextRequest) {
   if (!auth.authorized) return auth.response;
 
   try {
-    const allQuestions = await db
-      .select()
-      .from(questions)
-      .orderBy(asc(questions.instrument), asc(questions.orderNumber));
-
-    // Get response count per question
-    const responseCounts = await db
-      .select({
-        questionId: questionnaireResponses.questionId,
-        count: sql<number>`count(*)::int`,
-        avgScore: sql<number>`round(avg(${questionnaireResponses.score})::numeric, 2)::float`,
-      })
-      .from(questionnaireResponses)
-      .groupBy(questionnaireResponses.questionId);
+    const [allQuestions, responseCounts] = await Promise.all([
+      db
+        .select()
+        .from(questions)
+        .orderBy(asc(questions.instrument), asc(questions.orderNumber)),
+      db
+        .select({
+          questionId: questionnaireResponses.questionId,
+          count: sql<number>`count(*)::int`,
+          avgScore: sql<number>`round(avg(${questionnaireResponses.score})::numeric, 2)::float`,
+        })
+        .from(questionnaireResponses)
+        .groupBy(questionnaireResponses.questionId),
+    ]);
 
     const statsMap = new Map(responseCounts.map((r) => [r.questionId, r]));
 
@@ -36,10 +36,17 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({
-      success: true,
-      questions: enriched,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        questions: enriched,
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30",
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Error fetching admin questions:", error);
     return NextResponse.json({ error: "Gagal memuat daftar pertanyaan." }, { status: 500 });

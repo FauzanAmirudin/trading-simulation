@@ -349,7 +349,8 @@ async function matchOrders(stockId: number): Promise<boolean> {
   let i = 0;
   while (i < book.bids.length) {
     const bid = book.bids[i];
-    const askIdx = book.asks.findIndex(a => a.harga <= bid.harga);
+    // Strict price matching: transaksi hanya terjadi jika harga ASK dan BID persis sama
+    const askIdx = book.asks.findIndex(a => Math.round(a.harga) === Math.round(bid.harga));
     if (askIdx !== -1) {
       const ask = book.asks[askIdx];
       const execPrice = ask.harga;

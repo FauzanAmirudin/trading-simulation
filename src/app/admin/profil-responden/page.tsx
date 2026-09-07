@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent } from "@/components/ui/card";
@@ -86,17 +86,10 @@ export default function AdminRespondentProfilesPage() {
   const [expandedUserIds, setExpandedUserIds] = useState<Record<number, boolean>>({});
   const [showMobileMatrix, setShowMobileMatrix] = useState(false);
 
-  const fetchProfiles = useCallback(async () => {
-    setLoading(true);
+  const fetchProfiles = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const queryParams = new URLSearchParams();
-      if (search) queryParams.set("search", search);
-      if (groupFilter !== "ALL") queryParams.set("group", groupFilter);
-      if (laFilter !== "ALL") queryParams.set("la", laFilter);
-      if (eiFilter !== "ALL") queryParams.set("ei", eiFilter);
-      if (sortBy) queryParams.set("sortBy", sortBy);
-
-      const res = await fetch(`/api/admin/profiles?${queryParams.toString()}`);
+      const res = await fetch(`/api/admin/profiles`);
       const data = await res.json();
       if (res.ok && data.success) {
         setRespondents(data.respondents || []);
@@ -110,7 +103,7 @@ export default function AdminRespondentProfilesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, groupFilter, laFilter, eiFilter, sortBy]);
+  }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -125,6 +118,7 @@ export default function AdminRespondentProfilesPage() {
 
     fetchProfiles();
   }, [hydrated, user, router, fetchProfiles]);
+
 
   // Recalculate Terciles
   const handleRecalculate = async () => {
@@ -189,12 +183,42 @@ export default function AdminRespondentProfilesPage() {
     }));
   };
 
-  // Filter by status on client
-  const displayedRespondents = respondents.filter((r) => {
-    if (statusFilter === "COMPLETED") return r.isCompleted;
-    if (statusFilter === "PENDING") return !r.isCompleted;
-    return true;
-  });
+  // Instant client-side filter and sorting with zero latency
+  const displayedRespondents = useMemo(() => {
+    let list = [...respondents];
+
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      list = list.filter((r) => r.nama.toLowerCase().includes(q));
+    }
+    if (groupFilter !== "ALL") {
+      list = list.filter((r) => r.profileGroup === groupFilter);
+    }
+    if (laFilter !== "ALL") {
+      list = list.filter((r) => r.laCategory === laFilter);
+    }
+    if (eiFilter !== "ALL") {
+      list = list.filter((r) => r.eiCategory === eiFilter);
+    }
+    if (statusFilter === "COMPLETED") {
+      list = list.filter((r) => r.isCompleted);
+    } else if (statusFilter === "PENDING") {
+      list = list.filter((r) => !r.isCompleted);
+    }
+
+    if (sortBy === "laScore") {
+      list.sort((a, b) => (b.laRawScore || 0) - (a.laRawScore || 0));
+    } else if (sortBy === "eiScore") {
+      list.sort((a, b) => (b.eiRawScore || 0) - (a.eiRawScore || 0));
+    } else if (sortBy === "completedAt") {
+      list.sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""));
+    } else {
+      list.sort((a, b) => a.userId - b.userId);
+    }
+
+    return list;
+  }, [respondents, search, groupFilter, laFilter, eiFilter, statusFilter, sortBy]);
+
 
   if (!hydrated || !user || user.role !== "admin") return null;
 

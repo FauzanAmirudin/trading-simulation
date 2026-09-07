@@ -23,16 +23,41 @@ export async function GET(
       );
     }
 
-    // 1. Fetch User
-    const [user] = await db
-      .select({
-        id: users.id,
-        nama: users.nama,
-        role: users.role,
-        createdAt: users.createdAt,
-      })
-      .from(users)
-      .where(eq(users.id, userId));
+    // Fetch user, profile, all questions, user responses, and respondent list in parallel
+    const [
+      [user],
+      [profile],
+      allQuestions,
+      userResponses,
+      allRespondents,
+    ] = await Promise.all([
+      db
+        .select({
+          id: users.id,
+          nama: users.nama,
+          role: users.role,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .where(eq(users.id, userId)),
+      db
+        .select()
+        .from(respondentProfiles)
+        .where(eq(respondentProfiles.userId, userId)),
+      db
+        .select()
+        .from(questions)
+        .orderBy(asc(questions.instrument), asc(questions.orderNumber)),
+      db
+        .select()
+        .from(questionnaireResponses)
+        .where(eq(questionnaireResponses.userId, userId)),
+      db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, "responden"))
+        .orderBy(asc(users.id)),
+    ]);
 
     if (!user) {
       return NextResponse.json(
@@ -41,31 +66,12 @@ export async function GET(
       );
     }
 
-    // 2. Fetch Profile
-    const [profile] = await db
-      .select()
-      .from(respondentProfiles)
-      .where(eq(respondentProfiles.userId, userId));
-
     const isCompleted = Boolean(profile?.isCompleted);
     const groupKey = (profile?.profileGroup || "E") as ProfileGroup;
     const groupDef = PROFILE_MATRIX[groupKey] || PROFILE_MATRIX.E;
 
-    // 3. Fetch All Questions
-    const allQuestions = await db
-      .select()
-      .from(questions)
-      .orderBy(asc(questions.instrument), asc(questions.orderNumber));
-
-    // 4. Fetch User Responses
-    const userResponses = await db
-      .select()
-      .from(questionnaireResponses)
-      .where(eq(questionnaireResponses.userId, userId));
-
+    // Combine Questions & Responses
     const responseMap = new Map(userResponses.map((r) => [r.questionId, r]));
-
-    // 5. Combine Questions & Responses
     const combinedResponses = allQuestions.map((q) => {
       const resp = responseMap.get(q.id);
       return {
@@ -83,7 +89,7 @@ export async function GET(
       };
     });
 
-    // 6. Calculate Score Frequency Distribution
+    // Calculate Score Frequency Distribution
     const scoreFrequency: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     const laScoreFrequency: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     const eiScoreFrequency: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -103,19 +109,14 @@ export async function GET(
       }
     });
 
-    // 7. Determine Prev & Next Respondent for Navigation Pager
-    const allRespondents = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.role, "responden"))
-      .orderBy(asc(users.id));
-
+    // Determine Prev & Next Respondent for Navigation Pager
     const currentIndex = allRespondents.findIndex((r) => r.id === userId);
     const prevUserId = currentIndex > 0 ? allRespondents[currentIndex - 1].id : null;
     const nextUserId =
       currentIndex >= 0 && currentIndex < allRespondents.length - 1
         ? allRespondents[currentIndex + 1].id
         : null;
+
 
     return NextResponse.json({
       success: true,

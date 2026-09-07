@@ -45,9 +45,30 @@ const AuthCtx = createContext<AuthContext>({
 const BROADCAST_CHANNEL_NAME = "simulasi_investasi_session_sync";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = localStorage.getItem("user");
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
   const [hydrated, setHydrated] = useState(false);
-  const [balance, setBalance] = useState<number | null>(null);
+  const [balance, setBalance] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        const u = JSON.parse(stored);
+        const cachedBal = sessionStorage.getItem(`simulasi_balance_${u.id}`);
+        return cachedBal ? Number(cachedBal) : null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
 
   useEffect(() => {
     setHydrated(true);
@@ -63,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem("user");
     }
   }, []);
+
 
   const updateBalance = useCallback((newBalance: number) => {
     setBalance(newBalance);

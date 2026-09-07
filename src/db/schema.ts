@@ -67,7 +67,9 @@ export const users = pgTable("users", {
   saldo: decimal("saldo", { precision: 15, scale: 2 }).default("100000000.00").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  roleIdx: index("users_role_idx").on(table.role),
+}));
 
 // === PREDICTIONS — pre-market price predictions (Sesi 1) ===
 export const predictions = pgTable("predictions", {
@@ -78,7 +80,9 @@ export const predictions = pgTable("predictions", {
   tebakanHarga: decimal("tebakan_harga", { precision: 15, scale: 2 }).notNull(),
   accuracyScore: decimal("accuracy_score", { precision: 10, scale: 4 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  roundUserIdx: index("predictions_round_user_idx").on(table.roundId, table.userId),
+}));
 
 // === ORDER BOOK — bid/ask orders with intervention tracking ===
 export const orderBook = pgTable("order_book", {
@@ -124,7 +128,12 @@ export const transactionsHistory = pgTable("transactions_history", {
   total: decimal("total", { precision: 15, scale: 2 }).notNull(),
   activeIntervention: varchar("active_intervention", { length: 30 }).default("NONE"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  roundIdx: index("transactions_history_round_idx").on(table.roundId),
+  stockIdx: index("transactions_history_stock_idx").on(table.stockId),
+  createdAtIdx: index("transactions_history_created_at_idx").on(table.createdAt),
+}));
+
 
 // === SESSIONS (legacy — kept for backwards compatibility) ===
 export const sessions = pgTable("sessions", {
