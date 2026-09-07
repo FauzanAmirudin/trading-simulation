@@ -43,9 +43,9 @@ export function PriceInput({
     if (current > 0) {
       next = incrementPrice(current);
     } else {
-      // If empty, initialize to basePrice (snapped to tick)
+      // If empty, initialize to basePrice
       const ref = basePrice && basePrice > 0 ? basePrice : min;
-      next = snapToTickSize(ref);
+      next = ref;
     }
     if (max !== undefined && next > max) return;
     onChange(String(next));
@@ -58,9 +58,9 @@ export function PriceInput({
     if (current > 0) {
       next = decrementPrice(current);
     } else {
-      // If empty, initialize to basePrice (snapped to tick)
+      // If empty, initialize to basePrice
       const ref = basePrice && basePrice > 0 ? basePrice : min;
-      next = snapToTickSize(ref);
+      next = ref;
     }
     if (next < min) return;
     onChange(String(next));

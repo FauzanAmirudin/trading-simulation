@@ -36,7 +36,13 @@ export function Navbar() {
         {/* Right Navigation & Controls */}
         <nav className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {!hydrated ? (
-            <div className="h-7 w-14" />
+            pathname === "/login" ? (
+              <div className="flex items-center gap-1.5">
+                <ThemeToggle />
+              </div>
+            ) : (
+              <div className="h-7 w-14" />
+            )
           ) : user ? (
             <>
               {/* Desktop links */}
@@ -60,7 +66,7 @@ export function Navbar() {
                   </Link>
                 )}
                 <ThemeToggle />
-                <Button variant="ghost" size="sm" onClick={logout} title="Keluar" className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-500">
+                <Button variant="ghost" size="sm" onClick={() => logout()} title="Keluar" className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-500">
                   <LogOut className="size-4" />
                 </Button>
               </div>
@@ -77,11 +83,13 @@ export function Navbar() {
           ) : (
             <div className="flex items-center gap-1.5">
               <ThemeToggle />
-              <Link href="/login">
-                <Button size="sm" variant="default" className="rounded-xl px-3 text-xs font-semibold h-7.5 shadow-xs">
-                  Masuk
-                </Button>
-              </Link>
+              {pathname !== "/login" && (
+                <Link href="/login">
+                  <Button size="sm" variant="default" className="rounded-xl px-3 text-xs font-semibold h-7.5 shadow-xs">
+                    Masuk
+                  </Button>
+                </Link>
+              )}
             </div>
           )}
         </nav>

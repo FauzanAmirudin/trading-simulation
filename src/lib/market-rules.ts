@@ -22,10 +22,36 @@ export function getTickSize(price: number): number {
 
 /**
  * Memvalidasi apakah harga merupakan kelipatan fraksi yang benar.
+ * Jika basePrice diberikan, harga yang sama dengan basePrice atau
+ * kelipatan fraksi dari basePrice dianggap valid.
  */
-export function isValidTickSize(price: number): boolean {
+export function isValidTickSize(price: number, basePrice?: number): boolean {
   if (price <= 0) return false;
-  return price % getTickSize(price) === 0;
+  // Harga pembukaan / acuan saham itu sendiri selalu sah
+  if (basePrice !== undefined && basePrice > 0 && price === basePrice) {
+    return true;
+  }
+  const tick = getTickSize(price);
+  if (price % tick === 0) return true;
+  // Jika harga merupakan kelipatan fraksi yang dihitung dari basePrice
+  if (basePrice !== undefined && basePrice > 0) {
+    const baseTick = getTickSize(basePrice);
+    if (Math.abs(price - basePrice) % baseTick === 0) return true;
+  }
+  // Toleransi kelipatan Rp 5 untuk saham < Rp 5.000 (seperti 2.025, 2.225, 2.475, 2.725)
+  if (price < 5000 && price % 5 === 0) return true;
+  return false;
+}
+
+/**
+ * Menghitung harga prediksi otomatis untuk quick percentage chips.
+ * Jika persentase 0 ("Sama"), selalu mengembalikan basePrice secara eksak.
+ */
+export function calculateQuickPrice(basePrice: number, pct: number): number {
+  if (pct === 0) return basePrice;
+  const raw = basePrice * (1 + pct / 100);
+  const tick = getTickSize(raw);
+  return Math.round(raw / tick) * tick;
 }
 
 /**
@@ -42,10 +68,8 @@ export function snapToTickSize(price: number): number {
  * Menaikkan harga ke harga valid berikutnya sesuai fraksi.
  */
 export function incrementPrice(price: number): number {
-  const snapped = snapToTickSize(price);
-  const newPrice = snapped + getTickSize(snapped);
-  // Setelah kenaikan, pastikan kelipatan fraksi baru tetap valid
-  return snapToTickSize(newPrice) === newPrice ? newPrice : snapToTickSize(newPrice) + getTickSize(snapToTickSize(newPrice));
+  const tick = getTickSize(price);
+  return price + tick;
 }
 
 /**
@@ -53,10 +77,8 @@ export function incrementPrice(price: number): number {
  * Tidak akan turun di bawah nilai fraksi minimum (Rp 1).
  */
 export function decrementPrice(price: number): number {
-  const snapped = snapToTickSize(price);
-  const tick = getTickSize(snapped);
-  const newPrice = Math.max(tick, snapped - tick);
-  return newPrice;
+  const tick = getTickSize(price);
+  return Math.max(tick, price - tick);
 }
 
 // ============================================================
@@ -71,14 +93,17 @@ export function decrementPrice(price: number): number {
  * @param referencePrice - Harga acuan (basePrice untuk Pra-Pasar, openingPrice untuk Trading)
  * @returns { upper: ARA, lower: ARB } — sudah dibulatkan ke fraksi yang valid
  */
-export function getAutoRejectionLimits(referencePrice: number): { upper: number; lower: number } {
+export function getAutoRejectionLimits(referencePrice: number): {
+  upper: number;
+  lower: number;
+} {
   let pct: number;
   if (referencePrice <= 200) {
     pct = 0.35;
   } else if (referencePrice <= 5000) {
     pct = 0.25;
   } else {
-    pct = 0.20;
+    pct = 0.2;
   }
 
   const rawUpper = referencePrice * (1 + pct);

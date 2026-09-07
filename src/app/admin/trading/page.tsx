@@ -84,11 +84,25 @@ export default function AdminTradingPage() {
 
   const openingPricesRef = useRef<Record<number, number>>({});
   const activeRoundRef = useRef<number | null>(null);
+  const activeRoundDbIdRef = useRef<number | null>(null);
 
   // Keep activeRoundRef in sync
   useEffect(() => {
     activeRoundRef.current = activeRound;
   }, [activeRound]);
+
+  const formatWibTime = useCallback((dateOrStr?: string | Date | null): string => {
+    if (!dateOrStr) return "";
+    const d = typeof dateOrStr === "string" ? new Date(dateOrStr) : dateOrStr;
+    const timeStr = d.toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
+    return `${timeStr.replace(/:/g, ".")} WIB`;
+  }, []);
 
   // 1. Fetch current database transactions & stats for the round
   const fetchAdminData = useCallback(async (roundId: number) => {
@@ -179,6 +193,7 @@ export default function AdminTradingPage() {
       if (data.activeRound !== null) {
         setActiveRound(data.activeRound);
         activeRoundRef.current = data.activeRound;
+        activeRoundDbIdRef.current = data.activeRoundDbId || null;
         setSubSession(data.activeSubSession);
         setPhase(data.phase || "PENDING");
         setSessionTimer(data.timeLeft || 0);
@@ -205,11 +220,16 @@ export default function AdminTradingPage() {
             };
           });
           setStocks(initialStocks);
-          fetchAdminData(data.activeRound);
+          if (data.activeRoundDbId) {
+            fetchAdminData(data.activeRoundDbId);
+          } else {
+            fetchAdminData(data.activeRound);
+          }
         }
       } else {
         setActiveRound(null);
         activeRoundRef.current = null;
+        activeRoundDbIdRef.current = null;
         setStocks({});
         setTransactions([]);
         setStats({
@@ -221,9 +241,10 @@ export default function AdminTradingPage() {
       }
     };
 
-    const onRoundStarted = (data: { roundNumber: number; period: number; stocks: any[] }) => {
+    const onRoundStarted = (data: { roundNumber: number; roundDbId?: number; period: number; stocks: any[] }) => {
       setActiveRound(data.roundNumber);
       activeRoundRef.current = data.roundNumber;
+      activeRoundDbIdRef.current = data.roundDbId || null;
       setSubSession(1);
       setPhase("PRE_MARKET");
       setActiveIntervention("NONE");
@@ -247,11 +268,19 @@ export default function AdminTradingPage() {
       });
       setStocks(initialStocks);
       setTransactions([]);
+      setStats({
+        participantsCount: 0,
+        totalTransactionsCount: 0,
+        totalVolume: 0,
+        avgTransactionValue: 0,
+      });
 
       toast.success(`Ronde ${data.roundNumber} dimulai — Sesi Pra-Perdagangan berjalan.`, {
         id: "round-status",
       });
-      fetchAdminData(data.roundNumber);
+      if (data.roundDbId) {
+        fetchAdminData(data.roundDbId);
+      }
     };
 
     const onSubSessionStarted = (data: {
@@ -309,10 +338,68 @@ export default function AdminTradingPage() {
       });
     };
 
-    const onTradeExecuted = () => {
-      if (activeRoundRef.current) {
-        fetchAdminData(activeRoundRef.current);
-      }
+    const onTradeExecuted = (trade: any) => {
+      if (!trade) return;
+
+      const tradeId = trade.id || Date.now();
+      const tradeTime =
+        trade.time || (trade.createdAt ? formatWibTime(trade.createdAt) : formatWibTime(new Date()));
+      const tradeBuyer = trade.buyer || `User #${trade.buyerId}`;
+      const tradeSeller = trade.seller || `User #${trade.sellerId}`;
+      const tradeStock = trade.stock || trade.stockCode || `#${trade.stockId}`;
+      const tradePrice = Number(trade.harga || trade.price || 0);
+      const tradeQty = Number(trade.jumlah || trade.quantity || 0);
+      const tradeTotal = Number(trade.total || tradePrice * tradeQty * 100);
+      const tradeIntervention = trade.intervention || trade.activeIntervention || "NONE";
+      const tradeRoundId = trade.roundId || activeRoundDbIdRef.current || 0;
+
+      // 1. Instantly prepend new transaction to live feed (prevent duplicates)
+      setTransactions((prev) => {
+        if (prev.some((t) => t.id === tradeId)) return prev;
+        const newTx: TransactionItem = {
+          id: tradeId,
+          time: tradeTime,
+          buyer: tradeBuyer,
+          seller: tradeSeller,
+          stock: tradeStock,
+          harga: tradePrice,
+          jumlah: tradeQty,
+          total: tradeTotal,
+          intervention: tradeIntervention,
+          roundId: tradeRoundId,
+        };
+        return [newTx, ...prev];
+      });
+
+      // 2. Instantly update macro KPI stats
+      setStats((prev) => {
+        const newCount = prev.totalTransactionsCount + 1;
+        const newVolume = prev.totalVolume + tradeTotal;
+        return {
+          ...prev,
+          totalTransactionsCount: newCount,
+          totalVolume: newVolume,
+          avgTransactionValue: newCount > 0 ? Math.round(newVolume / newCount) : 0,
+        };
+      });
+
+      // 3. Instantly update active stock card
+      setStocks((prev) => {
+        const s = prev[trade.stockId];
+        if (!s) return prev;
+        const newVol = (s.volume || 0) + tradeQty;
+        const newLast = tradePrice > 0 ? tradePrice : s.lastPrice;
+        const change = s.basePrice > 0 ? ((newLast - s.basePrice) / s.basePrice) * 100 : 0;
+        return {
+          ...prev,
+          [trade.stockId]: {
+            ...s,
+            volume: newVol,
+            lastPrice: newLast,
+            change,
+          },
+        };
+      });
     };
 
     const onExperimentPaused = () => {
@@ -734,75 +821,80 @@ export default function AdminTradingPage() {
             <>
               {/* ── Mobile View: Compact Transaction Ticket Cards (< md) ── */}
               <div className="space-y-2 md:hidden">
-                {transactions.map((tx) => (
-                  <div
-                    key={tx.id}
-                    className="p-3 rounded-2xl border border-border/70 bg-card shadow-2xs space-y-2"
-                  >
-                    {/* Top Row: Stock Badge, Intervention & Time */}
-                    <div className="flex items-center justify-between gap-1 text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono font-black text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20">
-                          {tx.stock}
-                        </span>
-                        {tx.intervention !== "NONE" && (
-                          <span
-                            className={cn(
-                              "text-[9px] font-bold px-1.5 py-0.5 rounded-md border",
-                              tx.intervention === "FLOOD"
-                                ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                            )}
-                          >
-                            {tx.intervention}
+                <AnimatePresence initial={false}>
+                  {transactions.map((tx) => (
+                    <motion.div
+                      key={tx.id}
+                      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ duration: 0.3 }}
+                      className="p-3 rounded-2xl border border-border/70 bg-card shadow-2xs space-y-2"
+                    >
+                      {/* Top Row: Stock Badge, Intervention & Time */}
+                      <div className="flex items-center justify-between gap-1 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-black text-xs px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                            {tx.stock}
                           </span>
-                        )}
+                          {tx.intervention !== "NONE" && (
+                            <span
+                              className={cn(
+                                "text-[9px] font-bold px-1.5 py-0.5 rounded-md border",
+                                tx.intervention === "FLOOD"
+                                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                              )}
+                            >
+                              {tx.intervention}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
+                          <Clock className="size-3" />
+                          <span>{tx.time}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
-                        <Clock className="size-3" />
-                        <span>{tx.time}</span>
-                      </div>
-                    </div>
 
-                    {/* Middle Row: Buyer -> Seller */}
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-muted/40 text-[11px] font-medium">
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />
-                        <span className="text-muted-foreground text-[10px]">Beli:</span>
-                        <span className="font-bold text-foreground truncate max-w-[85px]">
-                          {tx.buyer}
-                        </span>
+                      {/* Middle Row: Buyer -> Seller */}
+                      <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-muted/40 text-[11px] font-medium">
+                        <div className="flex items-center gap-1 min-w-0">
+                          <span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="text-muted-foreground text-[10px]">Beli:</span>
+                          <span className="font-bold text-foreground truncate max-w-[85px]">
+                            {tx.buyer}
+                          </span>
+                        </div>
+                        <ArrowRight className="size-3 text-muted-foreground shrink-0 opacity-50" />
+                        <div className="flex items-center gap-1 min-w-0 justify-end">
+                          <span className="size-1.5 rounded-full bg-rose-500 shrink-0" />
+                          <span className="text-muted-foreground text-[10px]">Jual:</span>
+                          <span className="font-bold text-foreground truncate max-w-[85px]">
+                            {tx.seller}
+                          </span>
+                        </div>
                       </div>
-                      <ArrowRight className="size-3 text-muted-foreground shrink-0 opacity-50" />
-                      <div className="flex items-center gap-1 min-w-0 justify-end">
-                        <span className="size-1.5 rounded-full bg-rose-500 shrink-0" />
-                        <span className="text-muted-foreground text-[10px]">Jual:</span>
-                        <span className="font-bold text-foreground truncate max-w-[85px]">
-                          {tx.seller}
-                        </span>
-                      </div>
-                    </div>
 
-                    {/* Bottom Row: Price, Lot & Total Match Value */}
-                    <div className="flex items-center justify-between text-xs font-mono pt-1">
-                      <div className="text-[11px]">
-                        <span className="text-muted-foreground">
-                          Rp {tx.harga.toLocaleString("id-ID")}
-                        </span>
-                        <span className="text-muted-foreground font-sans text-[10px]"> × </span>
-                        <span className="font-bold text-foreground">{tx.jumlah}L</span>
+                      {/* Bottom Row: Price, Lot & Total Match Value */}
+                      <div className="flex items-center justify-between text-xs font-mono pt-1">
+                        <div className="text-[11px]">
+                          <span className="text-muted-foreground">
+                            Rp {tx.harga.toLocaleString("id-ID")}
+                          </span>
+                          <span className="text-muted-foreground font-sans text-[10px]"> × </span>
+                          <span className="font-bold text-foreground">{tx.jumlah}L</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9.5px] text-muted-foreground block font-sans">
+                            Total Nilai
+                          </span>
+                          <span className="font-black text-xs sm:text-sm text-emerald-600 dark:text-emerald-400">
+                            Rp {tx.total.toLocaleString("id-ID")}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className="text-[9.5px] text-muted-foreground block font-sans">
-                          Total Nilai
-                        </span>
-                        <span className="font-black text-xs sm:text-sm text-emerald-600 dark:text-emerald-400">
-                          Rp {tx.total.toLocaleString("id-ID")}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               </div>
 
               {/* ── Desktop View: Full Data Table (>= md) ── */}

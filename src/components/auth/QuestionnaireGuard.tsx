@@ -20,7 +20,7 @@ export default function QuestionnaireGuard({
     if (!hydrated) return;
 
     if (!user) {
-      router.push("/login");
+      router.replace("/login");
       return;
     }
 

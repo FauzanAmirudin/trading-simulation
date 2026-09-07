@@ -52,7 +52,6 @@ export default function AppSidebar() {
 
   const handleLogout = () => {
     logout();
-    router.push("/login");
   };
 
   const linkIsActive = (href: string) => pathname === href;

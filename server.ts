@@ -198,6 +198,48 @@ function emitTimerTickToSocket(socket: import("socket.io").Socket) {
   });
 }
 
+function getSchedulerStatePayload() {
+  const sessionGroup =
+    activePeriod !== null && activeSessionIdx !== null
+      ? getPeriodConfig(activePeriod).sessions[activeSessionIdx].sessionNumber
+      : null;
+
+  return {
+    activePeriod,
+    activeSessionIdx,
+    activeRoundIdx,
+    currentPhase,
+    currentIntervention,
+    isPaused,
+    timeLeft: currentTimeLeft,
+    sessionGroup,
+    stocks: activeStocks.map(s => ({
+      id: s.id,
+      kodeSaham: s.kodeSaham,
+      namaSaham: s.namaSaham,
+      basePrice: Number(s.basePrice),
+    })),
+    openingPrices: activeOpeningPrices,
+    interventionCache,
+    periodStates,
+    completedSessions,
+    // Legacy fields
+    activeRoundDbId,
+    activeRound: activeRoundIdx !== null ? activeRoundIdx + 1 : null,
+    activeSubSession: currentPhase === "PRE_MARKET" ? 1 : 2,
+    phase: currentPhase,
+    status: activePeriod !== null ? "RUNNING" : "IDLE",
+    interventionTitle: currentInterventionTitle,
+    interventionContent: currentInterventionContent,
+  };
+}
+
+function broadcastSchedulerState() {
+  if (io) {
+    io.emit("scheduler-state", getSchedulerStatePayload());
+  }
+}
+
 async function runCountdown(seconds: number): Promise<void> {
   currentTimeLeft = seconds;
   return new Promise<void>((resolve) => {
@@ -270,7 +312,11 @@ async function cleanupActiveRound() {
   stopMatchingEngine();
   if (activeRoundDbId) {
     await db.update(rounds)
-      .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
+      .set({
+        status: periodAborted ? "aborted" : "closed",
+        subSessionStatus: periodAborted ? "ABORTED" : "CLOSED",
+        endTime: new Date(),
+      })
       .where(eq(rounds.id, activeRoundDbId));
     await db.update(orderBook)
       .set({ status: "cancelled" })
@@ -291,42 +337,53 @@ function stopMatchingEngine() {
   if (matchingInterval) { clearInterval(matchingInterval); matchingInterval = null; }
 }
 
+async function matchOrders(stockId: number): Promise<boolean> {
+  if (currentPhase !== "TRADING" || isPaused || !activeRoundDbId) return false;
+  const book = activeOrderBooks[stockId];
+  if (!book || book.bids.length === 0 || book.asks.length === 0) return false;
+
+  book.bids.sort((a, b) => b.harga - a.harga);
+  book.asks.sort((a, b) => a.harga - b.harga);
+
+  let changed = false;
+  let i = 0;
+  while (i < book.bids.length) {
+    const bid = book.bids[i];
+    const askIdx = book.asks.findIndex(a => a.harga <= bid.harga);
+    if (askIdx !== -1) {
+      const ask = book.asks[askIdx];
+      const execPrice = ask.harga;
+      await executeTrade(stockId, bid, ask, execPrice, activeRoundDbId!);
+      changed = true;
+    } else {
+      i++;
+    }
+  }
+
+  if (changed) emitOrderBookUpdate(stockId);
+  return changed;
+}
+
 function startMatchingEngine() {
   if (matchingInterval) clearInterval(matchingInterval);
   matchingInterval = setInterval(async () => {
     if (currentPhase !== "TRADING" || isPaused || !activeRoundDbId) return;
     for (const stock of activeStocks) {
-      const book = activeOrderBooks[stock.id];
-      if (!book) continue;
-      book.bids.sort((a, b) => b.harga - a.harga);
-      book.asks.sort((a, b) => a.harga - b.harga);
-      let changed = false;
-      let i = 0;
-      while (i < book.bids.length) {
-        const bid = book.bids[i];
-        const askIdx = book.asks.findIndex(a => a.harga === bid.harga);
-        if (askIdx !== -1) {
-          const ask = book.asks[askIdx];
-          await executeTrade(stock.id, bid, ask, bid.harga, activeRoundDbId!);
-          changed = true;
-        } else {
-          i++;
-        }
-      }
-      if (changed) emitOrderBookUpdate(stock.id);
+      await matchOrders(stock.id);
     }
   }, 750);
 }
 
-function emitOrderBookUpdate(stockId: number) {
+function emitOrderBookUpdate(rawStockId: number) {
+  const stockId = Number(rawStockId);
   const book = activeOrderBooks[stockId];
   if (!book) return;
   const bids = [...book.bids].sort((a, b) => b.harga - a.harga);
   const asks = [...book.asks].sort((a, b) => a.harga - b.harga);
   const payload = {
     stockId,
-    bids: bids.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
-    asks: asks.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
+    bids: bids.map(o => ({ id: o.id, harga: Number(o.harga), jumlah: Number(o.jumlah), userId: o.userId })),
+    asks: asks.map(o => ({ id: o.id, harga: Number(o.harga), jumlah: Number(o.jumlah), userId: o.userId })),
   };
   io.emit("order-book-update", payload);
   io.emit("orderbook-snapshot", payload);
@@ -342,6 +399,22 @@ async function emitPortfolioUpdate(userId: number, stockId: number) {
       .limit(1);
   const p = query[0];
   io.to(`user:${userId}`).emit("portfolio-update", { userId, stockId, jumlahLot: p ? p.jumlahLot : 0 });
+}
+
+const userNameCache: Record<number, string> = {};
+
+async function getUserDisplayName(userId: number): Promise<string> {
+  if (userNameCache[userId]) return userNameCache[userId];
+  try {
+    const [u] = await db.select({ id: users.id, nama: users.nama }).from(users).where(eq(users.id, userId)).limit(1);
+    if (u && u.nama) {
+      userNameCache[userId] = u.nama;
+      return u.nama;
+    }
+  } catch (err) {
+    console.error("[UserCache] Error loading user name:", err);
+  }
+  return `User #${userId}`;
 }
 
 async function executeTrade(
@@ -365,6 +438,8 @@ async function executeTrade(
   try {
     let newBidBalance = 0;
     let newAskBalance = 0;
+    let insertedTxId: number | null = null;
+    let insertedCreatedAt: Date | null = null;
 
     await db.transaction(async (tx) => {
       const [updatedBid] = await tx.update(users).set({ saldo: sql`saldo - ${total}` }).where(eq(users.id, bidOrder.userId)).returning({ saldo: users.saldo });
@@ -399,21 +474,56 @@ async function executeTrade(
         .set({ jumlah: askOrder.jumlah, status: askOrder.jumlah <= 0 ? "completed" : "open" })
         .where(eq(orderBook.id, askOrder.id));
 
-      await tx.insert(transactionsHistory).values({
+      const [inserted] = await tx.insert(transactionsHistory).values({
         orderBuyId: bidOrder.id, orderSellId: askOrder.id,
         stockId, roundId, subSession,
         harga: String(price), jumlah: quantity, total: String(total),
         activeIntervention: currentIntervention,
-      });
+      }).returning({ id: transactionsHistory.id, createdAt: transactionsHistory.createdAt });
+
+      if (inserted) {
+        insertedTxId = inserted.id;
+        insertedCreatedAt = inserted.createdAt;
+      }
     });
 
+    const [buyerName, sellerName] = await Promise.all([
+      getUserDisplayName(bidOrder.userId),
+      getUserDisplayName(askOrder.userId),
+    ]);
+
     const stockInfo = activeStocks.find(s => s.id === stockId);
+    const createdAtIso = insertedCreatedAt ? new Date(insertedCreatedAt).toISOString() : new Date().toISOString();
+    const timeFormatted = new Date(createdAtIso).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    }).replace(/:/g, ".") + " WIB";
+
     io.emit("trade-executed", {
-      stockId, price, quantity,
+      id: insertedTxId ?? Date.now(),
+      stockId,
+      price,
+      harga: price,
+      quantity,
+      jumlah: quantity,
+      total,
       stockCode: stockInfo?.kodeSaham ?? `#${stockId}`,
-      buyerId: bidOrder.userId, sellerId: askOrder.userId,
+      stock: stockInfo?.kodeSaham ?? `#${stockId}`,
+      namaSaham: stockInfo?.namaSaham,
+      buyerId: bidOrder.userId,
+      sellerId: askOrder.userId,
+      buyer: buyerName,
+      seller: sellerName,
       activeIntervention: currentIntervention,
-      timestamp: new Date().toISOString(),
+      intervention: currentIntervention,
+      roundId,
+      subSession,
+      timestamp: createdAtIso,
+      createdAt: createdAtIso,
+      time: timeFormatted,
     });
 
     emitBalanceUpdateDirect(bidOrder.userId, newBidBalance);
@@ -534,6 +644,7 @@ async function runRound(
 
   io.emit("round-started", {
     roundNumber: roundIdx + 1,
+    roundDbId: activeRoundDbId ?? undefined,
     period: periodNumber,
     periodLabel: periodConfig.label,
     sessionNumber: session.sessionNumber,
@@ -628,6 +739,12 @@ async function runRound(
   if (initialPhase === null || initialPhase === "PRE_MARKET" || initialPhase === "TRADING") {
     currentPhase = "TRADING";
 
+    // Reset order latihan pra-pembukaan agar fase TRADING riil dimulai bersih
+    activeOrderBooks = Object.fromEntries(activeStocks.map(s => [s.id, { bids: [], asks: [] }]));
+    for (const stock of activeStocks) {
+      emitOrderBookUpdate(stock.id);
+    }
+
     await db.update(rounds)
       .set({ subSessionStatus: "TRADING", activeSubSession: 2, activeIntervention: session.intervention })
       .where(eq(rounds.id, activeRoundDbId!));
@@ -716,20 +833,35 @@ async function startSingleSession(
     console.error(`[Scheduler] Kritis: Error pada Period ${periodNumber} Sesi ${sessionIdx}:`, err);
     io.emit("admin-error", { message: `Terjadi error kritis pada Periode ${periodNumber} Sesi ${sessionIdx}. Server menghentikan sesi secara otomatis.` });
   } finally {
-    activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
-    currentPhase = "IDLE"; currentIntervention = "NONE";
+    const wasAborted = periodAborted;
+    activePeriod = null;
+    activeSessionIdx = null;
+    activeRoundIdx = null;
+    currentPhase = "IDLE";
+    currentIntervention = "NONE";
+    currentTimeLeft = 0;
+    isPaused = false;
+    activeRoundDbId = null;
+    activeStocks = [];
+    activeOrderBooks = {};
+    activePredictions = {};
+    activeOpeningPrices = {};
 
-    if (!periodAborted) {
+    if (!wasAborted) {
       console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} COMPLETE =====`);
       await addCompletedSession(periodNumber, sessionIdx);
       await setPeriodState(periodNumber, "idle");
       io.emit("session-completed", { periodNumber, sessionIdx });
+      io.emit("period-ended", { periodNumber });
     } else {
       console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} ABORTED =====`);
       await cleanupActiveRound();
       await setPeriodState(periodNumber, "idle");
       io.emit("period-aborted", { periodNumber });
     }
+
+    emitTimerTick();
+    broadcastSchedulerState();
   }
 }
 
@@ -777,8 +909,8 @@ app.prepare().then(async () => {
       const openOrders = await db.select().from(orderBook).where(and(eq(orderBook.roundId, activeRoundDbId), eq(orderBook.status, "open")));
       for (const order of openOrders) {
         if (activeOrderBooks[order.stockId]) {
-          const formatted = { id: order.id, userId: order.userId, stockId: order.stockId, tipe: order.tipe, harga: Number(order.harga), jumlah: order.jumlah };
-          if (order.tipe === "buy") activeOrderBooks[order.stockId].bids.push(formatted);
+          const formatted: OrderType = { id: order.id, userId: order.userId, stockId: order.stockId, tipe: order.tipe as "BID" | "ASK", harga: Number(order.harga), jumlah: order.jumlah };
+          if (order.tipe === "BID" || order.tipe === "buy") activeOrderBooks[order.stockId].bids.push(formatted);
           else activeOrderBooks[order.stockId].asks.push(formatted);
         }
       }
@@ -810,6 +942,7 @@ app.prepare().then(async () => {
   await loadInterventionCache();
   await loadPeriodStates();
   await loadLastTradedPrices();
+  await seedInitialPortfolios();
   console.log(`[Server] periodStates:`, periodStates);
   console.log("[Scheduler] State machine ready — PERIOD_MATRIX loaded");
   await recoverActiveSession();
@@ -976,6 +1109,23 @@ app.prepare().then(async () => {
       if (activePeriod !== null) await setPeriodState(activePeriod, "running");
     });
 
+    // ── Admin: Skip Phase Timer ───────────────────────────────
+    socket.on("admin-skip-phase", async (data?: { userId?: number }) => {
+      if (!isAdmin() && data?.userId) {
+        const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
+        if (u?.role === "admin") { socket.data.userId = u.id; socket.data.userRole = u.role; }
+      }
+      if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
+      currentTimeLeft = 0;
+      if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
+      if (resolveCountdown) {
+        const res = resolveCountdown;
+        resolveCountdown = null;
+        res();
+      }
+      console.log(`[Scheduler] Phase timer skipped by admin ${socket.data.userId || ""}`);
+    });
+
     // ── Admin: Stop Period ────────────────────────────────────
     socket.on("admin-stop-period", async (data?: { userId?: number }) => {
       if (!isAdmin() && data?.userId) {
@@ -991,11 +1141,16 @@ app.prepare().then(async () => {
       console.log("[Scheduler] Period ABORTED by admin");
     });
 
-    // ── Admin: Reset Experiment ───────────────────────────────
-    socket.on("admin-reset-experiment", async () => {
+    // ── Admin: Reset Experiment (3 Levels) ─────────────────────
+    socket.on("admin-reset-experiment", async (data?: {
+      mode?: "state" | "session" | "full";
+      confirmToken?: string;
+      periodNumber?: 1 | 2 | 3;
+    }) => {
       if (!isAdmin()) return;
+      const mode = data?.mode || "state";
       
-      // Stop everything instantly and tell the UI to reset
+      // Stop ongoing timer & matching engine
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
@@ -1005,17 +1160,121 @@ app.prepare().then(async () => {
       currentPhase = "IDLE"; currentIntervention = "NONE";
       activeRoundDbId = null; activeStocks = []; activeOrderBooks = {};
       
-      io.emit("experiment-reset", {});
-      console.log("[Scheduler] Experiment RESET by admin");
-
       // Clear carry-over prices
       lastTradedPrices = {};
       lastTradedPeriodForStock = {};
       await db.delete(experimentalConfig).where(sql`key LIKE 'last_price_%'`);
 
-      // Background DB cleanup
-      await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
-      for (let i = 1; i <= 3; i++) await setPeriodState(i, "idle");
+      if (mode === "full") {
+        if (data?.confirmToken !== "RESET") {
+          socket.emit("admin-error", { message: "Token konfirmasi reset penuh tidak valid. Ketik RESET." });
+          return;
+        }
+
+        console.log("[Scheduler] Full Data Wipe RESET initiated by admin");
+
+        // Delete all experiment transactional & round data
+        await db.delete(transactionsHistory);
+        await db.delete(orderBook);
+        await db.delete(predictions);
+        await db.delete(roundStocks);
+        await db.delete(rounds);
+
+        // Reset respondent balances & portfolios (10 lots per stock)
+        await db.update(users).set({ saldo: "100000000.00" }).where(eq(users.role, "responden"));
+        await db.execute(sql`
+          UPDATE portfolios 
+          SET jumlah_lot = 10, average_price = stocks.base_price 
+          FROM stocks, users
+          WHERE portfolios.stock_id = stocks.id 
+            AND portfolios.user_id = users.id 
+            AND users.role = 'responden'
+        `);
+
+        // Reset state & completed sessions
+        completedSessions = { 1: [], 2: [], 3: [] };
+        for (let i = 1; i <= 3; i++) {
+          await db.update(experimentalConfig)
+            .set({ content: "[]", updatedAt: new Date() })
+            .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
+          await setPeriodState(i, "idle");
+        }
+
+        // Notify respondents of balance reset
+        const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
+        for (const resp of allRespondents) {
+          io.to(`user:${resp.id}`).emit("balance-update", { userId: resp.id, balance: 100_000_000 });
+        }
+      } else if (mode === "session") {
+        const pn = data?.periodNumber;
+        if (pn) {
+          // Reset only specified period
+          completedSessions[pn] = [];
+          await db.update(experimentalConfig)
+            .set({ content: "[]", updatedAt: new Date() })
+            .where(eq(experimentalConfig.key, `period_${pn}_completed_sessions`));
+          await setPeriodState(pn, "idle");
+
+          const pRounds = await db.select({ id: rounds.id }).from(rounds).where(eq(rounds.period, pn));
+          const roundIds = pRounds.map(r => r.id);
+          if (roundIds.length > 0) {
+            await db.update(orderBook).set({ status: "cancelled" }).where(and(inArray(orderBook.roundId, roundIds), eq(orderBook.status, "open")));
+            await db.update(rounds).set({ status: "aborted" }).where(and(inArray(rounds.id, roundIds), inArray(rounds.status, ["pending", "active"])));
+          }
+        } else {
+          // Reset all periods & cancel all open orders
+          completedSessions = { 1: [], 2: [], 3: [] };
+          for (let i = 1; i <= 3; i++) {
+            await db.update(experimentalConfig)
+              .set({ content: "[]", updatedAt: new Date() })
+              .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
+            await setPeriodState(i, "idle");
+          }
+          await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
+          await db.update(rounds).set({ status: "aborted" }).where(inArray(rounds.status, ["pending", "active"]));
+        }
+      } else {
+        // Mode "state" (Level 1: State Only)
+        completedSessions = { 1: [], 2: [], 3: [] };
+        for (let i = 1; i <= 3; i++) {
+          await db.update(experimentalConfig)
+            .set({ content: "[]", updatedAt: new Date() })
+            .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
+          await setPeriodState(i, "idle");
+        }
+      }
+
+      io.emit("completed-sessions-changed", completedSessions);
+      io.emit("period-state-changed", periodStates);
+      io.emit("experiment-reset", { mode, periodNumber: data?.periodNumber });
+      console.log(`[Scheduler] Experiment RESET (mode: ${mode}) completed by admin`);
+    });
+
+    // ── Admin: Reset Single Period ───────────────────────────
+    socket.on("admin-reset-period", async (data: { periodNumber: 1 | 2 | 3 }) => {
+      if (!isAdmin()) return;
+      const pn = data.periodNumber;
+      if (activePeriod === pn) {
+        socket.emit("admin-error", { message: `Periode ${pn} sedang berjalan. Hentikan periode terlebih dahulu.` });
+        return;
+      }
+      completedSessions[pn] = [];
+      await db.update(experimentalConfig)
+        .set({ content: "[]", updatedAt: new Date() })
+        .where(eq(experimentalConfig.key, `period_${pn}_completed_sessions`));
+      await setPeriodState(pn, "idle");
+
+      const pRounds = await db.select({ id: rounds.id }).from(rounds).where(eq(rounds.period, pn));
+      const roundIds = pRounds.map(r => r.id);
+      if (roundIds.length > 0) {
+        await db.update(orderBook).set({ status: "cancelled" }).where(and(inArray(orderBook.roundId, roundIds), eq(orderBook.status, "open")));
+        await db.update(rounds).set({ status: "aborted" }).where(and(inArray(rounds.id, roundIds), inArray(rounds.status, ["pending", "active"])));
+      }
+
+      io.emit("completed-sessions-changed", completedSessions);
+      io.emit("period-state-changed", periodStates);
+      io.emit("experiment-reset", { mode: "session", periodNumber: pn });
+      console.log(`[Scheduler] Period ${pn} reset by admin`);
     });
 
     // Legacy aliases
@@ -1046,58 +1305,79 @@ app.prepare().then(async () => {
 
     // ── Get Scheduler State ──────────────────────────────────
     socket.on("get-scheduler-state", async () => {
-      const sessionGroup = activePeriod !== null && activeSessionIdx !== null
-        ? getPeriodConfig(activePeriod).sessions[activeSessionIdx].sessionNumber
-        : null;
+      socket.emit("scheduler-state", getSchedulerStatePayload());
+    });
 
-      const state = {
-        activePeriod, activeSessionIdx, activeRoundIdx,
-        currentPhase, currentIntervention, isPaused,
-        timeLeft: currentTimeLeft, sessionGroup,
-        stocks: activeStocks.map(s => ({ id: s.id, kodeSaham: s.kodeSaham, namaSaham: s.namaSaham, basePrice: Number(s.basePrice) })),
-        openingPrices: activeOpeningPrices,
-        interventionCache,
-        periodStates,
-        // Legacy fields
-        activeRound: activeRoundIdx !== null ? activeRoundIdx + 1 : null,
-        activeSubSession: currentPhase === "PRE_MARKET" ? 1 : 2,
-        phase: currentPhase,   // alias for currentPhase — used by client
-        interventionTitle: currentInterventionTitle,
-        interventionContent: currentInterventionContent,
-      };
-      socket.emit("scheduler-state", state);
+    // ── Get User Predictions ─────────────────────────────────
+    socket.on("get-user-predictions", async (data: { userId: number }) => {
+      if (!activeRoundDbId) return;
+      try {
+        const userPreds = await db.select().from(predictions).where(
+          and(eq(predictions.userId, data.userId), eq(predictions.roundId, activeRoundDbId))
+        );
+        const predMap: Record<number, number> = {};
+        userPreds.forEach(p => {
+          predMap[p.stockId] = Number(p.tebakanHarga);
+        });
+        socket.emit("user-predictions-loaded", { predictions: predMap });
+      } catch (err) {
+        console.error("[Scheduler] Error loading user predictions:", err);
+      }
     });
 
     // ── Submit Prediction ────────────────────────────────────
     socket.on("submit-prediction", async (data: { stockId: number; predictedPrice: number; userId: number }) => {
       const { stockId, predictedPrice, userId } = data;
       if (!activeRoundDbId || currentPhase !== "PRE_MARKET") {
-        socket.emit("prediction-error", { message: "Bukan fase prediksi saat ini" }); return;
+        socket.emit("prediction-error", { message: "Sesi pra-pembukaan belum dibuka atau telah berakhir" }); return;
       }
       const stock = activeStocks.find(s => s.id === stockId);
       if (!stock) { socket.emit("prediction-error", { message: "Saham tidak valid" }); return; }
 
+      const basePrice = Number(stock.basePrice);
+
       // ── Validasi Fraksi Harga ─────────────────────────────
-      if (!isValidTickSize(predictedPrice)) {
+      if (!isValidTickSize(predictedPrice, basePrice)) {
         const tick = getTickSize(predictedPrice);
-        socket.emit("prediction-error", { message: `Harga prediksi harus kelipatan Rp ${tick}. Contoh: Rp ${Math.round(predictedPrice / tick) * tick}` });
+        socket.emit("prediction-error", { message: `Harga order harus kelipatan Rp ${tick}. Contoh: Rp ${Math.round(predictedPrice / tick) * tick}` });
         return;
       }
 
       // ── Validasi Auto Rejection vs basePrice ──────────────
-      const basePrice = Number(stock.basePrice);
       const { upper, lower } = getAutoRejectionLimits(basePrice);
       if (predictedPrice > upper || predictedPrice < lower) {
-        socket.emit("prediction-error", { message: `Prediksi di luar batas wajar. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
+        socket.emit("prediction-error", { message: `Harga order di luar batas Auto-Rejection. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
         return;
       }
 
       if (!activePredictions[stockId]) activePredictions[stockId] = [];
-      activePredictions[stockId].push({ userId, predictedPrice });
+      const existingIdx = activePredictions[stockId].findIndex(p => p.userId === userId);
+      if (existingIdx !== -1) {
+        activePredictions[stockId][existingIdx].predictedPrice = predictedPrice;
+      } else {
+        activePredictions[stockId].push({ userId, predictedPrice });
+      }
 
-      await db.insert(predictions).values({
-        userId, stockId, roundId: activeRoundDbId, tebakanHarga: String(predictedPrice),
-      });
+      // Upsert: update jika sudah ada, insert jika belum
+      const existingDb = await db.select().from(predictions).where(
+        and(
+          eq(predictions.userId, userId),
+          eq(predictions.stockId, stockId),
+          eq(predictions.roundId, activeRoundDbId)
+        )
+      ).limit(1);
+
+      if (existingDb.length > 0) {
+        await db.update(predictions).set({
+          tebakanHarga: String(predictedPrice),
+          createdAt: new Date(),
+        }).where(eq(predictions.id, existingDb[0].id));
+      } else {
+        await db.insert(predictions).values({
+          userId, stockId, roundId: activeRoundDbId, tebakanHarga: String(predictedPrice),
+        });
+      }
+
       socket.emit("prediction-saved", { stockId, predictedPrice, count: activePredictions[stockId].length });
     });
 
@@ -1115,11 +1395,62 @@ app.prepare().then(async () => {
       }
 
       if (!activeRoundDbId) { socket.emit("order-error", { message: "Tidak ada ronde aktif" }); return; }
+      
+      const stock = activeStocks.find(s => s.id === stockId);
+      if (!stock) { socket.emit("order-error", { message: "Saham tidak valid untuk ronde ini" }); return; }
+
+      // ── Tangani Order Saat Fase PRE_MARKET (Tercatat sebagai input harga pembukaan, tanpa potongan saldo/lot) ──
+      if (currentPhase === "PRE_MARKET") {
+        const basePrice = Number(stock.basePrice);
+        if (!isValidTickSize(harga, basePrice)) {
+          const tick = getTickSize(harga);
+          socket.emit("order-error", { message: `Harga order harus kelipatan Rp ${tick}.` });
+          return;
+        }
+        const { upper, lower } = getAutoRejectionLimits(basePrice);
+        if (harga > upper || harga < lower) {
+          socket.emit("order-error", { message: `Harga order di luar batas Auto-Rejection (Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}).` });
+          return;
+        }
+
+        // Sesi Latihan Pra-Pembukaan: Order masuk ke Order Book live tanpa memotong kas & lot,
+        // dan TANPA menimpa data tebakan harga awal di tabel predictions.
+        if (!activeOrderBooks[stockId]) activeOrderBooks[stockId] = { bids: [], asks: [] };
+        const book = activeOrderBooks[stockId];
+        // Replace previous pre-market practice order by this user on this stock of the same type
+        if (tipe === "BID") {
+          book.bids = book.bids.filter(o => o.userId !== userId);
+        } else {
+          book.asks = book.asks.filter(o => o.userId !== userId);
+        }
+
+        const preOrderObj: OrderType = {
+          id: Date.now(),
+          userId,
+          stockId,
+          tipe,
+          harga,
+          jumlah,
+        };
+        if (tipe === "BID") book.bids.push(preOrderObj);
+        else book.asks.push(preOrderObj);
+
+        socket.emit("order-placed", {
+          id: preOrderObj.id,
+          stockId,
+          tipe,
+          harga,
+          jumlah,
+          isPreMarket: true,
+          message: `Order latihan ${tipe === "BID" ? "Beli" : "Jual"} ${stock.kodeSaham} (${jumlah} lot @ Rp ${harga.toLocaleString("id-ID")}) berhasil masuk ke Order Book! Saldo kas & lot aman (tidak terpotong).`
+        });
+        emitOrderBookUpdate(stockId);
+        return;
+      }
+
       if (currentPhase !== "TRADING") {
         socket.emit("order-error", { message: "Perdagangan belum dibuka. Tunggu fase Perdagangan." }); return;
       }
-      const stock = activeStocks.find(s => s.id === stockId);
-      if (!stock) { socket.emit("order-error", { message: "Saham tidak valid untuk ronde ini" }); return; }
 
       const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
       if (!user) { socket.emit("order-error", { message: "User tidak ditemukan" }); return; }
@@ -1150,8 +1481,10 @@ app.prepare().then(async () => {
         }
       }
 
+      const basePrice = Number(stock.basePrice);
+
       // ── Validasi Fraksi Harga ─────────────────────────────
-      if (!isValidTickSize(harga)) {
+      if (!isValidTickSize(harga, basePrice)) {
         const tick = getTickSize(harga);
         const nearest = Math.round(harga / tick) * tick;
         socket.emit("order-error", { message: `Harga tidak valid. Harga harus kelipatan Rp ${tick}. Contoh harga valid: Rp ${nearest.toLocaleString("id-ID")}` });
@@ -1182,6 +1515,10 @@ app.prepare().then(async () => {
 
       socket.emit("order-placed", { orderId: order.id, stockId, tipe, harga, jumlah });
       emitOrderBookUpdate(stockId);
+      const matched = await matchOrders(stockId);
+      if (matched) {
+        emitOrderBookUpdate(stockId);
+      }
     });
 
     // ── Cancel Order ──────────────────────────────────────────
@@ -1192,7 +1529,7 @@ app.prepare().then(async () => {
       if (!order || order.status !== "open") {
         socket.emit("order-error", { message: "Order tidak ditemukan atau sudah ditutup" }); return;
       }
-      await db.delete(orderBook).where(eq(orderBook.id, orderId));
+      await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.id, orderId));
       const book = activeOrderBooks[order.stockId];
       if (book) {
         if (order.tipe === "BID") { const i = book.bids.findIndex(o => o.id === orderId); if (i !== -1) book.bids.splice(i, 1); }
@@ -1203,15 +1540,35 @@ app.prepare().then(async () => {
     });
 
     // ── Get Orderbook ─────────────────────────────────────────
-    socket.on("get-orderbook", (data: { stockId: number }) => {
-      const { stockId } = data;
-      const book = activeOrderBooks[stockId] || { bids: [], asks: [] };
-      const bids = [...book.bids].sort((a, b) => b.harga - a.harga);
-      const asks = [...book.asks].sort((a, b) => a.harga - b.harga);
+    socket.on("get-orderbook", async (data: { stockId: number }) => {
+      const stockId = Number(data.stockId);
+      let book = activeOrderBooks[stockId];
+      if ((!book || (book.bids.length === 0 && book.asks.length === 0)) && activeRoundDbId && currentPhase === "TRADING") {
+        try {
+          const openOrders = await db.select().from(orderBook).where(
+            and(eq(orderBook.stockId, stockId), eq(orderBook.roundId, activeRoundDbId), eq(orderBook.status, "open"))
+          );
+          if (openOrders.length > 0) {
+            if (!activeOrderBooks[stockId]) activeOrderBooks[stockId] = { bids: [], asks: [] };
+            activeOrderBooks[stockId].bids = openOrders
+              .filter(o => o.tipe === "BID" || o.tipe === "buy")
+              .map(o => ({ id: o.id, userId: o.userId, stockId: o.stockId, tipe: "BID", harga: Number(o.harga), jumlah: o.jumlah }));
+            activeOrderBooks[stockId].asks = openOrders
+              .filter(o => o.tipe === "ASK" || o.tipe === "sell")
+              .map(o => ({ id: o.id, userId: o.userId, stockId: o.stockId, tipe: "ASK", harga: Number(o.harga), jumlah: o.jumlah }));
+            book = activeOrderBooks[stockId];
+          }
+        } catch (err) {
+          console.error("[OrderBook] Error fetching open orders from DB:", err);
+        }
+      }
+      const safeBook = book || { bids: [], asks: [] };
+      const bids = [...safeBook.bids].sort((a, b) => b.harga - a.harga);
+      const asks = [...safeBook.asks].sort((a, b) => a.harga - b.harga);
       const payload = {
         stockId,
-        bids: bids.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
-        asks: asks.map(o => ({ id: o.id, harga: o.harga, jumlah: o.jumlah, userId: o.userId })),
+        bids: bids.map(o => ({ id: o.id, harga: Number(o.harga), jumlah: Number(o.jumlah), userId: o.userId })),
+        asks: asks.map(o => ({ id: o.id, harga: Number(o.harga), jumlah: Number(o.jumlah), userId: o.userId })),
       };
       socket.emit("order-book-update", payload);
       socket.emit("orderbook-snapshot", payload);
@@ -1219,7 +1576,7 @@ app.prepare().then(async () => {
 
     // ── Get Portfolio ─────────────────────────────────────────
     socket.on("get-portfolio", async (data: { userId: number }) => {
-      const portfolio = await db.select({
+      let portfolio = await db.select({
         stockId: portfolios.stockId, kode: stocks.kodeSaham,
         nama: stocks.namaSaham, jumlahLot: portfolios.jumlahLot,
         avgPrice: portfolios.averagePrice,
@@ -1227,17 +1584,50 @@ app.prepare().then(async () => {
       }).from(portfolios).innerJoin(stocks, eq(portfolios.stockId, stocks.id))
         .where(eq(portfolios.userId, data.userId))
         .orderBy(stocks.id);
-      socket.emit("portfolio-data", {
-        portfolio: portfolio.map(p => ({
-          stockId: p.stockId,
-          stockCode: p.kode,
-          namaSaham: p.nama,
-          jumlahLot: p.jumlahLot,
-          avgPrice: Number(p.avgPrice),
-          basePrice: Number(p.basePrice),
-          currentValue: Number(p.avgPrice) * p.jumlahLot * 100,
-        })),
-      });
+
+      // Auto-heal: jika responden belum memiliki portofolio, seed otomatis
+      if (portfolio.length === 0) {
+        const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
+        if (u && u.role === "responden") {
+          const allStocks = await db.select().from(stocks);
+          if (allStocks.length > 0) {
+            const initialPortfolios = allStocks.map(stock => ({
+              userId: u.id,
+              stockId: stock.id,
+              jumlahLot: 10,
+              averagePrice: String(stock.basePrice),
+            }));
+            await db.insert(portfolios).values(initialPortfolios).onConflictDoNothing();
+
+            portfolio = await db.select({
+              stockId: portfolios.stockId, kode: stocks.kodeSaham,
+              nama: stocks.namaSaham, jumlahLot: portfolios.jumlahLot,
+              avgPrice: portfolios.averagePrice,
+              basePrice: stocks.basePrice,
+            }).from(portfolios).innerJoin(stocks, eq(portfolios.stockId, stocks.id))
+              .where(eq(portfolios.userId, data.userId))
+              .orderBy(stocks.id);
+          }
+        }
+      }
+
+      const payload = {
+        portfolio: portfolio.map(p => {
+          const currentP = lastTradedPrices[p.stockId] || Number(p.basePrice) || 0;
+          return {
+            stockId: p.stockId,
+            stockCode: p.kode,
+            namaSaham: p.nama,
+            jumlahLot: p.jumlahLot,
+            avgPrice: Number(p.avgPrice),
+            basePrice: Number(p.basePrice),
+            currentPrice: currentP,
+            currentValue: currentP * p.jumlahLot * 100,
+          };
+        }),
+      };
+      socket.emit("portfolio-data", payload);
+      socket.emit("portfolio-initial", payload);
     });
 
     // ── Get Stock Portfolio ───────────────────────────────────

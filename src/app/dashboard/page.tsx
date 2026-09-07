@@ -39,10 +39,35 @@ import {
 import RunningText from "@/components/trading/RunningText";
 
 export default function DashboardPage() {
-  const { user, hydrated } = useAuth();
+  const { user, hydrated, balance: authBalance, updateBalance } = useAuth();
   const router = useRouter();
   const [session, setSession] = useState<{ sessionId: number; status: string; timeLeft: number } | null>(null);
-  const [balance, setBalance] = useState(100_000_000);
+  
+  // Inisialisasi saldo langsung dari AuthContext atau sessionStorage untuk mencegah kedipan angka Rp 100jt
+  const [balance, setBalance] = useState<number>(() => {
+    if (authBalance !== null) return authBalance;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("user");
+        const uid = stored ? JSON.parse(stored)?.id : null;
+        if (uid) {
+          const cached = sessionStorage.getItem(`simulasi_balance_${uid}`);
+          if (cached) return Number(cached);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return 100_000_000;
+  });
+
+  // Sinkronisasi saldo dengan AuthContext global
+  useEffect(() => {
+    if (authBalance !== null) {
+      setBalance(authBalance);
+    }
+  }, [authBalance]);
+
   const [portfolio, setPortfolio] = useState<{
     stockId: number;
     stock: string;
@@ -50,6 +75,7 @@ export default function DashboardPage() {
     lot: number;
     avgPrice: number;
     basePrice: number;
+    currentPrice: number;
     value: number;
   }[]>([]);
 
@@ -81,7 +107,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (hydrated && !user) {
-      router.push("/login");
+      router.replace("/login");
     }
   }, [hydrated, user, router]);
 
@@ -89,10 +115,26 @@ export default function DashboardPage() {
     if (!hydrated || !user) return;
     const socket = getSocket();
 
-    const onConnect = () => socket.emit("authenticate", { userId: user.id });
-    const onAuthSuccess = (data: { user: { saldo: number } }) => {
-      setBalance(data.user.saldo);
+    const onConnect = () => {
+      socket.emit("authenticate", { userId: user.id });
+      socket.emit("get-portfolio", { userId: user.id });
       socket.emit("get-session-history", { userId: user.id });
+      socket.emit("get-scheduler-state");
+    };
+
+    // Eksekusi instan jika socket sudah dalam status terhubung (mencegah bug navigasi Next.js)
+    if (socket.connected) {
+      onConnect();
+    } else {
+      socket.on("connect", onConnect);
+    }
+
+    const onAuthSuccess = (data: { user: { saldo: number } }) => {
+      const s = Number(data.user.saldo);
+      setBalance(s);
+      updateBalance?.(s);
+      socket.emit("get-session-history", { userId: user.id });
+      socket.emit("get-portfolio", { userId: user.id });
     };
     const onSessionState = (data: any) => setSession(data);
     const onRoundStarted = (data: { roundNumber: number; period: number }) => {
@@ -179,7 +221,11 @@ export default function DashboardPage() {
       clearHistory();
     };
     const onBalanceUpdate = (data: { userId: number; balance: number }) => {
-      if (data.userId === user.id) setBalance(data.balance);
+      if (data.userId === user.id) {
+        const b = Number(data.balance);
+        setBalance(b);
+        updateBalance?.(b);
+      }
     };
     const onSessionHistoryData = (data: any[]) => {
       setSessionHistory(data);
@@ -193,47 +239,89 @@ export default function DashboardPage() {
       stockCode?: string;
       timestamp?: string;
     }) => {
-      if (data.buyerId !== user.id && data.sellerId !== user.id) return;
+      // 1. Pembaruan real-time harga pasar & nilai valuasi saham portofolio
+      const execPrice = Number(data.price);
+      setPortfolio((prev) =>
+        prev.map((p) => {
+          if (p.stockId === data.stockId) {
+            return {
+              ...p,
+              currentPrice: execPrice,
+              value: execPrice * p.lot * 100,
+            };
+          }
+          return p;
+        })
+      );
 
-      const time = data.timestamp
-        ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-        : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      // 2. Jika transaksi melibatkan responden saat ini, catat histori dan sinkronkan portofolio
+      if (data.buyerId === user.id || data.sellerId === user.id) {
+        const time = data.timestamp
+          ? new Date(data.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+          : new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-      let tipe = "BID";
-      if (data.buyerId === user.id && data.sellerId === user.id) tipe = "SELF";
-      else if (data.buyerId === user.id) tipe = "BID";
-      else tipe = "ASK";
+        let tipe = "BID";
+        if (data.buyerId === user.id && data.sellerId === user.id) tipe = "SELF";
+        else if (data.buyerId === user.id) tipe = "BID";
+        else tipe = "ASK";
 
-      setSessionHistory((prev) => [
-        {
-          time,
-          stock: data.stockCode || `#${data.stockId}`,
-          tipe,
-          harga: data.price,
-          jumlah: data.quantity,
-        },
-        ...prev,
-      ]);
+        setSessionHistory((prev) => [
+          {
+            time,
+            stock: data.stockCode || `#${data.stockId}`,
+            tipe,
+            harga: data.price,
+            jumlah: data.quantity,
+          },
+          ...prev,
+        ]);
 
-      socket.emit("get-portfolio", { userId: user.id });
+        socket.emit("get-portfolio", { userId: user.id });
+      }
     };
+
+    const onPortfolioUpdate = (data: { userId: number; stockId: number; jumlahLot: number }) => {
+      if (data.userId === user.id) {
+        const newLot = Number(data.jumlahLot);
+        setPortfolio((prev) =>
+          prev.map((p) => {
+            if (p.stockId === data.stockId) {
+              const curPrice = p.currentPrice || p.avgPrice || p.basePrice || 0;
+              return {
+                ...p,
+                lot: newLot,
+                value: curPrice * newLot * 100,
+              };
+            }
+            return p;
+          })
+        );
+        socket.emit("get-portfolio", { userId: user.id });
+      }
+    };
+
     const onExperimentReset = clearHistory;
     const onPeriodAborted = clearHistory;
     const onPortfolioData = (data: { portfolio: any[] }) => {
+      if (!Array.isArray(data?.portfolio)) return;
       setPortfolio(
-        (data.portfolio || []).map((p: any) => ({
-          stockId: p.stockId,
-          stock: p.stockCode,
-          namaSaham: p.namaSaham || p.stockCode,
-          lot: p.jumlahLot,
-          avgPrice: Number(p.avgPrice) || Number(p.basePrice) || 0,
-          basePrice: Number(p.basePrice) || 0,
-          value: Number(p.currentValue),
-        }))
+        data.portfolio.map((p: any) => {
+          const curPrice = Number(p.currentPrice) || Number(p.avgPrice) || Number(p.basePrice) || 0;
+          const lot = Number(p.jumlahLot) || 0;
+          return {
+            stockId: p.stockId,
+            stock: p.stockCode,
+            namaSaham: p.namaSaham || p.stockCode,
+            lot,
+            avgPrice: Number(p.avgPrice) || Number(p.basePrice) || 0,
+            basePrice: Number(p.basePrice) || 0,
+            currentPrice: curPrice,
+            value: Number(p.currentValue) || (curPrice * lot * 100),
+          };
+        })
       );
     };
 
-    socket.on("connect", onConnect);
     socket.on("auth-success", onAuthSuccess);
     socket.on("session-state", onSessionState);
     socket.on("scheduler-state", onSchedulerState);
@@ -244,11 +332,13 @@ export default function DashboardPage() {
     socket.on("intervention-ended", onInterventionEnded);
     socket.on("round-ended", onRoundEnded);
     socket.on("balance-update", onBalanceUpdate);
+    socket.on("portfolio-update", onPortfolioUpdate);
     socket.on("session-history-data", onSessionHistoryData);
     socket.on("trade-executed", onTradeExecuted);
     socket.on("experiment-reset", onExperimentReset);
     socket.on("period-aborted", onPeriodAborted);
     socket.on("portfolio-data", onPortfolioData);
+    socket.on("portfolio-initial", onPortfolioData);
 
     socket.emit("get-scheduler-state");
     socket.emit("get-portfolio", { userId: user.id });
@@ -265,11 +355,13 @@ export default function DashboardPage() {
       socket.off("intervention-ended", onInterventionEnded);
       socket.off("round-ended", onRoundEnded);
       socket.off("balance-update", onBalanceUpdate);
+      socket.off("portfolio-update", onPortfolioUpdate);
       socket.off("session-history-data", onSessionHistoryData);
       socket.off("trade-executed", onTradeExecuted);
       socket.off("experiment-reset", onExperimentReset);
       socket.off("period-aborted", onPeriodAborted);
       socket.off("portfolio-data", onPortfolioData);
+      socket.off("portfolio-initial", onPortfolioData);
     };
   }, [hydrated, user]);
 
@@ -545,10 +637,11 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {activeStocks.map((p, i) => {
                     const lembar = p.lot * 100;
-                    const nilaiTotal = p.avgPrice * lembar;
-                    const nilaiDasar = p.basePrice * lembar;
-                    const pnl = nilaiTotal - nilaiDasar;
-                    const pnlPct = nilaiDasar > 0 ? (pnl / nilaiDasar) * 100 : 0;
+                    const curPrice = p.currentPrice || p.avgPrice || p.basePrice || 0;
+                    const nilaiTotal = curPrice * lembar;
+                    const modalBeli = (p.avgPrice || p.basePrice || 0) * lembar;
+                    const pnl = nilaiTotal - modalBeli;
+                    const pnlPct = modalBeli > 0 ? (pnl / modalBeli) * 100 : 0;
                     const isProfit = pnl >= 0;
 
                     return (
@@ -577,7 +670,7 @@ export default function DashboardPage() {
                             )}
                           >
                             {isProfit ? <ArrowUpRight className="size-2.5" /> : <ArrowDownRight className="size-2.5" />}
-                            <span>{Math.abs(pnlPct).toFixed(2)}%</span>
+                            <span>{isProfit ? "+" : ""}{pnlPct.toFixed(2)}%</span>
                           </div>
                         </div>
 
@@ -590,19 +683,19 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="text-right">
-                            <span className="text-[9px] text-muted-foreground">Harga Beli Avg</span>
+                            <span className="text-[9px] text-muted-foreground">Harga Pasar</span>
                             <p className="font-mono font-bold text-foreground mt-0.5 text-[11px]">
-                              Rp {p.avgPrice.toLocaleString("id-ID")}
+                              Rp {curPrice.toLocaleString("id-ID")}
                             </p>
                           </div>
                           <div>
-                            <span className="text-[9px] text-muted-foreground">Harga Dasar</span>
+                            <span className="text-[9px] text-muted-foreground">Harga Beli Avg</span>
                             <p className="font-mono text-muted-foreground mt-0.5 text-[11px]">
-                              Rp {p.basePrice.toLocaleString("id-ID")}
+                              Rp {p.avgPrice.toLocaleString("id-ID")}
                             </p>
                           </div>
                           <div className="text-right">
-                            <span className="text-[9px] text-muted-foreground">Total Nilai</span>
+                            <span className="text-[9px] text-muted-foreground">Nilai Pasar</span>
                             <p className="font-mono font-bold text-foreground mt-0.5 text-[11px]">
                               Rp {nilaiTotal.toLocaleString("id-ID")}
                             </p>

@@ -1,18 +1,98 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { transactionsHistory, orderBook, stocks } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { transactionsHistory, orderBook, stocks, rounds, users } from "@/db/schema";
+import { eq, desc } from "drizzle-orm";
 import ExcelJS from "exceljs";
+
+function matchesDate(d: Date | string | null | undefined, targetDateStr: string): boolean {
+  if (!d || !targetDateStr) return false;
+  const dateObj = typeof d === "string" ? new Date(d) : d;
+  if (isNaN(dateObj.getTime())) return false;
+
+  const wibDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(dateObj);
+
+  return wibDate === targetDateStr;
+}
+
+const formatWibDateTime = (d?: Date | string | null) => {
+  if (!d) return "-";
+  const dateObj = new Date(d);
+  if (isNaN(dateObj.getTime())) return "-";
+  const datePart = new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(dateObj);
+  const timePart = dateObj.toLocaleTimeString("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Jakarta",
+  }).replace(/:/g, ".");
+  return `${datePart} ${timePart} WIB`;
+};
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get("date"); // optional YYYY-MM-DD filter
+    const roundIdsParam = searchParams.get("roundIds"); // optional comma-separated IDs
+    const excludedRoundIdsParam = searchParams.get("excludedRoundIds");
+    const onlyCompletedParam = searchParams.get("onlyCompleted");
+    const periodParam = searchParams.get("period");
+    const sessionParam = searchParams.get("session");
 
-    // Fetch all transactions and join with stocks
-    const txs = await db
+    // Fetch all rounds and build round map
+    const allRounds = await db.select().from(rounds).orderBy(desc(rounds.id));
+    const roundMap = Object.fromEntries(allRounds.map(r => [r.id, r]));
+
+    // Fetch all users for respondent names
+    const allUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
+    const userMap = Object.fromEntries(allUsers.map(u => [u.id, u.nama]));
+
+    let validRounds = allRounds;
+
+    if (roundIdsParam) {
+      const explicitIds = new Set(
+        roundIdsParam.split(",").map(Number).filter(n => !isNaN(n) && n > 0)
+      );
+      validRounds = allRounds.filter(r => explicitIds.has(r.id));
+    } else {
+      const excludedSet = new Set<number>(
+        excludedRoundIdsParam
+          ? excludedRoundIdsParam.split(",").map(Number).filter(n => !isNaN(n) && n > 0)
+          : []
+      );
+
+      validRounds = allRounds.filter(r => {
+        if (excludedSet.has(r.id)) return false;
+        if (onlyCompletedParam === "true" || onlyCompletedParam === null) {
+          if (r.status === "aborted" || r.status === "pending") return false;
+        }
+        if (periodParam && r.period !== Number(periodParam)) return false;
+        if (sessionParam && r.sessionGroup !== Number(sessionParam)) return false;
+        if (dateParam && dateParam !== "ALL") {
+          const roundTime = r.startTime ?? r.createdAt;
+          if (!matchesDate(roundTime, dateParam)) return false;
+        }
+        return true;
+      });
+    }
+
+    const validRoundIds = new Set<number>(validRounds.map(r => r.id));
+
+    // Fetch transactions
+    const txsRaw = await db
       .select({
         id: transactionsHistory.id,
+        roundId: transactionsHistory.roundId,
         stockCode: stocks.kodeSaham,
         harga: transactionsHistory.harga,
         jumlah: transactionsHistory.jumlah,
@@ -27,65 +107,33 @@ export async function GET(req: NextRequest) {
       .innerJoin(stocks, eq(transactionsHistory.stockId, stocks.id))
       .orderBy(transactionsHistory.createdAt);
 
-    // Filter by date if provided
-    let filteredTxs = txs;
-    if (dateParam) {
-      filteredTxs = txs.filter(t => {
-        if (!t.createdAt) return false;
-        const wibDate = new Date(t.createdAt).toISOString().split("T")[0];
-        return wibDate === dateParam;
-      });
-    }
-
-    if (filteredTxs.length === 0) {
-      return NextResponse.json({ error: "Tidak ada data transaksi pada tanggal tersebut." }, { status: 404 });
-    }
-
-    // Extract all relevant order IDs to fetch in one go
-    const orderIdsToFetch = new Set<number>();
-    for (const tx of filteredTxs) {
-      if (tx.orderBuyId) orderIdsToFetch.add(tx.orderBuyId);
-      if (tx.orderSellId) orderIdsToFetch.add(tx.orderSellId);
-    }
+    // Filter by valid round IDs
+    const filteredTxs = txsRaw.filter(t => validRoundIds.has(t.roundId));
 
     // Fetch relevant orders
     const allOrders = await db.select({
-        id: orderBook.id,
-        harga: orderBook.harga,
-        tipe: orderBook.tipe
-    }).from(orderBook);
-    
-    // Create maps for quick lookup and original amount calculation
+      id: orderBook.id,
+      roundId: orderBook.roundId,
+      userId: orderBook.userId,
+      stockCode: stocks.kodeSaham,
+      tipe: orderBook.tipe,
+      harga: orderBook.harga,
+      jumlah: orderBook.jumlah,
+      status: orderBook.status,
+      createdAt: orderBook.createdAt,
+    })
+    .from(orderBook)
+    .innerJoin(stocks, eq(orderBook.stockId, stocks.id))
+    .orderBy(orderBook.createdAt);
+
+    const filteredOrders = allOrders.filter(o => validRoundIds.has(o.roundId));
     const orderPriceMap = Object.fromEntries(allOrders.map(o => [o.id, Number(o.harga)]));
-    
-    // Calculate matched amounts per order to recover the original requested lot size
+
+    // Calculate matched amounts per order
     const orderMatchedLots: Record<number, number> = {};
-    for (const tx of txs) { // using all txs, not just filtered ones, in case a tx happened on a different day (rare but safe)
+    for (const tx of txsRaw) {
       if (tx.orderBuyId) orderMatchedLots[tx.orderBuyId] = (orderMatchedLots[tx.orderBuyId] || 0) + tx.jumlah;
       if (tx.orderSellId) orderMatchedLots[tx.orderSellId] = (orderMatchedLots[tx.orderSellId] || 0) + tx.jumlah;
-    }
-
-    // Fetch all raw orders for the new sheet (Log Order Masuk)
-    const allRawOrders = await db
-      .select({
-        id: orderBook.id,
-        stockCode: stocks.kodeSaham,
-        tipe: orderBook.tipe,
-        harga: orderBook.harga,
-        jumlah: orderBook.jumlah,
-        createdAt: orderBook.createdAt,
-      })
-      .from(orderBook)
-      .innerJoin(stocks, eq(orderBook.stockId, stocks.id))
-      .orderBy(orderBook.createdAt);
-
-    let filteredOrders = allRawOrders;
-    if (dateParam) {
-      filteredOrders = allRawOrders.filter(o => {
-        if (!o.createdAt) return false;
-        const wibDate = new Date(o.createdAt).toISOString().split("T")[0];
-        return wibDate === dateParam;
-      });
     }
 
     // Create the Workbook
@@ -93,23 +141,26 @@ export async function GET(req: NextRequest) {
     workbook.creator = "Trading Simulator Admin";
     workbook.created = new Date();
 
-    const sheet = workbook.addWorksheet("Order Book & Spread");
-
-    // Header styling
     const borderStyle: Partial<ExcelJS.Borders> = {
       top: { style: 'thin' }, left: { style: 'thin' },
       bottom: { style: 'thin' }, right: { style: 'thin' }
     };
     const headerFill: ExcelJS.Fill = {
-      type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' }
+      type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' }
     };
     const headerFont: Partial<ExcelJS.Font> = {
       bold: true, color: { argb: 'FFFFFFFF' }
     };
 
+    // ==========================================
+    // SHEET 1: Order Book & Spread
+    // ==========================================
+    const sheet = workbook.addWorksheet("Order Book & Spread");
+
     const headerRow = sheet.addRow([
-      'No', 'Waktu', 'Saham', 'Sub-Sesi', 'Bid Beli (Best Bid)', 'Bid Jual (Best Ask)', 
-      'Harga Transaksi', 'Selisih (Spread)', 'Jumlah (Lot)', 'Total Nilai', 'Intervensi'
+      'No', 'Waktu Transaksi', 'Periode', 'Sesi', 'Ronde', 'Saham', 'Sub-Sesi', 
+      'Bid Beli (Best Bid)', 'Bid Jual (Best Ask)', 'Harga Transaksi', 'Selisih (Spread)', 
+      'Jumlah (Lot)', 'Total Nilai', 'Intervensi'
     ]);
 
     headerRow.eachCell((cell) => {
@@ -117,40 +168,52 @@ export async function GET(req: NextRequest) {
       cell.alignment = { horizontal: 'center', vertical: 'middle' }; cell.border = borderStyle;
     });
 
-    // Add rows
-    filteredTxs.forEach((tx, idx) => {
-        const timeStr = tx.createdAt ? tx.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
-        const bidBeli = orderPriceMap[tx.orderBuyId] || Number(tx.harga); // Fallback to tx price if order not found (shouldn't happen)
+    if (filteredTxs.length === 0) {
+      const emptyRow = sheet.addRow([
+        '-', '-', '-', '-', '-', '-', 'Tidak ada transaksi lelang yang match pada sesi/ronde ini', 
+        '-', '-', '-', '-', '-', '-', '-'
+      ]);
+      emptyRow.eachCell((cell) => {
+        cell.border = borderStyle; cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+    } else {
+      filteredTxs.forEach((tx, idx) => {
+        const round = roundMap[tx.roundId];
+        const timeStr = formatWibDateTime(tx.createdAt);
+        const bidBeli = orderPriceMap[tx.orderBuyId] || Number(tx.harga);
         const bidJual = orderPriceMap[tx.orderSellId] || Number(tx.harga);
         const hargaTransaksi = Number(tx.harga);
         const selisih = Math.abs(bidJual - bidBeli);
 
         const row = sheet.addRow([
-            idx + 1,
-            timeStr,
-            tx.stockCode,
-            tx.subSession,
-            bidBeli,
-            bidJual,
-            hargaTransaksi,
-            selisih,
-            tx.jumlah,
-            Number(tx.total),
-            tx.activeIntervention || "NONE"
+          idx + 1,
+          timeStr,
+          `Periode ${round?.period || "-"}`,
+          `Sesi ${round?.sessionGroup || "-"}`,
+          `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
+          tx.stockCode,
+          `Sub-Sesi ${tx.subSession}`,
+          bidBeli,
+          bidJual,
+          hargaTransaksi,
+          selisih,
+          tx.jumlah,
+          Number(tx.total),
+          tx.activeIntervention || "NONE"
         ]);
 
         row.eachCell((cell, colNumber) => {
-            cell.border = borderStyle; cell.alignment = { vertical: 'middle' };
-            if ([5, 6, 7, 8, 10].includes(colNumber)) { cell.numFmt = 'Rp #,##0.00'; }
-            if (colNumber === 9) { cell.numFmt = '#,##0'; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
+          cell.border = borderStyle; cell.alignment = { vertical: 'middle' };
+          if ([8, 9, 10, 11, 13].includes(colNumber)) { cell.numFmt = 'Rp #,##0.00'; }
+          if (colNumber === 12) { cell.numFmt = '#,##0'; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
         });
-    });
+      });
+    }
 
-    // Column widths
     sheet.columns = [
-      { width: 5 }, { width: 22 }, { width: 10 }, { width: 10 }, 
-      { width: 22 }, { width: 22 }, { width: 22 }, { width: 20 }, 
-      { width: 15 }, { width: 25 }, { width: 20 }
+      { width: 6 }, { width: 24 }, { width: 12 }, { width: 10 }, { width: 10 },
+      { width: 12 }, { width: 14 }, { width: 20 }, { width: 20 }, { width: 20 }, 
+      { width: 18 }, { width: 14 }, { width: 24 }, { width: 18 }
     ];
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
@@ -160,7 +223,8 @@ export async function GET(req: NextRequest) {
     const sheet2 = workbook.addWorksheet("Log Order Masuk");
 
     const headerRow2 = sheet2.addRow([
-      'No', 'Waktu', 'Saham', 'Tipe', 'Bid Beli', 'Bid Jual', 'Jumlah (Lot)'
+      'No', 'Waktu Masuk', 'Periode', 'Sesi', 'Ronde', 'Nama Responden', 'Saham', 'Tipe Order', 
+      'Harga (Bid/Ask)', 'Jumlah Lot (Awal)', 'Status Order'
     ]);
 
     headerRow2.eachCell((cell) => {
@@ -168,50 +232,68 @@ export async function GET(req: NextRequest) {
       cell.alignment = { horizontal: 'center', vertical: 'middle' }; cell.border = borderStyle;
     });
 
-    filteredOrders.forEach((o, idx) => {
-        const timeStr = o.createdAt ? o.createdAt.toISOString().replace('T', ' ').substring(0, 19) : "";
-        const harga = Number(o.harga);
-        const isBid = o.tipe === "BID";
-        const isAsk = o.tipe === "ASK";
-        // Hitung total lot awal (lot sisa di DB + lot yang sudah terjual di history transaksi)
-        const originalLots = o.jumlah + (orderMatchedLots[o.id] || 0);
+    if (filteredOrders.length === 0) {
+      const emptyRow = sheet2.addRow([
+        '-', '-', '-', '-', '-', '-', 'Tidak ada order yang diinput pada sesi/ronde ini', '-', '-', '-', '-'
+      ]);
+      emptyRow.eachCell((cell) => {
+        cell.border = borderStyle; cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+    } else {
+      filteredOrders.forEach((o, idx) => {
+        const round = roundMap[o.roundId];
+        const userName = userMap[o.userId] || (o.userId ? `User #${o.userId}` : "Sistem/Unknown");
+        const timeStr = formatWibDateTime(o.createdAt);
+        const harga = Number(o.harga || 0);
+        const originalLots = Number(o.jumlah || 0) + (orderMatchedLots[o.id] || 0);
+        const tipeOrder = (o.tipe || "BID").toUpperCase();
+        const statusOrder = (o.status || "OPEN").toUpperCase();
 
         const row = sheet2.addRow([
-            idx + 1,
-            timeStr,
-            o.stockCode,
-            o.tipe,
-            isBid ? harga : "-",
-            isAsk ? harga : "-",
-            originalLots
+          idx + 1,
+          timeStr,
+          `Periode ${round?.period || "-"}`,
+          `Sesi ${round?.sessionGroup || "-"}`,
+          `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
+          userName,
+          o.stockCode || "-",
+          tipeOrder,
+          harga,
+          originalLots,
+          statusOrder
         ]);
 
         row.eachCell((cell, colNumber) => {
-            cell.border = borderStyle; cell.alignment = { vertical: 'middle' };
-            if ([5, 6].includes(colNumber) && cell.value !== "-") { 
-                cell.numFmt = 'Rp #,##0.00'; 
-            }
-            if (colNumber === 7) { 
-                cell.numFmt = '#,##0'; cell.alignment = { horizontal: 'center', vertical: 'middle' }; 
-            }
+          cell.border = borderStyle; cell.alignment = { vertical: 'middle' };
+          if (colNumber === 8) {
+            cell.font = { bold: true, color: { argb: tipeOrder === "BID" ? 'FF00B050' : 'FFFF0000' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          }
+          if (colNumber === 9) { cell.numFmt = 'Rp #,##0.00'; }
+          if (colNumber === 10) { cell.numFmt = '#,##0'; cell.alignment = { horizontal: 'center', vertical: 'middle' }; }
         });
-    });
+      });
+    }
 
     sheet2.columns = [
-      { width: 8 }, { width: 22 }, { width: 12 }, { width: 10 }, 
-      { width: 20 }, { width: 20 }, { width: 15 }
+      { width: 6 }, { width: 24 }, { width: 12 }, { width: 10 }, { width: 10 },
+      { width: 24 }, { width: 12 }, { width: 12 }, { width: 20 }, { width: 18 }, { width: 14 }
     ];
     sheet2.views = [{ state: 'frozen', ySplit: 1 }];
 
-    // Write to buffer
     const buffer = await workbook.xlsx.writeBuffer();
-    const downloadFileName = dateParam ? `Laporan_OrderBook_${dateParam}.xlsx` : `Laporan_OrderBook_All.xlsx`;
+    const uint8 = new Uint8Array(buffer as ArrayBuffer);
+    const downloadFileName = dateParam && dateParam !== "ALL"
+      ? `Laporan_OrderBook_${dateParam}.xlsx`
+      : `Laporan_OrderBook_All.xlsx`;
 
-    return new NextResponse(buffer as any, {
+    return new Response(uint8, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="${downloadFileName}"`,
+        'Content-Length': String(uint8.byteLength),
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     });
 

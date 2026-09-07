@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { users, portfolios, stocks, transactionsHistory, orderBook } from "@/db/schema";
+import { users, portfolios, stocks, transactionsHistory, orderBook, rounds } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 
 export async function GET(req: NextRequest) {
   try {
+    const { searchParams } = new URL(req.url);
+    const dateParam = searchParams.get("date");
+    const roundIdsParam = searchParams.get("roundIds");
+    const excludedRoundIdsParam = searchParams.get("excludedRoundIds");
+    const onlyCompletedParam = searchParams.get("onlyCompleted");
+    const periodParam = searchParams.get("period");
+
     const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
     if (allRespondents.length === 0) {
       return NextResponse.json({ error: "Tidak ada data responden." }, { status: 404 });
@@ -14,8 +21,47 @@ export async function GET(req: NextRequest) {
     const allStocks = await db.select().from(stocks);
     const stockMap = Object.fromEntries(allStocks.map(s => [s.id, s]));
 
+    // Fetch and filter valid rounds
+    const allRounds = await db.select().from(rounds);
+    
+    let validRounds = allRounds;
+    if (roundIdsParam) {
+      const explicitIds = new Set(roundIdsParam.split(",").map(Number).filter(n => !isNaN(n) && n > 0));
+      validRounds = allRounds.filter(r => explicitIds.has(r.id));
+    } else {
+      const excludedSet = new Set<number>(
+        excludedRoundIdsParam
+          ? excludedRoundIdsParam.split(",").map(Number).filter(n => !isNaN(n) && n > 0)
+          : []
+      );
+
+      const matchesDate = (d: Date | string | null | undefined, targetDateStr: string): boolean => {
+        if (!d || !targetDateStr) return false;
+        const dateObj = typeof d === "string" ? new Date(d) : d;
+        if (isNaN(dateObj.getTime())) return false;
+        const wib = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(dateObj);
+        return wib === targetDateStr;
+      };
+
+      validRounds = allRounds.filter(r => {
+        if (excludedSet.has(r.id)) return false;
+        if (onlyCompletedParam === "true" || onlyCompletedParam === null) {
+          if (r.status === "aborted" || r.status === "pending") return false;
+        }
+        if (periodParam && r.period !== Number(periodParam)) return false;
+        if (dateParam && dateParam !== "ALL") {
+          const roundTime = r.startTime ?? r.createdAt;
+          if (!matchesDate(roundTime, dateParam)) return false;
+        }
+        return true;
+      });
+    }
+
+    const validRoundIds = new Set<number>(validRounds.map(r => r.id));
+
     const allPortfolios = await db.select().from(portfolios);
-    const allTransactions = await db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt);
+    const allTransactionsRaw = await db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt);
+    const allTransactions = allTransactionsRaw.filter(tx => validRoundIds.has(tx.roundId));
     const allOrders = await db.select().from(orderBook);
 
     // Get last traded price per stock
@@ -184,13 +230,16 @@ export async function GET(req: NextRequest) {
 
     // Write to buffer
     const buffer = await workbook.xlsx.writeBuffer();
+    const uint8 = new Uint8Array(buffer as ArrayBuffer);
     const dateStr = new Date().toISOString().split('T')[0];
 
-    return new NextResponse(buffer as any, {
+    return new Response(uint8, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="Ranking_Kekayaan_${dateStr}.xlsx"`,
+        'Content-Length': String(uint8.byteLength),
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     });
 

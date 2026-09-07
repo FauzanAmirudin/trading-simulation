@@ -4,9 +4,12 @@ node_modules/
 .env
 .env.*
 scripts/
+scratch/
+.agents/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .vercel/
 .idea/
 .vscode/
+*.log

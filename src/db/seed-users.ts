@@ -1,4 +1,4 @@
-import { db } from "./index";
+import { db, seedInitialPortfolios } from "./index";
 import { users } from "./schema";
 import bcrypt from "bcryptjs";
 
@@ -32,6 +32,9 @@ async function seedUsers() {
   await db.insert(users).values(respondents);
   console.log("30 Akun responden berhasil dibuat!");
   console.log("Format Login -> Username: responden1 (sampai 30) | Password: password123");
+
+  await seedInitialPortfolios();
+
   process.exit(0);
 }
 

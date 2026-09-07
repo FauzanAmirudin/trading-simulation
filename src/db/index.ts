@@ -5,8 +5,11 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const connStr = process.env.DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/trading_simulasi";
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: connStr,
 });
 
 export const db = drizzle({ client: pool, schema });
+export * from "./seed-portfolios";

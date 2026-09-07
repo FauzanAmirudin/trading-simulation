@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { ResetDialog, ResetMode } from "./ResetDialog";
 
 // ─────────────────────────────────────────────
 // Types
@@ -162,12 +163,14 @@ function PeriodSummaryCard({
   period,
   activePeriod,
   onStartSession,
+  onResetPeriod,
   periodState,
   completedSessions,
 }: {
   period: PeriodDef;
   activePeriod: 1 | 2 | 3 | null;
   onStartSession: (period: 1 | 2 | 3, sessionIndex: number) => void;
+  onResetPeriod?: (period: 1 | 2 | 3) => void;
   periodState?: string;
   completedSessions: number[];
 }) {
@@ -196,19 +199,33 @@ function PeriodSummaryCard({
           </div>
         </div>
 
-        {isActive && !isPaused && (
-          <span className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold animate-pulse shrink-0 border border-primary/30">
-            <RadioTower className="size-3" />
-            <span>Aktif Berjalan</span>
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {completedSessions.length > 0 && activePeriod === null && onResetPeriod && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onResetPeriod(period.periodNumber as 1 | 2 | 3)}
+              className="h-7 px-2.5 text-[11px] font-semibold text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-xl gap-1 border border-border/60 shadow-2xs transition-colors"
+            >
+              <RefreshCw className="size-3" />
+              <span>Reset Periode</span>
+            </Button>
+          )}
 
-        {isPaused && (
-          <span className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px] font-bold shrink-0 border border-amber-500/30">
-            <PauseCircle className="size-3" />
-            <span>Dijeda</span>
-          </span>
-        )}
+          {isActive && !isPaused && (
+            <span className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold animate-pulse shrink-0 border border-primary/30">
+              <RadioTower className="size-3" />
+              <span>Aktif Berjalan</span>
+            </span>
+          )}
+
+          {isPaused && (
+            <span className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px] font-bold shrink-0 border border-amber-500/30">
+              <PauseCircle className="size-3" />
+              <span>Dijeda</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Sessions List (Fluid Cards) */}
@@ -680,6 +697,7 @@ export default function AdminSchedulerBoard() {
         openingPrices: data.openingPrices ?? {},
         interventionCache: data.interventionCache ?? {},
         periodStates: data.periodStates ?? {},
+        completedSessions: data.completedSessions ?? prev.completedSessions,
       }));
       setLoading(false);
     });
@@ -698,18 +716,77 @@ export default function AdminSchedulerBoard() {
       setStartingPeriod(null);
     });
     socket.on("period-ended", (data: { periodNumber: number }) => {
-      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
+      setExpState(prev => ({
+        ...prev,
+        activePeriod: null,
+        activeSessionIdx: null,
+        activeRoundIdx: null,
+        currentPhase: "IDLE",
+        stocks: [],
+        currentIntervention: "NONE",
+        timeLeft: 0,
+        isPaused: false,
+      }));
     });
     socket.on("session-completed", (data: { periodNumber: number, sessionIdx: number }) => {
+      setExpState(prev => ({
+        ...prev,
+        activePeriod: null,
+        activeSessionIdx: null,
+        activeRoundIdx: null,
+        currentPhase: "IDLE",
+        stocks: [],
+        currentIntervention: "NONE",
+        timeLeft: 0,
+        isPaused: false,
+      }));
       toast.success(`Sesi selesai!`, { id: "admin-session-status" });
     });
     socket.on("period-aborted", () => {
-      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE" }));
+      setExpState(prev => ({
+        ...prev,
+        activePeriod: null,
+        activeSessionIdx: null,
+        activeRoundIdx: null,
+        currentPhase: "IDLE",
+        stocks: [],
+        currentIntervention: "NONE",
+        timeLeft: 0,
+        isPaused: false,
+      }));
       toast.info("Sesi dihentikan", { id: "admin-session-status" });
     });
-    socket.on("experiment-reset", () => {
-      setExpState(prev => ({ ...prev, activePeriod: null, activeSessionIdx: null, activeRoundIdx: null, currentPhase: "IDLE", stocks: [], currentIntervention: "NONE", isPaused: false, completedSessions: { 1: [], 2: [], 3: [] } }));
-      toast.info("Eksperimen direset", { id: "admin-exp-reset" });
+    socket.on("experiment-reset", (data?: { mode?: string; periodNumber?: number }) => {
+      setExpState(prev => {
+        if (data?.periodNumber) {
+          const pn = data.periodNumber;
+          return {
+            ...prev,
+            completedSessions: { ...prev.completedSessions, [pn]: [] },
+            periodStates: { ...prev.periodStates, [pn]: "idle" },
+          };
+        }
+        return {
+          ...prev,
+          activePeriod: null,
+          activeSessionIdx: null,
+          activeRoundIdx: null,
+          currentPhase: "IDLE",
+          stocks: [],
+          currentIntervention: "NONE",
+          isPaused: false,
+          completedSessions: { 1: [], 2: [], 3: [] },
+          periodStates: { 1: "idle", 2: "idle", 3: "idle" },
+        };
+      });
+      toast.info(
+        data?.mode === "full"
+          ? "Eksperimen & seluruh data berhasil direset."
+          : data?.periodNumber
+          ? `Periode ${data.periodNumber} berhasil direset.`
+          : "Eksperimen direset.",
+        { id: "admin-exp-reset" }
+      );
     });
 
     // Session events
@@ -747,6 +824,7 @@ export default function AdminSchedulerBoard() {
     socket.on("timer-tick", (data: any) => {
       setExpState(prev => ({
         ...prev,
+        activePeriod: data.periodNumber !== undefined ? (data.periodNumber as 1 | 2 | 3 | null) : prev.activePeriod,
         timeLeft: data.timeLeft ?? prev.timeLeft,
         currentPhase: data.phase ?? prev.currentPhase,
         sessionGroup: data.sessionGroup ?? prev.sessionGroup,
@@ -828,9 +906,19 @@ export default function AdminSchedulerBoard() {
     toast.warning("Sesi dihentikan", { id: "admin-session-status" });
   }, [user]);
 
-  const handleReset = useCallback(() => {
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const handleConfirmReset = useCallback((mode: ResetMode, confirmToken?: string) => {
     if (!user || !socketRef.current) return;
-    socketRef.current.emit("admin-reset-experiment");
+    setIsResetting(true);
+    socketRef.current.emit("admin-reset-experiment", { mode, confirmToken });
+  }, [user]);
+
+  const handleResetPeriod = useCallback((periodNumber: 1 | 2 | 3) => {
+    if (!user || !socketRef.current) return;
+    socketRef.current.emit("admin-reset-period", { periodNumber });
+    toast.info(`Mereset Periode ${periodNumber}...`, { id: "admin-reset-period" });
   }, [user]);
 
   // ── Render ───────────────────────────────────────────────────
@@ -882,7 +970,7 @@ export default function AdminSchedulerBoard() {
             <Button
               size="sm" variant="ghost"
               className="text-xs h-7 text-muted-foreground hover:text-foreground gap-1"
-              onClick={handleReset}
+              onClick={() => setIsResetDialogOpen(true)}
             >
               <RefreshCw className="size-3" /> Reset
             </Button>
@@ -897,10 +985,19 @@ export default function AdminSchedulerBoard() {
                 periodState={expState.periodStates[period.periodNumber]}
                 completedSessions={expState.completedSessions[period.periodNumber] || []}
                 onStartSession={handleStartSession}
+                onResetPeriod={handleResetPeriod}
               />
             ))}
         </div>
       </div>
+
+      {/* ── RESET DIALOG MODAL ────────────────────────────────── */}
+      <ResetDialog
+        isOpen={isResetDialogOpen}
+        onClose={() => setIsResetDialogOpen(false)}
+        onConfirm={handleConfirmReset}
+        isProcessing={isResetting}
+      />
 
       {/* ── LEGEND ───────────────────────────────────────────── */}
       <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-2">

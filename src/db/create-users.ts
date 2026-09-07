@@ -1,4 +1,4 @@
-import { db } from "./index";
+import { db, seedInitialPortfolios } from "./index";
 import { users } from "./schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -31,6 +31,9 @@ async function createUsers() {
     });
     console.log(`✓ User ${a.nama} created`);
   }
+
+  // Otomatis buat portofolio awal untuk seluruh responden
+  await seedInitialPortfolios();
   console.log("Done!");
   process.exit(0);
 }

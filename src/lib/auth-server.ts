@@ -10,7 +10,7 @@ export type SessionUser = {
 
 const SESSION_COOKIE_NAME = "auth_session";
 const SESSION_SECRET = process.env.SESSION_SECRET || "simulasi-trading-auth-secret-key-2026";
-const TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const TOKEN_TTL_SECONDS = 24 * 60 * 60; // 24 hours (1 day)
 
 /**
  * Signs a payload with HMAC-SHA256

@@ -55,7 +55,6 @@ export default function MobileBottomNav() {
   const handleLogout = () => {
     setShowProfileSheet(false);
     logout();
-    router.push("/login");
   };
 
   type NavTab = {

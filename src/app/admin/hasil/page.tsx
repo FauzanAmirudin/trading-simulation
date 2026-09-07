@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
+import { getSocket } from "@/lib/socket";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -27,9 +28,11 @@ import {
   Medal,
   SlidersHorizontal,
   X,
+  Radio,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { ExportFilterModal } from "@/components/admin/ExportFilterModal";
 
 type HasilRow = {
   rank: number;
@@ -53,64 +56,108 @@ type HasilData = {
 export default function AdminHasilPage() {
   const { user, hydrated } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [data, setData] = useState<HasilData | null>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"rank" | "pnl" | "kas" | "tx">("rank");
   const [expandedUserIds, setExpandedUserIds] = useState<Set<number>>(new Set());
 
-  const fetchHasil = () => {
-    setLoading(true);
-    fetch(`/api/admin/hasil`)
+  const fetchHasil = useCallback((showLoading = true) => {
+    if (showLoading) setLoading(true);
+    fetch(`/api/admin/hasil`, {
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+    })
       .then((res) => res.json())
       .then((resData) => {
         if (!resData.error) {
           setData(resData);
-        } else {
+          setLastSync(new Date());
+        } else if (showLoading) {
           toast.error(resData.error);
         }
-        setLoading(false);
+        if (showLoading) setLoading(false);
       })
       .catch((err) => {
         console.error("Error loading admin hasil:", err);
-        setLoading(false);
-        toast.error("Gagal mengambil data ranking.");
+        if (showLoading) {
+          setLoading(false);
+          toast.error("Gagal mengambil data ranking.");
+        }
       });
-  };
+  }, []);
 
   useEffect(() => {
     if (!hydrated || !user) return;
-    fetchHasil();
-  }, [hydrated, user]);
+    fetchHasil(true);
 
-  const handleDownloadExcel = async () => {
-    try {
-      setExporting(true);
-      toast.info("Menyiapkan file Excel, mohon tunggu...");
-      const res = await fetch(`/api/admin/export-hasil`);
+    const socket = getSocket();
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const triggerSilentSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchHasil(false);
+      }, 300);
+    };
 
-      if (!res.ok) {
-        throw new Error("Gagal mengunduh data");
-      }
+    const authenticate = () => {
+      socket.emit("authenticate", { userId: user.id });
+    };
 
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const dateStr = new Date().toISOString().split("T")[0];
-      a.download = `Ranking_Kekayaan_${dateStr}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success("Berhasil mengunduh Ranking Kekayaan!");
-    } catch (err) {
-      console.error(err);
-      toast.error("Gagal mengekspor data");
-    } finally {
-      setExporting(false);
+    if (socket.connected) {
+      authenticate();
     }
-  };
+
+    const onConnect = () => {
+      authenticate();
+      fetchHasil(false);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("trade-executed", triggerSilentSync);
+    socket.on("balance-update", triggerSilentSync);
+    socket.on("portfolio-update", triggerSilentSync);
+    socket.on("round-started", triggerSilentSync);
+    socket.on("round-ended", triggerSilentSync);
+    socket.on("sub-session-started", triggerSilentSync);
+    socket.on("sub-session-ended", triggerSilentSync);
+    socket.on("order-book-update", triggerSilentSync);
+    socket.on("opening-prices-calculated", triggerSilentSync);
+    socket.on("experiment-reset", triggerSilentSync);
+    socket.on("experiment-resumed", triggerSilentSync);
+    socket.on("experiment-paused", triggerSilentSync);
+    socket.on("session-completed", triggerSilentSync);
+    socket.on("period-ended", triggerSilentSync);
+    socket.on("period-aborted", triggerSilentSync);
+    socket.on("cooldown-started", triggerSilentSync);
+
+    // Fallback periodic sync every 4 seconds for continuous live telemetry
+    const pollInterval = setInterval(() => {
+      fetchHasil(false);
+    }, 4000);
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(pollInterval);
+      socket.off("connect", onConnect);
+      socket.off("trade-executed", triggerSilentSync);
+      socket.off("balance-update", triggerSilentSync);
+      socket.off("portfolio-update", triggerSilentSync);
+      socket.off("round-started", triggerSilentSync);
+      socket.off("round-ended", triggerSilentSync);
+      socket.off("sub-session-started", triggerSilentSync);
+      socket.off("sub-session-ended", triggerSilentSync);
+      socket.off("order-book-update", triggerSilentSync);
+      socket.off("opening-prices-calculated", triggerSilentSync);
+      socket.off("experiment-reset", triggerSilentSync);
+      socket.off("experiment-resumed", triggerSilentSync);
+      socket.off("experiment-paused", triggerSilentSync);
+      socket.off("session-completed", triggerSilentSync);
+      socket.off("period-ended", triggerSilentSync);
+      socket.off("period-aborted", triggerSilentSync);
+      socket.off("cooldown-started", triggerSilentSync);
+    };
+  }, [hydrated, user, fetchHasil]);
 
   const toggleExpand = (userId: number) => {
     setExpandedUserIds((prev) => {
@@ -121,7 +168,7 @@ export default function AdminHasilPage() {
     });
   };
 
-  // Filter & Sort Logic
+  // Filter & Sort Logic (Rank NAV strictly sorted descending from highest to lowest)
   const filteredAndSortedList = useMemo(() => {
     if (!data?.all) return [];
     let list = [...data.all];
@@ -167,26 +214,41 @@ export default function AdminHasilPage() {
       {/* ─── 1. COMPACT FLUID HEADER & ACTION BAR ─── */}
       <div className="flex flex-col gap-3 rounded-3xl bg-card/70 border border-border/80 p-3.5 sm:p-5 backdrop-blur-md shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="space-y-0.5 min-w-0">
-            <div className="flex items-center gap-2">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="flex size-7 sm:size-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 shrink-0">
                 <Trophy className="size-3.5 sm:size-4" />
               </div>
               <h1 className="text-[clamp(1.05rem,4vw,1.35rem)] font-extrabold tracking-tight text-foreground truncate">
                 Ranking Kekayaan Responden
               </h1>
+
+              {/* Real-time status badge */}
+              <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono text-[10px] font-bold shadow-2xs shrink-0">
+                <span className="relative flex size-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
+                </span>
+                <span>Real-Time Live</span>
+              </div>
             </div>
-            <p className="text-[11px] sm:text-xs text-muted-foreground leading-relaxed">
-              Peringkat kekayaan bersih (NAV) real-time berdasarkan portofolio & sisa kas.
-            </p>
+            
+            <div className="flex items-center gap-2 text-[11px] sm:text-xs text-muted-foreground leading-relaxed flex-wrap">
+              <span>Peringkat kekayaan bersih (NAV) real-time berdasarkan sisa kas & nilai kepemilikan saham.</span>
+              {lastSync && (
+                <span className="font-mono text-[10px] text-muted-foreground/80 bg-muted/50 px-2 py-0.5 rounded-md border border-border/40">
+                  Sinkron: {lastSync.toLocaleTimeString("id-ID", { hour12: false, timeZone: "Asia/Jakarta" })} WIB
+                </span>
+              )}
+            </div>
           </div>
 
-          {/* Action Buttons (2-Column Grid on Mobile for Maximum Ergonomics) */}
+          {/* Action Buttons */}
           <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/50">
             <Button
               size="sm"
               variant="outline"
-              onClick={fetchHasil}
+              onClick={() => fetchHasil(true)}
               disabled={loading}
               className="h-10 sm:h-9 px-3 rounded-2xl border-border hover:bg-muted font-bold text-xs gap-1.5 shadow-2xs justify-center active:scale-95"
             >
@@ -196,12 +258,12 @@ export default function AdminHasilPage() {
 
             <Button
               size="sm"
-              onClick={handleDownloadExcel}
-              disabled={exporting || loading}
+              onClick={() => setIsExportModalOpen(true)}
+              disabled={loading}
               className="h-10 sm:h-9 px-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-2xs justify-center active:scale-95"
             >
               <DownloadCloud className="size-3.5 shrink-0" />
-              <span className="truncate">{exporting ? "Mengekspor..." : "Export Excel"}</span>
+              <span>Export Excel</span>
             </Button>
           </div>
         </div>
@@ -493,8 +555,10 @@ export default function AdminHasilPage() {
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
                             <span className="text-xs font-mono font-black text-emerald-600 dark:text-emerald-400 block">
-                              Rp {row.totalKekayaan >= 1_000_000 
-                                ? `${(row.totalKekayaan / 1_000_000).toFixed(2)}M`
+                              Rp {row.totalKekayaan >= 1_000_000_000 
+                                ? `${(row.totalKekayaan / 1_000_000_000).toFixed(2)} M`
+                                : row.totalKekayaan >= 1_000_000
+                                ? `${(row.totalKekayaan / 1_000_000).toFixed(1)} Jt`
                                 : row.totalKekayaan.toLocaleString("id-ID")}
                             </span>
                             <span
@@ -668,6 +732,13 @@ export default function AdminHasilPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ─── 4. EXPORT CONFIGURATION & FILTER MODAL ─── */}
+      <ExportFilterModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        exportType="hasil"
+      />
     </motion.div>
   );
 }

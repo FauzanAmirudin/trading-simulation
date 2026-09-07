@@ -18,7 +18,7 @@ import {
 import { toast } from "sonner";
 import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
 import { PriceInput, TickSizeBadge } from "@/components/ui/price-input";
-import { getAutoRejectionLimits, isValidTickSize, getTickSize, snapToTickSize } from "@/lib/market-rules";
+import { getAutoRejectionLimits, isValidTickSize, getTickSize, snapToTickSize, calculateQuickPrice } from "@/lib/market-rules";
 import RunningText from "@/components/trading/RunningText";
 
 type Stock = {
@@ -175,7 +175,7 @@ export default function TradingPageWrapper() {
 }
 
 function TradingPageContent() {
-  const { user, hydrated } = useAuth();
+  const { user, hydrated, balance: authBalance, updateBalance } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const stockParam = searchParams.get("stock");
@@ -194,7 +194,28 @@ function TradingPageContent() {
   const [orderType, setOrderType] = useState<"BID" | "ASK">("BID");
   const [orderPrice, setOrderPrice] = useState("");
   const [orderLot, setOrderLot] = useState("");
-  const [balance, setBalance] = useState(100_000_000);
+  const [balance, setBalance] = useState<number>(() => {
+    if (authBalance !== null) return authBalance;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("user");
+        const uid = stored ? JSON.parse(stored)?.id : null;
+        if (uid) {
+          const cached = sessionStorage.getItem(`simulasi_balance_${uid}`);
+          if (cached) return Number(cached);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return 100_000_000;
+  });
+
+  useEffect(() => {
+    if (authBalance !== null) {
+      setBalance(authBalance);
+    }
+  }, [authBalance]);
   const [portfolio, setPortfolio] = useState<{ lot: number } | null>(null);
   const [sessionTimer, setSessionTimer] = useState(120);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -237,6 +258,7 @@ function TradingPageContent() {
   // Step-by-step prediction modal state
   const [predictionsSubmitted, setPredictionsSubmitted] = useState<Record<number, number>>({});
   const [ordersPlacedMap, setOrdersPlacedMap] = useState<Record<number, boolean>>({});
+  const [orderBooksMap, setOrderBooksMap] = useState<Record<number, { bids: Order[]; asks: Order[] }>>({});
   const [isPredictionModalOpen, setIsPredictionModalOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [mobileTradingModalTab, setMobileTradingModalTab] = useState<"order" | "market">("order");
@@ -251,18 +273,22 @@ function TradingPageContent() {
   const [cooldownReason, setCooldownReason] = useState<string>("");
 
   const selectedIdRef = useRef<number | null>(null);
+  const activeStockIdRef = useRef<number | null>(null);
   const openingPricesRef = useRef<Record<number, number>>({});
   const lastPricesRef = useRef<Record<number, number>>({});
 
-  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+    activeStockIdRef.current = selectedId;
+  }, [selectedId]);
   useEffect(() => { openingPricesRef.current = openingPrices; }, [openingPrices]);
   useEffect(() => { lastPricesRef.current = lastPrices; }, [lastPrices]);
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!user) { router.push("/login"); return; }
+    if (!user) { router.replace("/login"); return; }
     setLoading(false);
-  }, [user, router]); 
+  }, [hydrated, user, router]); 
 
   useEffect(() => {
     if (!user || !hydrated) return;
@@ -271,10 +297,30 @@ function TradingPageContent() {
     const onConnect = () => {
       socket.emit("authenticate", { userId: user.id });
       socket.emit("get-portfolio", { userId: user.id });
+      socket.emit("get-user-predictions", { userId: user.id });
+      const currentActiveId = activeStockIdRef.current ?? selectedIdRef.current;
+      if (currentActiveId !== null) {
+        socket.emit("get-orderbook", { stockId: currentActiveId });
+      }
     };
-    if (socket.connected) onConnect(); else socket.on("connect", onConnect);
+    socket.on("connect", onConnect);
+    if (socket.connected) onConnect();
 
-    const onAuthSuccess = (data: { user: { saldo: number } }) => { setBalance(data.user.saldo); };
+    const onAuthSuccess = (data: { user: { saldo: number } }) => {
+      const s = Number(data.user.saldo);
+      setBalance(s);
+      updateBalance?.(s);
+    };
+    const onUserPredictionsLoaded = (data: { predictions: Record<number, number> }) => {
+      if (data?.predictions) {
+        setPredictionsSubmitted(prev => ({ ...prev, ...data.predictions }));
+      }
+    };
+    const onPredictionSaved = (data: { stockId: number; predictedPrice: number }) => {
+      if (data?.stockId && data?.predictedPrice) {
+        setPredictionsSubmitted(prev => ({ ...prev, [data.stockId]: data.predictedPrice }));
+      }
+    };
     const onRoundStarted = (data: { roundNumber: number; period: number; stocks: Stock[] }) => {
       setRoundNumber(data.roundNumber);
       setPeriod(data.period);
@@ -282,6 +328,11 @@ function TradingPageContent() {
       setStocks(data.stocks);
       setStock(null);
       setSelectedId(null);
+      activeStockIdRef.current = null;
+      selectedIdRef.current = null;
+      setOrderBooksMap({});
+      setBids([]);
+      setAsks([]);
       setPredictionsSubmitted({});
       setOrdersPlacedMap({});
       setSkippedStockIds([]);
@@ -305,11 +356,16 @@ function TradingPageContent() {
       setIsPaused(false);
       setStock(null);
       setSelectedId(null);
+      activeStockIdRef.current = null;
+      selectedIdRef.current = null;
+      setBids([]);
+      setAsks([]);
       if (localTimerRef.current) { clearInterval(localTimerRef.current); localTimerRef.current = null; }
       if (data.phase === "PRE_MARKET") {
         setShowPredictionUI(true);
         setIsPredictionModalOpen(false);
         setIsOrderModalOpen(false);
+        socket.emit("get-user-predictions", { userId: user.id });
       } else if (data.phase === "TRADING") {
         setShowPredictionUI(false);
         setIsPredictionModalOpen(false);
@@ -459,6 +515,13 @@ function TradingPageContent() {
       setPortfoliosMap(initialMap);
       setBasePricesMap(baseMap);
     };
+    const onBalanceUpdate = (data: { userId: number; balance: number }) => {
+      if (user && data.userId === user.id) {
+        const b = Number(data.balance);
+        setBalance(b);
+        updateBalance?.(b);
+      }
+    };
     const onPortfolioUpdate = (data: { userId: number; stockId: number; jumlahLot: number }) => {
       setPortfoliosMap(prev => ({ ...prev, [data.stockId]: data.jumlahLot }));
     };
@@ -479,14 +542,28 @@ function TradingPageContent() {
       }
     };
 
-    const onOrderBookUpdateGlobal = (data: { stockId: number; bids: Order[]; asks: Order[] }) => {
-      if (selectedIdRef.current && data.stockId === selectedIdRef.current) {
-        setBids(data.bids || []);
-        setAsks(data.asks || []);
+    const onOrderBookUpdateGlobal = (data: { stockId: number; bids?: Order[]; asks?: Order[] }) => {
+      if (!data || data.stockId === undefined) return;
+      const targetStockId = Number(data.stockId);
+      const newBids = (data.bids || []).map(b => ({ ...b, harga: Number(b.harga), jumlah: Number(b.jumlah) }));
+      const newAsks = (data.asks || []).map(a => ({ ...a, harga: Number(a.harga), jumlah: Number(a.jumlah) }));
+
+      // Store in per-stock map
+      setOrderBooksMap(prev => ({
+        ...prev,
+        [targetStockId]: { bids: newBids, asks: newAsks }
+      }));
+
+      // If matches currently viewed stock, update active bids and asks immediately
+      const activeId = activeStockIdRef.current ?? selectedIdRef.current;
+      if (activeId !== null && Number(activeId) === targetStockId) {
+        setBids(newBids);
+        setAsks(newAsks);
       }
     };
 
     socket.on("auth-success", onAuthSuccess);
+    socket.on("balance-update", onBalanceUpdate);
     socket.on("round-started", onRoundStarted);
     socket.on("sub-session-started", onSubSessionStarted);
     socket.on("timer-tick", onTimerTick);
@@ -499,14 +576,19 @@ function TradingPageContent() {
     socket.on("experiment-ended", onExperimentEnded);
     socket.on("intervention-triggered", onInterventionTriggered);
     socket.on("scheduler-state", onSchedulerState);
+    socket.on("portfolio-data", onPortfolioInitial);
     socket.on("portfolio-initial", onPortfolioInitial);
     socket.on("portfolio-update", onPortfolioUpdate);
     socket.on("trade-executed", onTradeExecuted);
     socket.on("order-book-update", onOrderBookUpdateGlobal);
     socket.on("orderbook-snapshot", onOrderBookUpdateGlobal);
+    socket.on("user-predictions-loaded", onUserPredictionsLoaded);
+    socket.on("prediction-saved", onPredictionSaved);
 
     return () => {
+      socket.off("connect", onConnect);
       socket.off("auth-success", onAuthSuccess);
+      socket.off("balance-update", onBalanceUpdate);
       socket.off("round-started", onRoundStarted);
       socket.off("sub-session-started", onSubSessionStarted);
       socket.off("timer-tick", onTimerTick);
@@ -519,11 +601,14 @@ function TradingPageContent() {
       socket.off("experiment-ended", onExperimentEnded);
       socket.off("intervention-triggered", onInterventionTriggered);
       socket.off("scheduler-state", onSchedulerState);
+      socket.off("portfolio-data", onPortfolioInitial);
       socket.off("portfolio-initial", onPortfolioInitial);
       socket.off("portfolio-update", onPortfolioUpdate);
       socket.off("trade-executed", onTradeExecuted);
       socket.off("order-book-update", onOrderBookUpdateGlobal);
       socket.off("orderbook-snapshot", onOrderBookUpdateGlobal);
+      socket.off("user-predictions-loaded", onUserPredictionsLoaded);
+      socket.off("prediction-saved", onPredictionSaved);
     };
   }, [user, hydrated]);
 
@@ -561,12 +646,6 @@ function TradingPageContent() {
     setCurrentPrice(initialBase);
     setPriceHistory([{ time: "Pra-Buka", price: initialBase }]);
 
-    const onOrderbookSnapshot = (data: { bids?: Order[]; asks?: Order[]; stockId?: number }) => {
-      if (!data.stockId || data.stockId === stockId) {
-        if (data.bids) setBids(data.bids);
-        if (data.asks) setAsks(data.asks);
-      }
-    };
     const onPriceHistorySnapshot = (data: { history: { timestamp: string; price: number }[] }) => {
       const formatted = data.history.map(h => ({
         time: new Date(h.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
@@ -593,14 +672,10 @@ function TradingPageContent() {
     socket.emit("get-price-history", { stockId });
     socket.emit("get-portfolio", { userId: user.id });
 
-    socket.on("orderbook-snapshot", onOrderbookSnapshot);
-    socket.on("order-book-update", onOrderbookSnapshot);
     socket.on("price-history-snapshot", onPriceHistorySnapshot);
     socket.on("portfolio", onPortfolio);
 
     return () => {
-      socket.off("orderbook-snapshot", onOrderbookSnapshot);
-      socket.off("order-book-update", onOrderbookSnapshot);
       socket.off("price-history-snapshot", onPriceHistorySnapshot);
       socket.off("portfolio", onPortfolio);
     };
@@ -610,6 +685,8 @@ function TradingPageContent() {
     setIsOrderModalOpen(false);
     setStock(null);
     setSelectedId(null);
+    activeStockIdRef.current = null;
+    selectedIdRef.current = null;
     setOrderPrice("");
     setOrderLot("");
     router.replace("/dashboard/trading");
@@ -618,21 +695,37 @@ function TradingPageContent() {
   const selectStock = useCallback((s: Stock) => {
     setSelectedId(s.id);
     setStock(s);
-    setBids([]);
-    setAsks([]);
+    activeStockIdRef.current = s.id;
+    selectedIdRef.current = s.id;
+
+    // Load from cache immediately if present, otherwise reset
+    if (orderBooksMap[s.id]) {
+      setBids(orderBooksMap[s.id].bids);
+      setAsks(orderBooksMap[s.id].asks);
+    } else {
+      setBids([]);
+      setAsks([]);
+    }
+
     setPortfolio(null);
     const rawBase = openingPrices[s.id] || lastPrices[s.id] || Number(s.basePrice) || 1000;
     const base = snapToTickSize(rawBase);
     setCurrentPrice(base);
     setPriceChange(0);
     setPriceHistory([{ time: "Pra-Buka", price: base }]);
-    setOrderPrice("");
-    setOrderLot("");
+    if (predictionsSubmitted[s.id]) {
+      setOrderPrice(String(predictionsSubmitted[s.id]));
+    } else {
+      setOrderPrice(String(base));
+    }
+    setOrderLot("1");
     setIsOrderModalOpen(true);
 
     const socket = getSocket();
     socket.emit("get-orderbook", { stockId: s.id });
-  }, [openingPrices, lastPrices]);
+    socket.emit("get-price-history", { stockId: s.id });
+    if (user) socket.emit("get-portfolio", { userId: user.id });
+  }, [openingPrices, lastPrices, predictionsSubmitted, user, orderBooksMap]);
 
   const handlePlaceOrder = useCallback(() => {
     if (!user || !stock) return;
@@ -640,45 +733,53 @@ function TradingPageContent() {
     const lot = parseInt(orderLot);
     if (!price || !lot) { toast.error("Isi harga dan jumlah"); return; }
     if (price <= 0 || lot <= 0) { toast.error("Harga dan jumlah lot tidak boleh minus atau nol"); return; }
-    if (!isValidTickSize(price)) {
+    const baseP = Number(stock.basePrice);
+    if (!isValidTickSize(price, baseP)) {
       const tick = getTickSize(price);
       toast.error(`Harga harus kelipatan Rp ${tick}`);
+      return;
+    }
+
+    const { upper, lower } = getAutoRejectionLimits(baseP);
+    if (price > upper || price < lower) {
+      toast.error(`Harga order di luar rentang Auto-Rejection (Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")})`);
+      return;
+    }
+
+    const userOwnedLot = portfoliosMap[stock.id] ?? 10;
+    if (phase === "TRADING" && orderType === "ASK" && lot > userOwnedLot) {
+      toast.error(`Jumlah lot melebihi kepemilikan (${userOwnedLot} lot)`);
+      return;
+    }
+
+    const totalEst = price * (lot * 100);
+    if (phase === "TRADING" && orderType === "BID" && totalEst > balance) {
+      toast.error("Saldo kas tidak mencukupi untuk order ini");
       return;
     }
 
     const socket = getSocket();
     socket.emit("place-order", { stockId: stock.id, tipe: orderType, harga: price, jumlah: lot, userId: user.id });
     
-    socket.once("order-placed", () => {
+    socket.once("order-placed", (data?: { isPreMarket?: boolean; message?: string }) => {
       const curStockKode = (stock as any).kodeSaham || (stock as any).kode || "Saham";
-      toast.success(`Order ${orderType === "BID" ? "Beli" : "Jual"} ${curStockKode}: ${lot} lot @ Rp ${price.toLocaleString("id-ID")}`);
+      toast.success(data?.message || `Order ${orderType === "BID" ? "Beli" : "Jual"} ${curStockKode}: ${lot} lot @ Rp ${price.toLocaleString("id-ID")} berhasil dikirim!`);
       setOrderPrice(""); 
       setOrderLot("");
       
       // Request updated orderbook immediately
       socket.emit("get-orderbook", { stockId: stock.id });
+      if (user) socket.emit("get-portfolio", { userId: user.id });
 
       const newOrders = { ...ordersPlacedMap, [stock.id]: true };
       setOrdersPlacedMap(newOrders);
 
-      // Cari saham berikutnya yang belum dikirimi order
-      const unsubmitted = stocks.filter(s => !newOrders[s.id]);
-      if (unsubmitted.length > 0) {
-        const currentIdx = stocks.findIndex(s => s.id === stock.id);
-        const after = currentIdx >= 0 ? stocks.slice(currentIdx + 1).filter(s => !newOrders[s.id]) : [];
-        const nextTarget = after.length > 0 ? after[0] : unsubmitted[0];
-        
-        const nextKode = (nextTarget as any).kodeSaham || (nextTarget as any).kode;
-        toast.info(`Lanjut ke ${nextKode} (${Object.keys(newOrders).length}/${stocks.length} saham diorder)`);
-        selectStock(nextTarget);
-      } else {
-        toast.success("Semua saham telah berhasil diorder!");
-        handleCloseOrderModal();
-      }
+      // PENTING: Pengguna TETAP berada di saham aktif dan melihat order-nya terisi di kolom order book secara live!
+      // Pada fase PRE_MARKET (mode latihan), tebakan harga awal pengguna TIDAK ditimpa dan tetap aman.
     });
 
     socket.once("order-error", (data: { message: string }) => toast.error(data.message));
-  }, [user, stock, orderType, orderPrice, orderLot, ordersPlacedMap, stocks, selectStock, handleCloseOrderModal]);
+  }, [user, stock, orderType, orderPrice, orderLot, ordersPlacedMap, stocks, selectStock, handleCloseOrderModal, portfoliosMap, phase, balance]);
 
   const findNextUnsubmittedStock = useCallback((currentStockId: number, currentSubmitted: Record<number, number>, skipped: number[]) => {
     const unsubmitted = stocks.filter(s => currentSubmitted[s.id] === undefined);
@@ -716,6 +817,26 @@ function TradingPageContent() {
     const nextId = findNextUnsubmittedStock(targetStockId, newSubmitted, newSkipped);
     if (nextId) { setActiveModalStockId(nextId); } else { setIsPredictionModalOpen(false); toast.success("Semua prediksi saham telah lengkap!"); }
   }, [user, predictionInput, stocks, predictionsSubmitted, skippedStockIds, findNextUnsubmittedStock]);
+
+  const handleSubmitPrediction = useCallback((targetStockId: number) => {
+    if (!user) return;
+    const curStock = stocks.find(s => s.id === targetStockId);
+    const baseP = curStock ? Number(curStock.basePrice) : 1000;
+    const inputVal = predictionInput[targetStockId] ?? (predictionsSubmitted[targetStockId] ? String(predictionsSubmitted[targetStockId]) : "");
+    const price = parseInt(inputVal);
+    if (!price || price <= 0) { toast.error("Masukkan harga perkiraan yang valid"); return; }
+    if (curStock) {
+      const { upper, lower } = getAutoRejectionLimits(baseP);
+      if (!isValidTickSize(price, baseP)) { toast.error(`Harga harus kelipatan Rp ${getTickSize(price)}`); return; }
+      if (price > upper || price < lower) { toast.error(`Perkiraan harga di luar rentang Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}`); return; }
+    }
+    const socket = getSocket();
+    socket.emit("submit-prediction", { stockId: targetStockId, predictedPrice: price, userId: user.id });
+    const newSubmitted = { ...predictionsSubmitted, [targetStockId]: price };
+    setPredictionsSubmitted(newSubmitted);
+    setOrdersPlacedMap(prev => ({ ...prev, [targetStockId]: true }));
+    toast.success(`Perkiraan harga ${(curStock as any)?.kodeSaham || ""} tersimpan: Rp ${price.toLocaleString("id-ID")}`);
+  }, [user, predictionInput, stocks, predictionsSubmitted]);
 
   const handleSkipStock = useCallback((targetStockId: number) => {
     const newSkipped = skippedStockIds.includes(targetStockId) ? skippedStockIds : [...skippedStockIds, targetStockId];
@@ -850,7 +971,7 @@ function TradingPageContent() {
           </h1>
           <p className="text-[11px] sm:text-xs text-muted-foreground text-balance leading-relaxed">
             {phase === "PRE_MARKET" 
-              ? "Estimasi harga pembukaan sebelum pasar reguler dimulai."
+              ? "Sesi lelang pra-pembukaan untuk penentuan harga pembukaan saham."
               : "Pilih saham untuk transaksi dan pantau grafik harga live."
             }
           </p>
@@ -872,609 +993,8 @@ function TradingPageContent() {
         </div>
       )}
 
-      {/* ── PHASE-BASED RENDER ─────────────────────────────── */}
-      {phase === "PRE_MARKET" ? (
-        <div className="space-y-4">
-          {/* ══════════════════════════════════════════════════════════
-              A. DESKTOP VIEW (hidden md:block): Multi-Card Workstation Grid (NO MODAL)
-             ══════════════════════════════════════════════════════════ */}
-          <div className="hidden md:block space-y-4">
-            {/* Header Status & Progress Card */}
-            <div className="rounded-3xl border border-border/80 bg-card p-4 sm:p-5 shadow-xs flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-                    Formulir Pra-Pembukaan Pasar
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-mono font-bold text-xs">
-                    {submittedCount}/{stocks.length} Saham Terisi
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Tentukan estimasi harga pembukaan setiap saham sebelum waktu sesi pra-pembukaan berakhir.
-                </p>
-              </div>
-
-              {/* Segmented Progress Tracker */}
-              <div className="w-52 space-y-1.5 shrink-0">
-                <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                  <span>Kelengkapan Prediksi</span>
-                  <span className="font-mono font-bold text-foreground">
-                    {stocks.length > 0 ? Math.round((submittedCount / stocks.length) * 100) : 0}%
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 w-full">
-                  {stocks.map(s => {
-                    const isDone = predictionsSubmitted[s.id] !== undefined;
-                    return (
-                      <div
-                        key={s.id}
-                        className={cn(
-                          "h-2 flex-1 rounded-full transition-all duration-300",
-                          isDone ? "bg-emerald-500" : "bg-muted/80 dark:bg-zinc-800"
-                        )}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* 3-Column Desktop Prediction Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {stocks.map((s) => {
-                const baseP = Number(s.basePrice);
-                const { upper, lower } = getAutoRejectionLimits(baseP);
-                const safeKode = (s as any).kodeSaham || (s as any).kode || "N/A";
-                const safeNama = (s as any).namaSaham || (s as any).nama || "Tidak ada data";
-                const meta = getMeta(safeKode);
-                const isSubmitted = predictionsSubmitted[s.id] !== undefined;
-                const submittedVal = predictionsSubmitted[s.id];
-                const curInputVal = predictionInput[s.id] || (isSubmitted ? String(submittedVal) : "");
-                const predVal = parseInt(curInputVal) || 0;
-                const isInvalid = predVal > 0 && (!isValidTickSize(predVal) || predVal > upper || predVal < lower);
-                const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
-
-                const quickChips = [
-                  { label: "-5%", pct: -5 },
-                  { label: "-2%", pct: -2 },
-                  { label: "Sama", pct: 0 },
-                  { label: "+2%", pct: 2 },
-                  { label: "+5%", pct: 5 },
-                ];
-
-                return (
-                  <div
-                    key={s.id}
-                    className={cn(
-                      "rounded-3xl border p-4 sm:p-5 shadow-xs transition-all duration-200 flex flex-col justify-between gap-4 bg-card",
-                      isSubmitted
-                        ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]"
-                        : "border-border/80 hover:border-amber-500/40"
-                    )}
-                  >
-                    {/* Stock Header & Identity */}
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="flex min-w-[44px] h-10 px-2.5 items-center justify-center rounded-2xl bg-primary/15 text-primary font-mono font-black text-sm whitespace-nowrap border border-primary/20 shrink-0 shadow-xs">
-                            {safeKode}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <h3 className="font-bold text-sm text-foreground truncate">{safeKode}</h3>
-                              <span className={cn(
-                                "text-[9px] px-2 py-0.5 rounded-full border font-semibold shrink-0",
-                                sektorWarna[meta.sektor] || "bg-muted text-muted-foreground border-border/60"
-                              )}>
-                                {meta.sektor}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground truncate">{safeNama}</p>
-                          </div>
-                        </div>
-
-                        {isSubmitted && (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
-                            <CheckCircle2 className="size-3" />
-                            <span>Terisi</span>
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Price Meta Panel */}
-                      <div className="grid grid-cols-2 gap-2 p-2.5 rounded-2xl bg-muted/30 dark:bg-zinc-900/50 border border-border/50 text-xs">
-                        <div>
-                          <span className="text-[9.5px] text-muted-foreground uppercase font-semibold block">Harga Kemarin</span>
-                          <span className="font-mono font-bold text-sm text-foreground">
-                            Rp {baseP.toLocaleString("id-ID")}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-[9.5px] text-muted-foreground uppercase font-semibold block">Batas ARA / ARB</span>
-                          <span className="font-mono text-xs text-muted-foreground font-semibold">
-                            Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Interactive Form Controls */}
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between text-xs font-bold text-foreground">
-                        <span>Prediksi Pembukaan (Rp):</span>
-                        {predVal > 0 && (
-                          <span className={cn(
-                            "font-mono text-[10.5px] font-bold px-2 py-0.5 rounded-md",
-                            predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                          )}>
-                            {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
-                          </span>
-                        )}
-                      </div>
-
-                      <PriceInput
-                        value={curInputVal}
-                        basePrice={baseP}
-                        onChange={(val) => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
-                        min={1}
-                        max={upper}
-                        className="h-10 rounded-2xl text-sm"
-                      />
-
-                      {/* Quick Percentage Chips */}
-                      <div className="flex items-center gap-1 justify-between">
-                        {quickChips.map(chip => {
-                          const targetP = snapToTickSize(Math.round(baseP * (1 + chip.pct / 100)));
-                          const isSelected = predVal === targetP;
-                          return (
-                            <button
-                              key={chip.label}
-                              type="button"
-                              onClick={() => setPredictionInput(prev => ({ ...prev, [s.id]: String(targetP) }))}
-                              className={cn(
-                                "flex-1 py-1 rounded-xl text-[10px] font-mono font-bold border transition-all active:scale-95",
-                                isSelected
-                                  ? "bg-amber-500 text-white border-amber-500 shadow-xs"
-                                  : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
-                              )}
-                            >
-                              {chip.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                        <TickSizeBadge price={predVal} basePrice={baseP} />
-                        <span>Kelipatan fraksi BEI</span>
-                      </div>
-
-                      {isInvalid && (
-                        <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
-                          {!isValidTickSize(predVal) ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
-                        </p>
-                      )}
-
-                      {/* Direct Inline Action Button */}
-                      <Button
-                        type="button"
-                        onClick={() => handleSubmitPredictionAndNext(s.id)}
-                        disabled={isInvalid || (!curInputVal && !isSubmitted)}
-                        className={cn(
-                          "w-full h-11 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-2",
-                          isSubmitted
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
-                            : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
-                        )}
-                      >
-                        {isSubmitted ? (
-                          <>
-                            <CheckCircle2 className="size-4" />
-                            <span>Simpan Perubahan Prediksi</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="size-4" />
-                            <span>Simpan Prediksi {safeKode}</span>
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ══════════════════════════════════════════════════════════
-              B. MOBILE VIEW (md:hidden): Compact Cards + Centered Modal Wizard
-             ══════════════════════════════════════════════════════════ */}
-          <div className="md:hidden space-y-3">
-            {/* Compact & Sleek Hero Card */}
-            {submittedCount >= stocks.length && stocks.length > 0 ? (
-              <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2 shadow-2xs">
-                <div className="flex items-center gap-2 min-w-0">
-                  <CheckCircle2 className="size-4.5 text-emerald-500 shrink-0" />
-                  <div className="min-w-0">
-                    <span className="font-bold text-xs text-foreground block truncate">Semua ({stocks.length}) Prediksi Lengkap</span>
-                    <span className="text-[10px] text-muted-foreground block truncate">Bisa diedit sampai waktu habis</span>
-                  </div>
-                </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => handleOpenModalForStock(stocks[0]?.id)}
-                  className="h-7.5 px-2.5 rounded-xl text-[11px] font-bold text-emerald-600 dark:text-emerald-400 border-emerald-500/30 shrink-0"
-                >
-                  <Edit3 className="size-3 mr-1" /> Edit
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded-3xl border border-border/80 bg-gradient-to-br from-card via-card/80 to-muted/20 p-3.5 sm:p-4 shadow-xs space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider block">
-                      Formulir Pra-Pembukaan
-                    </span>
-                    <p className="text-xs text-foreground font-semibold truncate">
-                      Isi estimasi harga sebelum bel perdagangan berbunyi
-                    </p>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-mono font-bold text-[10.5px] shrink-0">
-                    {submittedCount}/{stocks.length} Terisi
-                  </span>
-                </div>
-
-                {/* Mini Segmented Progress Bar */}
-                <div className="flex items-center gap-1.5 w-full">
-                  {stocks.map((s, idx) => {
-                    const isDone = predictionsSubmitted[s.id] !== undefined;
-                    return (
-                      <div 
-                        key={s.id} 
-                        className={cn(
-                          "h-1.5 flex-1 rounded-full transition-all duration-300", 
-                          isDone ? "bg-emerald-500" : "bg-muted/80 dark:bg-zinc-800"
-                        )} 
-                      />
-                    );
-                  })}
-                </div>
-
-                {/* CTA Trigger */}
-                <Button
-                  onClick={() => handleOpenModalForStock(activeModalStock?.id || stocks[0]?.id)}
-                  className="w-full h-11 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs shadow-md shadow-amber-500/20 active:scale-[0.98] min-h-[44px] flex items-center justify-center gap-2"
-                >
-                  <Sparkles className="size-4" />
-                  <span>{submittedCount > 0 ? "Lanjutkan Pengisian Prediksi" : "Mulai Isi Prediksi Saham"}</span>
-                </Button>
-              </div>
-            )}
-
-            {/* Compact Fintech Stock Cards List */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                  Daftar Saham ({stocks.length})
-                </span>
-                <span className="text-[9.5px] text-muted-foreground">Tap untuk input/edit</span>
-              </div>
-
-              <div className="space-y-2">
-                {stocks.map((s, idx) => {
-                  const isSubmitted = predictionsSubmitted[s.id] !== undefined;
-                  const submittedVal = predictionsSubmitted[s.id];
-                  const baseP = Number(s.basePrice);
-                  const safeKode = (s as any).kodeSaham || (s as any).kode || "N/A";
-                  const safeNama = (s as any).namaSaham || (s as any).nama || "Tidak ada data";
-                  const meta = getMeta(safeKode);
-                  const diffPct = isSubmitted && baseP > 0 ? ((submittedVal - baseP) / baseP) * 100 : 0;
-
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => handleOpenModalForStock(s.id)}
-                      className={cn(
-                        "group text-left w-full rounded-2xl border p-2.5 sm:p-3 transition-all duration-200 shadow-2xs active:scale-[0.985] min-h-[58px] flex items-center justify-between gap-2.5",
-                        isSubmitted
-                          ? "bg-emerald-500/5 hover:bg-emerald-500/10 border-emerald-500/30 dark:border-emerald-500/30"
-                          : "bg-card/90 hover:bg-muted/40 border-border/80 hover:border-amber-500/50"
-                      )}
-                    >
-                      {/* Left: Ticker Avatar & Details */}
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={cn(
-                          "flex size-9 items-center justify-center rounded-xl font-mono font-bold text-xs shrink-0 border transition-transform group-hover:scale-105",
-                          isSubmitted
-                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                            : "bg-primary/10 text-primary border-primary/20"
-                        )}>
-                          {safeKode}
-                        </div>
-
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="font-bold text-xs text-foreground group-hover:text-primary transition-colors truncate">
-                              {safeKode}
-                            </h4>
-                            <span className="text-[8px] px-1.5 py-0.2 rounded-full border bg-muted/50 text-muted-foreground font-medium shrink-0">
-                              {meta.sektor}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-muted-foreground font-mono truncate">
-                            Tutup: Rp {baseP.toLocaleString("id-ID")}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right: Submitted Value or Action Pill */}
-                      <div className="text-right shrink-0 flex items-center gap-1.5">
-                        {isSubmitted ? (
-                          <div className="font-mono text-right">
-                            <div className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                              Rp {submittedVal.toLocaleString("id-ID")}
-                            </div>
-                            <div className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-0.5">
-                              <CheckCircle2 className="size-2.5" />
-                              <span>{diffPct >= 0 ? "+" : ""}{diffPct.toFixed(1)}%</span>
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10.5px] flex items-center gap-1 group-hover:bg-amber-500/20 transition-colors">
-                            <Sparkles className="size-3" />
-                            <span>Isi</span>
-                          </span>
-                        )}
-                        <ChevronRight className="size-3.5 text-muted-foreground/50 group-hover:text-foreground transition-colors shrink-0" />
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Mobile Centered Dialog Focus Card (Strictly md:hidden) */}
-            {isPredictionModalOpen && activeModalStock && (
-              <div className="fixed inset-0 z-[80] md:hidden flex items-center justify-center p-2.5 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-                <div 
-                  className="fixed inset-0"
-                  onClick={() => setIsPredictionModalOpen(false)}
-                />
-                
-                <div className="relative z-10 w-full max-w-[370px] sm:max-w-[400px] flex flex-col gap-2 animate-in zoom-in-95 duration-200">
-                  {/* Running text directly above prediction modal card with a small gap */}
-                  {runningText.active && runningText.type !== "NONE" && (
-                    <div className="w-full animate-in slide-in-from-top-2 duration-200 shadow-xl">
-                      <RunningText
-                        active={runningText.active}
-                        type={runningText.type}
-                        title={runningText.title}
-                        content={runningText.content}
-                      />
-                    </div>
-                  )}
-
-                  {/* Modal Card Content */}
-                  <div className="w-full bg-background dark:bg-zinc-950 border border-border/80 dark:border-amber-500/30 rounded-3xl p-3 sm:p-4 shadow-2xl shadow-black/50 space-y-2 overflow-hidden">
-                    {/* Segmented Top Progress Bar */}
-                    <div className="flex items-center gap-1 w-full">
-                      {stocks.map((s, idx) => {
-                        const isDone = predictionsSubmitted[s.id] !== undefined;
-                        const isCur = s.id === activeModalStock.id;
-                        return (
-                          <button
-                            key={s.id}
-                            onClick={() => setActiveModalStockId(s.id)}
-                            className={cn(
-                              "h-1 flex-1 rounded-full transition-all duration-300",
-                              isCur 
-                                ? "bg-amber-500 ring-2 ring-amber-500/30" 
-                                : isDone 
-                                  ? "bg-emerald-500" 
-                                  : "bg-muted/80 dark:bg-zinc-800"
-                            )}
-                            title={`Saham ${(s as any).kodeSaham || (s as any).kode}`}
-                          />
-                        );
-                      })}
-                    </div>
-
-                    {/* Modal Header */}
-                    <div className="flex items-center justify-between border-b border-border/50 pb-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="px-2 py-0.2 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] shrink-0">
-                          Saham {activeStockIndex + 1}/{stocks.length}
-                        </span>
-                        {predictionsSubmitted[activeModalStock.id] !== undefined && (
-                          <span className="text-[9.5px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-0.5 shrink-0">
-                            <CheckCircle2 className="size-2.5" /> Terisi
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Header Right: Live Session Countdown Timer + Close Button */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className={cn(
-                          "flex items-center gap-1.5 font-mono text-xs sm:text-sm px-2.5 py-1 rounded-xl font-black border transition-all shadow-xs",
-                          isPaused
-                            ? "text-amber-600 dark:text-amber-300 bg-amber-500/15 border-amber-500/30"
-                            : sessionTimer <= 10 
-                              ? "text-rose-600 dark:text-rose-400 bg-rose-500/15 border-rose-500/30 ring-2 ring-rose-500/30 animate-pulse" 
-                              : sessionTimer <= 30 
-                                ? "text-amber-600 dark:text-amber-400 bg-amber-500/15 border-amber-500/30" 
-                                : "text-emerald-600 dark:text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
-                        )}>
-                          <Timer className="size-3.5 shrink-0" />
-                          <span>{Math.floor(sessionTimer / 60)}:{String(sessionTimer % 60).padStart(2, "0")}</span>
-                        </div>
-
-                        <button 
-                          onClick={() => setIsPredictionModalOpen(false)} 
-                          className="size-6 rounded-full flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                          aria-label="Tutup modal"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Stock Profile & Input */}
-                    {(() => {
-                      const baseP = Number(activeModalStock.basePrice);
-                      const { upper, lower } = getAutoRejectionLimits(baseP);
-                      const meta = getMeta((activeModalStock as any).kodeSaham || (activeModalStock as any).kode);
-                      const predVal = parseInt(predictionInput[activeModalStock.id]) || predictionsSubmitted[activeModalStock.id] || 0;
-                      const isInvalid = predVal > 0 && (!isValidTickSize(predVal) || predVal > upper || predVal < lower);
-                      const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
-
-                      const quickChips = [
-                        { label: "-5%", pct: -5 },
-                        { label: "-2%", pct: -2 },
-                        { label: "Sama", pct: 0 },
-                        { label: "+2%", pct: 2 },
-                        { label: "+5%", pct: 5 },
-                      ];
-
-                      return (
-                        <div className="space-y-2">
-                          {/* Stock Card Highlight (Compact) */}
-                          <div className="p-2 rounded-xl bg-muted/40 dark:bg-zinc-900/60 border border-border/60 space-y-1">
-                            <div className="flex items-center justify-between gap-1.5">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <div className="flex min-w-[42px] h-8 px-2 items-center justify-center rounded-xl bg-primary/15 text-primary font-mono font-black text-xs whitespace-nowrap border border-primary/30 shrink-0 shadow-2xs">
-                                  {(activeModalStock as any).kodeSaham || (activeModalStock as any).kode}
-                                </div>
-                                <div className="min-w-0">
-                                  <h3 className="font-bold text-xs text-foreground truncate">
-                                    {(activeModalStock as any).kodeSaham || (activeModalStock as any).kode}
-                                  </h3>
-                                  <p className="text-[9px] text-muted-foreground truncate">
-                                    {(activeModalStock as any).namaSaham || (activeModalStock as any).nama}
-                                  </p>
-                                </div>
-                              </div>
-                              <span className="text-[8px] px-1.5 py-0.2 rounded-full border bg-background font-semibold text-muted-foreground shrink-0">
-                                {meta.sektor}
-                              </span>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-border/40 text-[9.5px]">
-                              <div>
-                                <span className="text-muted-foreground text-[8px] uppercase block">Harga Kemarin</span>
-                                <span className="font-mono font-bold text-[11px] text-foreground">
-                                  Rp {baseP.toLocaleString("id-ID")}
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-muted-foreground text-[8px] uppercase block">Batas ARA / ARB</span>
-                                <span className="font-mono text-[9.5px] text-muted-foreground font-semibold">
-                                  Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Prediction Input & Stepper */}
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[10px] font-bold text-foreground">
-                              <span>Prediksi Harga Pembukaan:</span>
-                              {predVal > 0 && (
-                                <span className={cn("font-mono text-[9.5px] font-bold px-1.5 py-0.2 rounded", predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400")}>
-                                  {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
-                                </span>
-                              )}
-                            </div>
-                            
-                            <PriceInput 
-                              value={predictionInput[activeModalStock.id] || (predictionsSubmitted[activeModalStock.id] ? String(predictionsSubmitted[activeModalStock.id]) : "")} 
-                              basePrice={baseP} 
-                              onChange={val => setPredictionInput(prev => ({ ...prev, [activeModalStock.id]: val }))} 
-                              min={1} 
-                              max={upper} 
-                              className="h-8.5 rounded-xl text-xs"
-                            />
-
-                            {/* Quick Percentage Chips */}
-                            <div className="flex items-center gap-1 pt-0.5 justify-between">
-                              {quickChips.map(chip => {
-                                const targetP = snapToTickSize(Math.round(baseP * (1 + chip.pct / 100)));
-                                const isSelected = predVal === targetP;
-                                return (
-                                  <button
-                                    key={chip.label}
-                                    type="button"
-                                    onClick={() => {
-                                      setPredictionInput(prev => ({ ...prev, [activeModalStock.id]: String(targetP) }));
-                                    }}
-                                    className={cn(
-                                      "flex-1 py-0.8 rounded-lg text-[9px] font-mono font-bold border transition-all active:scale-95",
-                                      isSelected 
-                                        ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
-                                        : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
-                                    )}
-                                  >
-                                    {chip.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            
-                            <div className="flex items-center justify-between text-[8.5px] text-muted-foreground font-mono">
-                              <TickSizeBadge price={predVal} basePrice={baseP} />
-                              <span>Kelipatan fraksi BEI</span>
-                            </div>
-                            {isInvalid && (
-                              <p className="text-[8.5px] text-rose-600 dark:text-rose-400 font-medium">
-                                {!isValidTickSize(predVal) ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Modal Action Buttons (Single Row / Compact Stack) */}
-                          <div className="space-y-1 pt-0.5">
-                            <Button 
-                              onClick={() => handleSubmitPredictionAndNext(activeModalStock.id)} 
-                              disabled={isInvalid || (!predictionInput[activeModalStock.id] && !predictionsSubmitted[activeModalStock.id])} 
-                              className="w-full h-9.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all active:scale-[0.98] min-h-[38px] flex items-center justify-center gap-1.5"
-                            >
-                              <Sparkles className="size-3.5" />
-                              <span>{activeStockIndex === stocks.length - 1 && submittedCount >= stocks.length - 1 ? "Simpan & Selesaikan Prediksi" : "Simpan & Lanjut Berikutnya"}</span>
-                            </Button>
-                            
-                            <div className="flex items-center gap-1.5">
-                              <Button 
-                                variant="outline" 
-                                type="button" 
-                                onClick={() => handleSkipStock(activeModalStock.id)} 
-                                className="flex-1 h-8 rounded-lg text-[11px] font-semibold text-muted-foreground hover:text-foreground min-h-[32px]"
-                              >
-                                <SkipForward className="size-3 mr-1" />
-                                <span>Lewati Sementara</span>
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                type="button" 
-                                onClick={() => setIsPredictionModalOpen(false)} 
-                                className="h-8 px-2.5 rounded-lg text-[11px] font-semibold text-muted-foreground hover:text-foreground min-h-[32px]"
-                              >
-                                Tutup
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        /* ── TRADING PHASE: Dual Adaptive Interface (Mobile Modal vs Desktop Full Workstation) ── */
-        <div>
+      {/* ── UNIFIED TRADING INTERFACE: Dual Adaptive Interface (Mobile Modal vs Desktop Full Workstation) ── */}
+      <div>
           {/* ══════════════════════════════════════════════════════════
               1. MOBILE VIEW (md:hidden): Compact Catalog + Centered Modal
              ══════════════════════════════════════════════════════════ */}
@@ -1489,16 +1009,19 @@ function TradingPageContent() {
                   </span>
                   <div className="min-w-0">
                     <span className="font-extrabold text-xs text-foreground block truncate">
-                      Pasar Perdagangan Aktif
+                      {phase === "PRE_MARKET" ? "Sesi Pra-Pembukaan Pasar" : "Pasar Perdagangan Aktif"}
                     </span>
                     <span className="text-[10px] text-muted-foreground block truncate">
-                      Tap saham untuk transaksi live order
+                      {phase === "PRE_MARKET" ? "Tap saham untuk order lelang pra-pembukaan" : "Tap saham untuk transaksi live order"}
                     </span>
                   </div>
                 </div>
 
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] shrink-0">
-                  {stocks.length} Saham
+                  {phase === "PRE_MARKET" 
+                    ? `${Object.keys(ordersPlacedMap).length}/${stocks.length} Terorder`
+                    : `${stocks.length} Saham`
+                  }
                 </span>
               </div>
 
@@ -1542,6 +1065,146 @@ function TradingPageContent() {
                   const chg = openP > 0 ? ((lastP - openP) / openP) * 100 : 0;
                   const userLot = portfoliosMap[s.id] || 0;
                   const isPositive = chg >= 0;
+
+                  const isSubmitted = predictionsSubmitted[s.id] !== undefined;
+                  const submittedVal = predictionsSubmitted[s.id];
+                  const curInputVal = predictionInput[s.id] ?? (isSubmitted ? String(submittedVal) : "");
+                  const predVal = parseInt(curInputVal) || 0;
+                  const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
+                  const { upper, lower } = getAutoRejectionLimits(baseP);
+                  const isInvalid = predVal > 0 && (!isValidTickSize(predVal, baseP) || predVal > upper || predVal < lower);
+                  const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
+
+                  const quickChips = [
+                    { label: "-5%", pct: -5 },
+                    { label: "-2%", pct: -2 },
+                    { label: "Sama", pct: 0 },
+                    { label: "+2%", pct: 2 },
+                    { label: "+5%", pct: 5 },
+                  ];
+
+                  if (phase === "PRE_MARKET") {
+                    return (
+                      <div
+                        key={s.id}
+                        className={cn(
+                          "rounded-2xl border p-3 transition-all duration-200 shadow-2xs bg-card space-y-2.5",
+                          isSubmitted 
+                            ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]" 
+                            : "border-border/80 hover:border-amber-500/40"
+                        )}
+                      >
+                        {/* Top Ticker & Identity Row (Clickable to open trading modal) */}
+                        <div
+                          onClick={() => selectStock(s)}
+                          className="flex items-center justify-between gap-2 cursor-pointer active:opacity-80 transition-opacity"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="flex size-9.5 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary font-mono font-black text-xs shrink-0 border border-primary/20 shadow-2xs">
+                              {safeKode}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="font-bold text-xs text-foreground truncate">{safeKode}</h4>
+                                <span className={cn(
+                                  "text-[8px] px-1.5 py-0.2 rounded-full border font-semibold shrink-0",
+                                  sektorWarna[meta.sektor] || "bg-muted text-muted-foreground border-border/60"
+                                )}>
+                                  {meta.sektor}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground truncate">{safeNama}</div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isSubmitted ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle2 className="size-3" />
+                                <span>Rp {submittedVal.toLocaleString("id-ID")}</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[9.5px]">
+                                Belum Diisi
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); selectStock(s); }}
+                              className="p-1.5 rounded-xl bg-primary/10 border border-primary/25 text-primary hover:bg-primary/20 text-[10px] font-bold flex items-center gap-1"
+                              title="Buka terminal transaksi"
+                            >
+                              <Zap className="size-3 fill-current" />
+                              <span>Trade</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Compact Meta & Prediction Form */}
+                        <div className="space-y-1.5 pt-1 border-t border-border/40">
+                          <div className="flex items-center justify-between text-[10.5px]">
+                            <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
+                            {predVal > 0 && (
+                              <span className={cn(
+                                "font-mono text-[10px] font-bold px-1.5 py-0.2 rounded",
+                                predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                              )}>
+                                {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <PriceInput
+                              value={curInputVal}
+                              basePrice={baseP}
+                              onChange={(val) => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
+                              min={1}
+                              max={upper}
+                              className="h-8 rounded-xl text-xs flex-1"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleSubmitPrediction(s.id)}
+                              disabled={isInvalid || (!curInputVal && !isSubmitted)}
+                              className={cn(
+                                "h-8 px-3 rounded-xl font-bold text-xs shrink-0",
+                                isSubmitted
+                                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                  : "bg-amber-500 hover:bg-amber-600 text-white"
+                              )}
+                            >
+                              {isSubmitted ? "Ubah" : "Simpan"}
+                            </Button>
+                          </div>
+
+                          {/* Quick Chips */}
+                          <div className="flex items-center gap-1">
+                            {quickChips.map(chip => {
+                              const targetP = calculateQuickPrice(baseP, chip.pct);
+                              const isSelected = predVal === targetP;
+                              return (
+                                <button
+                                  key={chip.label}
+                                  type="button"
+                                  onClick={() => setPredictionInput(prev => ({ ...prev, [s.id]: String(targetP) }))}
+                                  className={cn(
+                                    "flex-1 py-0.5 rounded-lg text-[9px] font-mono font-bold border transition-all active:scale-95",
+                                    isSelected
+                                      ? "bg-amber-500 text-white border-amber-500"
+                                      : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/50"
+                                  )}
+                                >
+                                  {chip.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
 
                   return (
                     <button
@@ -1594,10 +1257,17 @@ function TradingPageContent() {
                           </div>
                         </div>
 
-                        <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] flex items-center gap-1 group-hover:bg-emerald-500/20 transition-all shrink-0 min-h-[34px]">
-                          <Zap className="size-3 text-emerald-500 fill-emerald-500/30" />
-                          <span>Trade</span>
-                        </span>
+                        {ordersPlacedMap[s.id] || predictionsSubmitted[s.id] !== undefined ? (
+                          <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
+                            <CheckCircle2 className="size-2.5" />
+                            <span>Terorder</span>
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] flex items-center gap-1 group-hover:bg-emerald-500/20 transition-all shrink-0 min-h-[34px]">
+                            <Zap className="size-3 text-emerald-500 fill-emerald-500/30" />
+                            <span>Trade</span>
+                          </span>
+                        )}
                       </div>
                     </button>
                   );
@@ -1656,6 +1326,14 @@ function TradingPageContent() {
                         );
                       })}
                     </div>
+
+                    {/* Mobile Practice Mode Banner */}
+                    {phase === "PRE_MARKET" && (
+                      <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[10px] font-medium flex items-center gap-1.5 shrink-0">
+                        <Sparkles className="size-3.5 text-amber-500 shrink-0" />
+                        <span><b>Mode Latihan Pra-Pembukaan:</b> Bebas BID/ASK, saldo kas &amp; lot aman (tidak terpotong).</span>
+                      </div>
+                    )}
 
                     {/* Modal Header: Stock Switcher & Live Timer */}
                     <div className="flex items-center justify-between border-b border-border/50 pb-1.5 shrink-0">
@@ -1840,9 +1518,11 @@ function TradingPageContent() {
                             {/* Kas & Ownership Bar */}
                             <div className="flex items-center justify-between text-[9.5px] text-muted-foreground px-0.5 font-mono">
                               <span>
-                                {orderType === "BID" 
-                                  ? `Sisa Kas: Rp ${balance.toLocaleString("id-ID")} `
-                                  : `Milik: ${userOwnedLot} Lot (${stock.kodeSaham})`
+                                {phase === "PRE_MARKET"
+                                  ? "Mode Latihan: Saldo & Lot Bebas (Aman)"
+                                  : orderType === "BID" 
+                                    ? `Sisa Kas: Rp ${balance.toLocaleString("id-ID")} `
+                                    : `Milik: ${userOwnedLot} Lot (${stock.kodeSaham})`
                                 }
                               </span>
                               <span>ARA/ARB: {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
@@ -1897,9 +1577,11 @@ function TradingPageContent() {
                                 <div className="flex items-center justify-between text-[9.5px]">
                                   <span className="font-bold text-foreground">Jumlah (Lot):</span>
                                   <span className="text-[8.5px] text-muted-foreground font-mono">
-                                    {orderType === "BID" 
-                                      ? (pNum > 0 ? `Maks: ${Math.floor(balance / (pNum * 100))}` : "") 
-                                      : `Maks: ${userOwnedLot}`
+                                    {phase === "PRE_MARKET"
+                                      ? "Latihan Bebas"
+                                      : orderType === "BID" 
+                                        ? (pNum > 0 ? `Maks: ${Math.floor(balance / (pNum * 100))}` : "") 
+                                        : `Maks: ${userOwnedLot}`
                                     }
                                   </span>
                                 </div>
@@ -1948,7 +1630,9 @@ function TradingPageContent() {
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (orderType === "BID") {
+                                      if (phase === "PRE_MARKET") {
+                                        setOrderLot("10");
+                                      } else if (orderType === "BID") {
                                         if (pNum > 0) {
                                           const maxB = Math.floor(balance / (pNum * 100));
                                           if (maxB > 0) setOrderLot(String(maxB));
@@ -1976,15 +1660,21 @@ function TradingPageContent() {
                               {orderType === "BID" && (
                                 <div className="flex items-center gap-1">
                                   <span className="text-muted-foreground">Sisa:</span>
-                                  <span className={cn("font-semibold", balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400 font-bold")}>
-                                    Rp {(balance - totalEst).toLocaleString("id-ID")}
-                                  </span>
+                                  {phase === "PRE_MARKET" ? (
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                      Rp {balance.toLocaleString("id-ID")} (Aman)
+                                    </span>
+                                  ) : (
+                                    <span className={cn("font-semibold", balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400 font-bold")}>
+                                      Rp {(balance - totalEst).toLocaleString("id-ID")}
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>
 
                             {/* Error validations */}
-                            {(isPriceInvalid || isLotInvalid) && (
+                            {(isPriceInvalid || (phase === "TRADING" && isLotInvalid)) && (
                               <p className="text-[9px] text-rose-600 dark:text-rose-400 font-medium px-0.5">
                                 {isPriceInvalid 
                                   ? (!isValidTickSize(pNum) ? `Harga harus kelipatan Rp ${getTickSize(pNum)}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`)
@@ -2069,7 +1759,7 @@ function TradingPageContent() {
                       const totalEst = pNum * (lotNum * 100);
                       const isPriceInvalid = pNum > 0 && (!isValidTickSize(pNum) || pNum > upper || pNum < lower);
                       const userOwnedLot = portfoliosMap[stock.id] || 0;
-                      const isLotInvalid = lotNum > 0 && ((orderType === "ASK" && lotNum > userOwnedLot) || (orderType === "BID" && totalEst > balance));
+                      const isLotInvalid = lotNum > 0 && phase === "TRADING" && ((orderType === "ASK" && lotNum > userOwnedLot) || (orderType === "BID" && totalEst > balance));
 
                       return (
                         <div className="flex items-center gap-2 pt-1.5 border-t border-border/40 shrink-0">
@@ -2086,9 +1776,12 @@ function TradingPageContent() {
                             <Sparkles className="size-3.5" />
                             <span>
                               {(() => {
+                                const lotText = lotNum > 0 ? ` · ${lotNum}L` : "";
+                                if (phase === "PRE_MARKET") {
+                                  return orderType === "BID" ? `Kirim Latihan Beli${lotText}` : `Kirim Latihan Jual${lotText}`;
+                                }
                                 const remainingCount = stocks.filter(s => !ordersPlacedMap[s.id] && s.id !== stock.id).length;
                                 const isLastUnordered = remainingCount === 0;
-                                const lotText = lotNum > 0 ? ` · ${lotNum}L` : "";
                                 if (isLastUnordered) {
                                   return orderType === "BID" ? `Kirim Beli & Selesai${lotText}` : `Kirim Jual & Selesai${lotText}`;
                                 }
@@ -2128,7 +1821,7 @@ function TradingPageContent() {
              ══════════════════════════════════════════════════════════ */}
           <div className="hidden md:block space-y-4">
             {!stock ? (
-              /* A. DESKTOP STOCK CATALOG (DAFTAR SAHAM PERDAGANGAN) */
+              /* A. DESKTOP STOCK CATALOG (DAFTAR SAHAM PERDAGANGAN / PRA-PEMBUKAAN) */
               <div className="space-y-4">
                 {/* Desktop Summary Hero Banner */}
                 <div className="rounded-3xl border border-border/80 bg-gradient-to-br from-card via-card/95 to-emerald-500/5 p-5 shadow-xs flex items-center justify-between gap-6">
@@ -2139,34 +1832,72 @@ function TradingPageContent() {
                         <span className="relative inline-flex rounded-full size-3 bg-emerald-500" />
                       </span>
                       <span className="font-extrabold text-base text-foreground">
-                        Pasar Perdagangan Aktif
+                        {phase === "PRE_MARKET" ? "Sesi Pra-Pembukaan Pasar" : "Pasar Perdagangan Aktif"}
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-xs">
-                        {stocks.length} Saham Tersedia
+                      <span className={cn(
+                        "px-2.5 py-0.5 rounded-full border font-mono font-bold text-xs",
+                        phase === "PRE_MARKET"
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                          : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                      )}>
+                        {phase === "PRE_MARKET" 
+                          ? `${submittedCount}/${stocks.length} Saham Terisi`
+                          : `${stocks.length} Saham Tersedia`
+                        }
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Pilih saham di bawah untuk membuka terminal perdagangan, memantau grafik harga real-time, dan mengirimkan order lelang (BID / ASK).
+                      {phase === "PRE_MARKET"
+                        ? "Masukkan perkiraan harga pembukaan setiap saham pada formulir di bawah. Anda juga dapat mengklik kartu atau tombol terminal untuk masuk ke tampilan trading simulasi."
+                        : "Pilih saham di bawah untuk membuka terminal perdagangan, memantau grafik harga real-time, dan mengirimkan order lelang (BID / ASK)."
+                      }
                     </p>
                   </div>
 
-                  {/* Right Financial Balance Cards */}
-                  <div className="flex items-center gap-3 shrink-0 font-mono">
-                    <div className="p-3 rounded-2xl bg-muted/40 border border-border/70 min-w-[170px]">
-                      <span className="text-[10px] uppercase font-sans font-semibold text-muted-foreground block">
-                        Kas Tersedia
-                      </span>
-                      <span className="font-extrabold text-base text-foreground truncate block">
-                        Rp {balance.toLocaleString("id-ID")}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-2xl bg-muted/40 border border-border/70 min-w-[170px] text-right">
-                      <span className="text-[10px] uppercase font-sans font-semibold text-muted-foreground block">
-                        Nilai Portofolio
-                      </span>
-                      <span className="font-extrabold text-base text-emerald-600 dark:text-emerald-400 truncate block">
-                        Rp {totalStockValue.toLocaleString("id-ID")}
-                      </span>
+                  {/* Right: Pre-market Progress or Financial Balance Cards */}
+                  <div className="flex items-center gap-4 shrink-0">
+                    {phase === "PRE_MARKET" && stocks.length > 0 && (
+                      <div className="p-3 rounded-2xl bg-card border border-border/80 min-w-[200px] space-y-1.5 shadow-2xs">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-[10px] uppercase font-semibold text-muted-foreground">Progres Perkiraan</span>
+                          <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                            {Math.round((submittedCount / stocks.length) * 100)}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 w-full">
+                          {stocks.map(s => {
+                            const isDone = predictionsSubmitted[s.id] !== undefined;
+                            return (
+                              <div
+                                key={s.id}
+                                className={cn(
+                                  "h-1.5 flex-1 rounded-full transition-all duration-300",
+                                  isDone ? "bg-emerald-500 shadow-xs" : "bg-muted dark:bg-zinc-800"
+                                )}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3 font-mono">
+                      <div className="p-3 rounded-2xl bg-muted/40 border border-border/70 min-w-[150px]">
+                        <span className="text-[10px] uppercase font-sans font-semibold text-muted-foreground block">
+                          Kas Tersedia
+                        </span>
+                        <span className="font-extrabold text-sm sm:text-base text-foreground truncate block">
+                          Rp {balance.toLocaleString("id-ID")}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-2xl bg-muted/40 border border-border/70 min-w-[150px] text-right">
+                        <span className="text-[10px] uppercase font-sans font-semibold text-muted-foreground block">
+                          Nilai Portofolio
+                        </span>
+                        <span className="font-extrabold text-sm sm:text-base text-emerald-600 dark:text-emerald-400 truncate block">
+                          Rp {totalStockValue.toLocaleString("id-ID")}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2174,8 +1905,15 @@ function TradingPageContent() {
                 {/* Section Title */}
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm text-foreground">Daftar Saham Perdagangan ({stocks.length})</h3>
-                    <span className="text-xs text-muted-foreground">· Klik kartu atau tombol untuk masuk ke terminal transaksi</span>
+                    <h3 className="font-bold text-sm text-foreground">
+                      {phase === "PRE_MARKET" ? "Daftar Saham Pra-Pembukaan" : "Daftar Saham Perdagangan"} ({stocks.length})
+                    </h3>
+                    <span className="text-xs text-muted-foreground">
+                      {phase === "PRE_MARKET" 
+                        ? "· Isi perkiraan harga langsung di kartu, atau klik kartu untuk masuk ke terminal transaksi"
+                        : "· Klik kartu atau tombol untuk masuk ke terminal transaksi"
+                      }
+                    </span>
                   </div>
                 </div>
 
@@ -2190,9 +1928,213 @@ function TradingPageContent() {
                     const chg = openP > 0 ? ((lastP - openP) / openP) * 100 : 0;
                     const userLot = portfoliosMap[s.id] || 0;
                     const isPositive = chg >= 0;
-                    const isOrdered = ordersPlacedMap[s.id] === true;
+                    const isOrdered = ordersPlacedMap[s.id] === true || predictionsSubmitted[s.id] !== undefined;
                     const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
                     const { upper, lower } = getAutoRejectionLimits(baseP);
+
+                    const isSubmitted = predictionsSubmitted[s.id] !== undefined;
+                    const submittedVal = predictionsSubmitted[s.id];
+                    const curInputVal = predictionInput[s.id] ?? (isSubmitted ? String(submittedVal) : "");
+                    const predVal = parseInt(curInputVal) || 0;
+                    const isInvalid = predVal > 0 && (!isValidTickSize(predVal, baseP) || predVal > upper || predVal < lower);
+                    const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
+
+                    const quickChips = [
+                      { label: "-5%", pct: -5 },
+                      { label: "-2%", pct: -2 },
+                      { label: "Sama", pct: 0 },
+                      { label: "+2%", pct: 2 },
+                      { label: "+5%", pct: 5 },
+                    ];
+
+                    if (phase === "PRE_MARKET") {
+                      return (
+                        <div
+                          key={s.id}
+                          className={cn(
+                            "group relative rounded-3xl border p-5 shadow-xs transition-all duration-200 flex flex-col justify-between gap-3.5 bg-card",
+                            isSubmitted
+                              ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02] shadow-emerald-500/5"
+                              : "border-border/80 hover:border-amber-500/40"
+                          )}
+                        >
+                          {/* Top: Identity & Status (Clickable to open trading workstation) */}
+                          <div
+                            onClick={() => selectStock(s)}
+                            className="space-y-2.5 cursor-pointer"
+                            title={`Klik kartu untuk masuk ke tampilan trading ${safeKode}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex size-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary font-mono font-black text-sm shrink-0 border border-primary/20 group-hover:scale-105 transition-transform shadow-2xs">
+                                  {safeKode}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <h4 className="font-extrabold text-sm text-foreground group-hover:text-primary transition-colors truncate">
+                                      {safeKode}
+                                    </h4>
+                                    <span className={cn(
+                                      "text-[8.5px] px-2 py-0.5 rounded-full border font-semibold shrink-0",
+                                      sektorWarna[meta.sektor] || "bg-muted text-muted-foreground border-border/60"
+                                    )}>
+                                      {meta.sektor}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate">{safeNama}</p>
+                                </div>
+                              </div>
+
+                              {isSubmitted ? (
+                                <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] shrink-0 flex items-center gap-1">
+                                  <CheckCircle2 className="size-3.5" />
+                                  <span>✓ Terisi (Rp {submittedVal.toLocaleString("id-ID")})</span>
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] shrink-0">
+                                  Belum Diisi
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-[11.5px] text-muted-foreground line-clamp-2 leading-relaxed">
+                              {meta.deskripsi}
+                            </p>
+                          </div>
+
+                          {/* Middle: Benchmark Price (Harga Kemarin & Batas ARA/ARB) */}
+                          <div
+                            onClick={() => selectStock(s)}
+                            className="grid grid-cols-2 gap-2 p-2.5 rounded-2xl bg-muted/30 dark:bg-zinc-900/50 border border-border/60 text-xs font-mono cursor-pointer hover:bg-muted/50 transition-colors"
+                            title={`Klik untuk masuk ke tampilan trading ${safeKode}`}
+                          >
+                            <div>
+                              <span className="text-[9px] font-sans font-semibold text-muted-foreground uppercase block">
+                                Harga Kemarin
+                              </span>
+                              <span className="font-extrabold text-xs sm:text-sm text-foreground">
+                                Rp {baseP.toLocaleString("id-ID")}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[9px] font-sans font-semibold text-muted-foreground uppercase block">
+                                Batas ARA / ARB
+                              </span>
+                              <span className="font-semibold text-[10.5px] text-muted-foreground">
+                                Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Form Input Perkiraan Harga (Tebak Harga) */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="space-y-2 pt-2 border-t border-border/50"
+                          >
+                            <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                              <span>Perkiraan Harga Pembukaan:</span>
+                              {predVal > 0 && (
+                                <span className={cn(
+                                  "font-mono text-[10.5px] font-bold px-2 py-0.5 rounded-md",
+                                  predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                )}>
+                                  {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
+                                </span>
+                              )}
+                            </div>
+
+                            <PriceInput
+                              value={curInputVal}
+                              basePrice={baseP}
+                              onChange={(val) => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
+                              min={1}
+                              max={upper}
+                              className="h-10 rounded-2xl text-sm"
+                            />
+
+                            {/* Quick Percentage Chips */}
+                            <div className="flex items-center gap-1 justify-between">
+                              {quickChips.map(chip => {
+                                const targetP = calculateQuickPrice(baseP, chip.pct);
+                                const isSelected = predVal === targetP;
+                                return (
+                                  <button
+                                    key={chip.label}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPredictionInput(prev => ({ ...prev, [s.id]: String(targetP) }));
+                                    }}
+                                    className={cn(
+                                      "flex-1 py-1 rounded-xl text-[10px] font-mono font-bold border transition-all active:scale-95",
+                                      isSelected
+                                        ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                                        : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
+                                    )}
+                                  >
+                                    {chip.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+                              <TickSizeBadge price={predVal} basePrice={baseP} />
+                              <span>Kelipatan fraksi BEI</span>
+                            </div>
+
+                            {isInvalid && (
+                              <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
+                                {!isValidTickSize(predVal, baseP) ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
+                              </p>
+                            )}
+
+                            {/* Dual Action Buttons */}
+                            <div className="space-y-2 pt-1">
+                              <Button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSubmitPrediction(s.id);
+                                }}
+                                disabled={isInvalid || (!curInputVal && !isSubmitted)}
+                                className={cn(
+                                  "w-full h-10 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-1.5",
+                                  isSubmitted
+                                    ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
+                                    : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
+                                )}
+                              >
+                                {isSubmitted ? (
+                                  <>
+                                    <CheckCircle2 className="size-3.5" />
+                                    <span>Simpan Perubahan Perkiraan</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="size-3.5" />
+                                    <span>Simpan Perkiraan Harga</span>
+                                  </>
+                                )}
+                              </Button>
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  selectStock(s);
+                                }}
+                                className="w-full h-10 rounded-2xl border-border/80 hover:border-primary/50 hover:bg-primary/5 text-foreground font-bold text-xs flex items-center justify-center gap-1.5 transition-all group-hover:border-primary/40 shadow-2xs"
+                              >
+                                <Zap className="size-3.5 text-primary fill-primary/30" />
+                                <span>Buka Terminal Transaksi {safeKode} ›</span>
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div
@@ -2307,7 +2249,7 @@ function TradingPageContent() {
                 const lotNum = parseInt(orderLot) || 0;
                 const totalEst = pNum * (lotNum * 100);
                 const isPriceInvalid = pNum > 0 && (!isValidTickSize(pNum) || pNum > upper || pNum < lower);
-                const isLotInvalid = lotNum > 0 && ((orderType === "ASK" && lotNum > userLot) || (orderType === "BID" && totalEst > balance));
+                const isLotInvalid = lotNum > 0 && phase === "TRADING" && ((orderType === "ASK" && lotNum > userLot) || (orderType === "BID" && totalEst > balance));
 
                 return (
                   <div className="space-y-4">
@@ -2380,6 +2322,16 @@ function TradingPageContent() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Mode Latihan Pra-Pembukaan Informational Banner */}
+                    {phase === "PRE_MARKET" && (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-medium shadow-xs">
+                        <Sparkles className="size-4 shrink-0 text-amber-500" />
+                        <div className="flex-1">
+                          <span className="font-bold">Mode Latihan Pra-Pembukaan Aktif:</span> Anda dapat mencoba simulasi order Beli (BID) &amp; Jual (ASK). Order latihan ini langsung muncul di antrean Order Book secara real-time dan <b className="underline">TIDAK memotong saldo kas ataupun lot saham Anda</b>. Perkiraan harga awal Anda tetap aman tersimpan.
+                        </div>
+                      </div>
+                    )}
 
                     {/* Active Stock Identity & Live Price Ribbon */}
                     <div className="flex items-center justify-between px-5 py-3.5 rounded-3xl bg-gradient-to-r from-card via-card/95 to-muted/20 border border-border/80 shadow-xs">
@@ -2611,9 +2563,11 @@ function TradingPageContent() {
                               <div className="flex items-center justify-between text-xs">
                                 <span className="font-bold text-foreground">Jumlah Lot</span>
                                 <span className="text-muted-foreground font-mono text-[11px]">
-                                  {orderType === "BID" 
-                                    ? (pNum > 0 ? `Maks Beli: ${Math.floor(balance / (pNum * 100))} Lot` : "") 
-                                    : `Maks Jual: ${userLot} Lot`
+                                  {phase === "PRE_MARKET"
+                                    ? "Mode Latihan: Bebas Lot (Simulasi)"
+                                    : orderType === "BID" 
+                                      ? (pNum > 0 ? `Maks Beli: ${Math.floor(balance / (pNum * 100))} Lot` : "") 
+                                      : `Maks Jual: ${userLot} Lot`
                                   }
                                 </span>
                               </div>
@@ -2651,7 +2605,9 @@ function TradingPageContent() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (orderType === "BID") {
+                                    if (phase === "PRE_MARKET") {
+                                      setOrderLot("10");
+                                    } else if (orderType === "BID") {
                                       if (pNum > 0) setOrderLot(String(Math.floor(balance / (pNum * 100))));
                                     } else {
                                       if (userLot > 0) setOrderLot(String(userLot));
@@ -2673,9 +2629,15 @@ function TradingPageContent() {
                               {orderType === "BID" && (
                                 <div className="flex items-center justify-between pt-1 border-t border-border/50">
                                   <span className="text-muted-foreground font-sans">Sisa Saldo Kas:</span>
-                                  <span className={balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400 font-bold"}>
-                                    Rp {(balance - totalEst).toLocaleString("id-ID")}
-                                  </span>
+                                  {phase === "PRE_MARKET" ? (
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                      Rp {balance.toLocaleString("id-ID")} (Tidak Terpotong)
+                                    </span>
+                                  ) : (
+                                    <span className={balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400 font-bold"}>
+                                      Rp {(balance - totalEst).toLocaleString("id-ID")}
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -2704,9 +2666,11 @@ function TradingPageContent() {
                             >
                               <Sparkles className="size-4" />
                               <span>
-                                {orderType === "BID" 
-                                  ? `Kirim Order Beli (${lotNum > 0 ? `${lotNum} Lot` : "BID"})` 
-                                  : `Kirim Order Jual (${lotNum > 0 ? `${lotNum} Lot` : "ASK"})`
+                                {phase === "PRE_MARKET"
+                                  ? `Kirim Order Latihan ${orderType === "BID" ? "Beli" : "Jual"} (${lotNum > 0 ? `${lotNum} Lot` : orderType})`
+                                  : orderType === "BID" 
+                                    ? `Kirim Order Beli (${lotNum > 0 ? `${lotNum} Lot` : "BID"})` 
+                                    : `Kirim Order Jual (${lotNum > 0 ? `${lotNum} Lot` : "ASK"})`
                                 }
                               </span>
                             </Button>
@@ -2720,7 +2684,6 @@ function TradingPageContent() {
             )}
           </div>
         </div>
-      )}
     </div>
   );
 }

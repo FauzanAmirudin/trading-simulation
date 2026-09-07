@@ -3,6 +3,9 @@ import { db } from "@/db/connect";
 import { users, portfolios, stocks, transactionsHistory, orderBook } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
@@ -26,7 +29,7 @@ export async function GET() {
       const buyerId = orderUserMap[tx.orderBuyId];
       const sellerId = orderUserMap[tx.orderSellId];
       if (buyerId) txCountPerUser[buyerId] = (txCountPerUser[buyerId] || 0) + 1;
-      if (sellerId) txCountPerUser[sellerId] = (txCountPerUser[sellerId] || 0) + 1;
+      if (sellerId && sellerId !== buyerId) txCountPerUser[sellerId] = (txCountPerUser[sellerId] || 0) + 1;
     }
 
     // Calculate initial base portfolio value (36 stocks * 10 lots * 100 shares * basePrice)
@@ -37,7 +40,7 @@ export async function GET() {
 
     // Build the results per user
     const results = allRespondents.map((user) => {
-      const userKas = Number(user.saldo);
+      const userKas = Number(user.saldo) || 0;
       const userPortos = allPortfolios.filter(p => p.userId === user.id);
       
       let nilaiPortofolio = 0;
@@ -48,7 +51,7 @@ export async function GET() {
 
       const totalKekayaan = userKas + nilaiPortofolio;
       const pnlAmount = totalKekayaan - initialCapital;
-      const pnlPercent = (pnlAmount / initialCapital) * 100;
+      const pnlPercent = initialCapital > 0 ? (pnlAmount / initialCapital) * 100 : 0;
       const jumlahTransaksi = txCountPerUser[user.id] || 0;
 
       return {
@@ -64,8 +67,14 @@ export async function GET() {
       };
     });
 
-    // Sort descending by totalKekayaan
-    results.sort((a, b) => b.totalKekayaan - a.totalKekayaan);
+    // Sort descending by totalKekayaan (paling tinggi ke paling rendah)
+    results.sort((a, b) => {
+      if (b.totalKekayaan !== a.totalKekayaan) return b.totalKekayaan - a.totalKekayaan;
+      if (b.pnlAmount !== a.pnlAmount) return b.pnlAmount - a.pnlAmount;
+      if (b.kas !== a.kas) return b.kas - a.kas;
+      if (b.jumlahTransaksi !== a.jumlahTransaksi) return b.jumlahTransaksi - a.jumlahTransaksi;
+      return a.nama.localeCompare(b.nama);
+    });
 
     // Assign rank
     results.forEach((r, idx) => {

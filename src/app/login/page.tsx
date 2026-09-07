@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth-context";
-import { motion } from "framer-motion";
 import { ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Navbar } from "@/components/layout/Navbar";
@@ -24,6 +23,20 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("reason") === "timeout") {
+        toast.warning(
+          "Sesi Anda telah berakhir karena tidak ada aktivitas selama 1 jam. Silakan masuk kembali.",
+          { duration: 6000 }
+        );
+        // Preservasi history state Next.js App Router agar tidak crash
+        window.history.replaceState(window.history.state, "", "/login");
+      }
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,12 +71,7 @@ export default function LoginPage() {
       <Navbar />
       <main className="relative flex flex-1 items-center justify-center w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 overflow-hidden py-12">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(79,70,229,0.15)_0%,transparent_60%)] dark:bg-[radial-gradient(ellipse_at_50%_0%,rgba(6,182,212,0.12)_0%,transparent_60%)]" />
-      <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-        className="w-full max-w-sm relative"
-      >
+      <div className="w-full max-w-sm relative animate-in fade-in slide-in-from-bottom-6 duration-300">
         <Card className="border-indigo-100/60 dark:border-border bg-white/80 backdrop-blur-xl shadow-2xl dark:shadow-none dark:bg-slate-950/50">
           <CardHeader className="text-center bg-gradient-to-b from-indigo-50/50 to-transparent dark:from-transparent rounded-t-xl">
             <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full bg-primary/10">
@@ -106,7 +114,7 @@ export default function LoginPage() {
             </form>
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
       </main>
       <Footer />
     </div>

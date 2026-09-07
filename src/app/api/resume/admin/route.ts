@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { transactionsHistory, orderBook, stocks, users } from "@/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get("date");
+    const roundIdParam = searchParams.get("roundId");
 
     // 1. Fetch total participants count
     const [participantsCountRow] = await db
@@ -15,21 +16,15 @@ export async function GET(req: NextRequest) {
       .where(eq(users.role, "responden"));
     const participantsCount = Number(participantsCountRow?.count) || 0;
 
-    // 2. Fetch all transaction history with detailed buyer and seller names
-    // We join orderBook for buy order to get buyer, and orderBook for sell order to get seller.
-    // To do this simply and cleanly, we first select the transactions and then fetch user details, 
-    // or run queries to fetch and join them.
-    // In Drizzle, joining the same table twice requires aliases. To avoid aliasedTable import complexity, 
-    // we can query the transactions first, then perform in-memory mapping using user names fetched in a single query!
-    // This is extremely clean, highly performant, and completely avoids complex multiple-join compile issues.
-    
+    // 2. Fetch user and order mappings in memory for maximum performance
     const allUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
-    const userMap = Object.fromEntries(allUsers.map(u => [u.id, u.nama]));
+    const userMap = Object.fromEntries(allUsers.map((u) => [u.id, u.nama]));
 
     const allOrders = await db.select({ id: orderBook.id, userId: orderBook.userId }).from(orderBook);
-    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
+    const orderUserMap = Object.fromEntries(allOrders.map((o) => [o.id, o.userId]));
 
-    const txs = await db
+    // 3. Build query with optional roundId filtering
+    let baseQuery = db
       .select({
         id: transactionsHistory.id,
         roundId: transactionsHistory.roundId,
@@ -45,20 +40,37 @@ export async function GET(req: NextRequest) {
         orderSellId: transactionsHistory.orderSellId,
       })
       .from(transactionsHistory)
-      .innerJoin(stocks, eq(transactionsHistory.stockId, stocks.id))
-      .orderBy(transactionsHistory.createdAt);
+      .innerJoin(stocks, eq(transactionsHistory.stockId, stocks.id));
 
-    // Map to response format and filter by date
-    let transactions = txs.map(t => {
+    const roundIdNum = roundIdParam ? Number(roundIdParam) : null;
+    const txs = roundIdNum !== null && !isNaN(roundIdNum)
+      ? await baseQuery
+          .where(eq(transactionsHistory.roundId, roundIdNum))
+          .orderBy(desc(transactionsHistory.createdAt))
+      : await baseQuery.orderBy(desc(transactionsHistory.createdAt));
+
+    // Map to response format and format time in 24h WIB
+    let transactions = txs.map((t) => {
       const buyerId = orderUserMap[t.orderBuyId];
       const sellerId = orderUserMap[t.orderSellId];
-      const buyerName = buyerId ? (userMap[buyerId] || `User #${buyerId}`) : "Unknown";
-      const sellerName = sellerId ? (userMap[sellerId] || `User #${sellerId}`) : "Unknown";
+      const buyerName = buyerId ? userMap[buyerId] || `User #${buyerId}` : "Unknown";
+      const sellerName = sellerId ? userMap[sellerId] || `User #${sellerId}` : "Unknown";
 
       return {
         id: t.id,
-        time: t.createdAt ? new Date(t.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "",
+        time: t.createdAt
+          ? new Date(t.createdAt)
+              .toLocaleTimeString("id-ID", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+                timeZone: "Asia/Jakarta",
+              })
+              .replace(/:/g, ".") + " WIB"
+          : "",
         timeObj: t.createdAt ? new Date(t.createdAt) : null,
+        createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : null,
         buyer: buyerName,
         seller: sellerName,
         stock: t.stockCode,
@@ -68,20 +80,27 @@ export async function GET(req: NextRequest) {
         intervention: t.activeIntervention || "NONE",
         roundId: t.roundId,
       };
-    }).reverse(); // Latest first
+    });
 
-    if (dateParam) {
-      transactions = transactions.filter(t => {
-        if (!t.timeObj) return false;
-        const wibDate = t.timeObj.toISOString().split("T")[0];
-        return wibDate === dateParam;
+    if (dateParam && dateParam !== "ALL") {
+      const matchesDate = (d: Date | string | null | undefined, targetDateStr: string): boolean => {
+        if (!d || !targetDateStr) return false;
+        const dateObj = typeof d === "string" ? new Date(d) : d;
+        if (isNaN(dateObj.getTime())) return false;
+        const wib = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(dateObj);
+        return wib === targetDateStr;
+      };
+
+      transactions = transactions.filter((t) => {
+        return matchesDate(t.timeObj, dateParam) || matchesDate(t.createdAt, dateParam);
       });
     }
 
     // Calculate aggregated metrics
     const totalTransactions = transactions.length;
     const totalVolume = transactions.reduce((s, t) => s + t.total, 0);
-    const avgTransactionValue = totalTransactions > 0 ? Math.round(totalVolume / totalTransactions) : 0;
+    const avgTransactionValue =
+      totalTransactions > 0 ? Math.round(totalVolume / totalTransactions) : 0;
 
     return NextResponse.json({
       participantsCount,

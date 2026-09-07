@@ -24,10 +24,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { ExportFilterModal, ExportType } from "@/components/admin/ExportFilterModal";
 
 type TransactionItem = {
   id: number;
   time: string;
+  createdAt?: string | null;
   buyer: string;
   seller: string;
   stock: string;
@@ -41,12 +43,17 @@ type TransactionItem = {
 export default function AdminResumePage() {
   const { user, hydrated } = useAuth();
   const router = useRouter();
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  });
   const [loading, setLoading] = useState(true);
-  const [exporting, setExporting] = useState(false);
-  const [exportingOrderBook, setExportingOrderBook] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportType, setExportType] = useState<ExportType>("excel");
   const [data, setData] = useState({
     participantsCount: 0,
     totalTransactionsCount: 0,
@@ -54,6 +61,20 @@ export default function AdminResumePage() {
     avgTransactionValue: 0,
     transactions: [] as TransactionItem[],
   });
+
+  const formatWibTime = (isoString?: string | null, fallback = "") => {
+    if (!isoString) return fallback;
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return fallback;
+    const timeStr = d.toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Jakarta",
+    });
+    return `${timeStr} WIB`;
+  };
 
   // 1. Fetch admin resume stats whenever selected date changes
   useEffect(() => {
@@ -79,64 +100,6 @@ export default function AdminResumePage() {
         setLoading(false);
       });
   }, [hydrated, user, selectedDate]);
-
-  const handleDownloadExcel = async () => {
-    try {
-      setExporting(true);
-      toast.info("Menyiapkan file Excel, mohon tunggu...");
-      const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
-      const res = await fetch(`/api/admin/export-excel${dateQuery}`);
-
-      if (!res.ok) {
-        throw new Error("Gagal mengunduh data");
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = selectedDate ? `Laporan_Trading_${selectedDate}.xlsx` : `Laporan_Trading_All.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success("Berhasil mengunduh data Excel!");
-    } catch (err) {
-      console.error(err);
-      toast.error("Gagal mengekspor data");
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleDownloadOrderBook = async () => {
-    try {
-      setExportingOrderBook(true);
-      toast.info("Menyiapkan file Excel Order Book, mohon tunggu...");
-      const dateQuery = selectedDate ? `?date=${selectedDate}` : "";
-      const res = await fetch(`/api/admin/export-orderbook${dateQuery}`);
-
-      if (!res.ok) {
-        throw new Error("Gagal mengunduh data order book");
-      }
-
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = selectedDate ? `Laporan_OrderBook_${selectedDate}.xlsx` : `Laporan_OrderBook_All.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      toast.success("Berhasil mengunduh data Order Book Excel!");
-    } catch (err) {
-      console.error(err);
-      toast.error("Gagal mengekspor data order book");
-    } finally {
-      setExportingOrderBook(false);
-    }
-  };
 
   if (!hydrated || !user) return null;
 
@@ -185,23 +148,27 @@ export default function AdminResumePage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={handleDownloadExcel}
-              disabled={exporting || exportingOrderBook}
+              onClick={() => {
+                setExportType("excel");
+                setIsExportModalOpen(true);
+              }}
               className="h-10 sm:h-9 px-3 rounded-2xl border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 font-bold text-xs gap-1.5 shadow-2xs justify-center"
             >
               <FileSpreadsheet className="size-3.5 shrink-0" />
-              <span className="truncate">{exporting ? "Mengekspor..." : "Laporan (.xlsx)"}</span>
+              <span className="truncate">Laporan (.xlsx)</span>
             </Button>
 
             <Button
               size="sm"
               variant="outline"
-              onClick={handleDownloadOrderBook}
-              disabled={exporting || exportingOrderBook}
+              onClick={() => {
+                setExportType("orderbook");
+                setIsExportModalOpen(true);
+              }}
               className="h-10 sm:h-9 px-3 rounded-2xl border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 font-bold text-xs gap-1.5 shadow-2xs justify-center"
             >
               <Layers className="size-3.5 shrink-0" />
-              <span className="truncate">{exportingOrderBook ? "Mengekspor..." : "Order Book"}</span>
+              <span className="truncate">Order Book</span>
             </Button>
           </div>
         </div>
@@ -348,7 +315,7 @@ export default function AdminResumePage() {
                       </div>
                       <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
                         <Clock className="size-3" />
-                        <span>{tx.time}</span>
+                        <span>{formatWibTime(tx.createdAt, tx.time)}</span>
                       </div>
                     </div>
 
@@ -403,7 +370,9 @@ export default function AdminResumePage() {
                   <TableBody>
                     {data.transactions.map((tx) => (
                       <TableRow key={tx.id} className="border-border hover:bg-muted/40 transition-colors">
-                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.time}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {formatWibTime(tx.createdAt, tx.time)}
+                        </TableCell>
                         <TableCell className="text-xs text-foreground font-medium">
                           <span className="inline-flex items-center gap-1.5">
                             <span className="size-1.5 rounded-full bg-emerald-500"></span>
@@ -453,6 +422,15 @@ export default function AdminResumePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ─── 4. EXPORT CONFIGURATION & FILTER MODAL ─── */}
+      <ExportFilterModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        exportType={exportType}
+        selectedDate={selectedDate}
+        onDateChange={setSelectedDate}
+      />
     </motion.div>
   );
 }

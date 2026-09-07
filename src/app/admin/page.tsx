@@ -52,8 +52,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!user) router.push("/login");
-    else if (user.role !== "admin") router.push("/dashboard");
+    if (!user) router.replace("/login");
+    else if (user.role !== "admin") router.replace("/dashboard");
   }, [hydrated, user, router]);
 
   // Authenticate socket for admin
