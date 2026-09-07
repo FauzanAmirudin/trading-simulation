@@ -1047,15 +1047,17 @@ function TradingPageContent() {
             </div>
 
             {/* ── Compact Fintech Stock Menu List ─────────────── */}
-            <div className="space-y-1.5 sm:space-y-2">
+            <div className="space-y-2 pb-24">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                   Daftar Saham ({stocks.length})
                 </span>
-                <span className="text-[9px] text-muted-foreground">Pilih untuk trade</span>
+                <span className="text-[9px] text-muted-foreground">
+                  {phase === "PRE_MARKET" ? "Pilih untuk isi perkiraan & latihan" : "Pilih untuk trade"}
+                </span>
               </div>
 
-              <div className="space-y-1.5 sm:space-y-2">
+              <div className="space-y-2">
                 {stocks.map(s => {
                   const safeKode = (s as any).kodeSaham || (s as any).kode || "N/A";
                   const safeNama = (s as any).namaSaham || (s as any).nama || "Tidak ada data";
@@ -1065,152 +1067,25 @@ function TradingPageContent() {
                   const chg = openP > 0 ? ((lastP - openP) / openP) * 100 : 0;
                   const userLot = portfoliosMap[s.id] || 0;
                   const isPositive = chg >= 0;
-
+                  const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
                   const isSubmitted = predictionsSubmitted[s.id] !== undefined;
                   const submittedVal = predictionsSubmitted[s.id];
-                  const curInputVal = predictionInput[s.id] ?? (isSubmitted ? String(submittedVal) : "");
-                  const predVal = parseInt(curInputVal) || 0;
-                  const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
-                  const { upper, lower } = getAutoRejectionLimits(baseP);
-                  const isInvalid = predVal > 0 && (!isValidTickSize(predVal, baseP) || predVal > upper || predVal < lower);
-                  const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
-
-                  const quickChips = [
-                    { label: "-5%", pct: -5 },
-                    { label: "-2%", pct: -2 },
-                    { label: "Sama", pct: 0 },
-                    { label: "+2%", pct: 2 },
-                    { label: "+5%", pct: 5 },
-                  ];
-
-                  if (phase === "PRE_MARKET") {
-                    return (
-                      <div
-                        key={s.id}
-                        className={cn(
-                          "rounded-2xl border p-3 transition-all duration-200 shadow-2xs bg-card space-y-2.5",
-                          isSubmitted 
-                            ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]" 
-                            : "border-border/80 hover:border-amber-500/40"
-                        )}
-                      >
-                        {/* Top Ticker & Identity Row (Clickable to open trading modal) */}
-                        <div
-                          onClick={() => selectStock(s)}
-                          className="flex items-center justify-between gap-2 cursor-pointer active:opacity-80 transition-opacity"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="flex size-9.5 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary font-mono font-black text-xs shrink-0 border border-primary/20 shadow-2xs">
-                              {safeKode}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <h4 className="font-bold text-xs text-foreground truncate">{safeKode}</h4>
-                                <span className={cn(
-                                  "text-[8px] px-1.5 py-0.2 rounded-full border font-semibold shrink-0",
-                                  sektorWarna[meta.sektor] || "bg-muted text-muted-foreground border-border/60"
-                                )}>
-                                  {meta.sektor}
-                                </span>
-                              </div>
-                              <div className="text-[10px] text-muted-foreground truncate">{safeNama}</div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {isSubmitted ? (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1">
-                                <CheckCircle2 className="size-3" />
-                                <span>Rp {submittedVal.toLocaleString("id-ID")}</span>
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[9.5px]">
-                                Belum Diisi
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); selectStock(s); }}
-                              className="p-1.5 rounded-xl bg-primary/10 border border-primary/25 text-primary hover:bg-primary/20 text-[10px] font-bold flex items-center gap-1"
-                              title="Buka terminal transaksi"
-                            >
-                              <Zap className="size-3 fill-current" />
-                              <span>Trade</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Compact Meta & Prediction Form */}
-                        <div className="space-y-1.5 pt-1 border-t border-border/40">
-                          <div className="flex items-center justify-between text-[10.5px]">
-                            <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
-                            {predVal > 0 && (
-                              <span className={cn(
-                                "font-mono text-[10px] font-bold px-1.5 py-0.2 rounded",
-                                predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                              )}>
-                                {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <PriceInput
-                              value={curInputVal}
-                              basePrice={baseP}
-                              onChange={(val) => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
-                              min={1}
-                              max={upper}
-                              className="h-8 rounded-xl text-xs flex-1"
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => handleSubmitPrediction(s.id)}
-                              disabled={isInvalid || (!curInputVal && !isSubmitted)}
-                              className={cn(
-                                "h-8 px-3 rounded-xl font-bold text-xs shrink-0",
-                                isSubmitted
-                                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                  : "bg-amber-500 hover:bg-amber-600 text-white"
-                              )}
-                            >
-                              {isSubmitted ? "Ubah" : "Simpan"}
-                            </Button>
-                          </div>
-
-                          {/* Quick Chips */}
-                          <div className="flex items-center gap-1">
-                            {quickChips.map(chip => {
-                              const targetP = calculateQuickPrice(baseP, chip.pct);
-                              const isSelected = predVal === targetP;
-                              return (
-                                <button
-                                  key={chip.label}
-                                  type="button"
-                                  onClick={() => setPredictionInput(prev => ({ ...prev, [s.id]: String(targetP) }))}
-                                  className={cn(
-                                    "flex-1 py-0.5 rounded-lg text-[9px] font-mono font-bold border transition-all active:scale-95",
-                                    isSelected
-                                      ? "bg-amber-500 text-white border-amber-500"
-                                      : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/50"
-                                  )}
-                                >
-                                  {chip.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
+                  const isOrdered = ordersPlacedMap[s.id] === true;
 
                   return (
                     <button
                       key={s.id}
                       onClick={() => selectStock(s)}
-                      className="group text-left w-full rounded-2xl border border-border/80 hover:border-emerald-500/50 bg-card/90 hover:bg-muted/30 p-2.5 sm:p-3 transition-all duration-200 shadow-2xs active:scale-[0.985] min-h-[58px] flex items-center justify-between gap-2"
+                      className={cn(
+                        "group text-left w-full rounded-2xl border p-2.5 sm:p-3 transition-all duration-200 shadow-2xs active:scale-[0.985] min-h-[60px] flex items-center justify-between gap-2.5 bg-card/90 hover:bg-muted/30",
+                        phase === "PRE_MARKET"
+                          ? isSubmitted
+                            ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]"
+                            : "border-border/80 hover:border-amber-500/40"
+                          : isOrdered
+                            ? "border-emerald-500/30 bg-emerald-500/[0.02]"
+                            : "border-border/80 hover:border-emerald-500/50"
+                      )}
                     >
                       {/* Left Ticker Avatar & Metadata */}
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -1242,31 +1117,56 @@ function TradingPageContent() {
                         </div>
                       </div>
 
-                      {/* Right Price & Trade Action CTA */}
+                      {/* Right Price & Status / Action CTA */}
                       <div className="text-right shrink-0 flex items-center gap-2">
-                        <div className="font-mono text-right">
-                          <div className="text-xs sm:text-sm font-extrabold text-foreground">
-                            Rp {lastP.toLocaleString("id-ID")}
-                          </div>
-                          <div className={cn(
-                            "text-[9.5px] font-bold flex items-center justify-end gap-0.5",
-                            isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
-                          )}>
-                            {isPositive ? <TrendingUp className="size-2.5" /> : <TrendingDown className="size-2.5" />}
-                            <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
-                          </div>
-                        </div>
+                        {phase === "PRE_MARKET" ? (
+                          <div className="flex items-center gap-2">
+                            <div className="font-mono text-right">
+                              <span className="text-[8.5px] font-sans text-muted-foreground block">Acuan</span>
+                              <div className="text-xs sm:text-sm font-extrabold text-foreground">
+                                Rp {baseP.toLocaleString("id-ID")}
+                              </div>
+                            </div>
 
-                        {ordersPlacedMap[s.id] || predictionsSubmitted[s.id] !== undefined ? (
-                          <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
-                            <CheckCircle2 className="size-2.5" />
-                            <span>Terorder</span>
-                          </span>
+                            {isSubmitted ? (
+                              <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1 shrink-0">
+                                <CheckCircle2 className="size-3" />
+                                <span>Rp {submittedVal.toLocaleString("id-ID")}</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
+                                <Sparkles className="size-3 text-amber-500" />
+                                <span>Prediksi</span>
+                              </span>
+                            )}
+                          </div>
                         ) : (
-                          <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] flex items-center gap-1 group-hover:bg-emerald-500/20 transition-all shrink-0 min-h-[34px]">
-                            <Zap className="size-3 text-emerald-500 fill-emerald-500/30" />
-                            <span>Trade</span>
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="font-mono text-right">
+                              <div className="text-xs sm:text-sm font-extrabold text-foreground">
+                                Rp {lastP.toLocaleString("id-ID")}
+                              </div>
+                              <div className={cn(
+                                "text-[9.5px] font-bold flex items-center justify-end gap-0.5",
+                                isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                              )}>
+                                {isPositive ? <TrendingUp className="size-2.5" /> : <TrendingDown className="size-2.5" />}
+                                <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
+                              </div>
+                            </div>
+
+                            {isOrdered ? (
+                              <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
+                                <CheckCircle2 className="size-2.5" />
+                                <span>Terorder</span>
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] flex items-center gap-1 group-hover:bg-emerald-500/20 transition-all shrink-0 min-h-[34px]">
+                                <Zap className="size-3 text-emerald-500 fill-emerald-500/30" />
+                                <span>Trade</span>
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </button>
@@ -1466,6 +1366,110 @@ function TradingPageContent() {
                               <span className="shrink-0">ARA: <b className="text-foreground">{upper.toLocaleString("id-ID")}</b> · ARB: <b className="text-foreground">{lower.toLocaleString("id-ID")}</b></span>
                             </div>
                           </div>
+
+                          {/* 1.5. PRE_MARKET Prediction Section */}
+                          {phase === "PRE_MARKET" && (() => {
+                            const isSub = predictionsSubmitted[stock.id] !== undefined;
+                            const subVal = predictionsSubmitted[stock.id];
+                            const curVal = predictionInput[stock.id] ?? (isSub ? String(subVal) : "");
+                            const pVal = parseInt(curVal) || 0;
+                            const isInv = pVal > 0 && (!isValidTickSize(pVal, baseP) || pVal > upper || pVal < lower);
+                            const diff = pVal > 0 && baseP > 0 ? ((pVal - baseP) / baseP) * 100 : 0;
+                            const quickChips = [
+                              { label: "-5%", pct: -5 },
+                              { label: "-2%", pct: -2 },
+                              { label: "Sama", pct: 0 },
+                              { label: "+2%", pct: 2 },
+                              { label: "+5%", pct: 5 },
+                            ];
+
+                            return (
+                              <div className="p-3 rounded-2xl bg-amber-500/[0.04] border border-amber-500/30 space-y-2 shadow-2xs">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                                    <Sparkles className="size-3.5 text-amber-500" />
+                                    <span>Perkiraan Harga Pembukaan</span>
+                                  </div>
+                                  {isSub ? (
+                                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1">
+                                      <CheckCircle2 className="size-3" />
+                                      <span>Rp {subVal.toLocaleString("id-ID")}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[9.5px]">
+                                      Belum Disimpan
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center justify-between text-[10.5px]">
+                                  <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
+                                  {pVal > 0 && (
+                                    <span className={cn(
+                                      "font-mono text-[10px] font-bold px-1.5 py-0.2 rounded",
+                                      pVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                    )}>
+                                      {pVal >= baseP ? "+" : ""}{diff.toFixed(2)}%
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <PriceInput
+                                    value={curVal}
+                                    basePrice={baseP}
+                                    onChange={(val) => setPredictionInput(prev => ({ ...prev, [stock.id]: val }))}
+                                    min={1}
+                                    max={upper}
+                                    className="h-8.5 rounded-xl text-xs flex-1"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => handleSubmitPrediction(stock.id)}
+                                    disabled={isInv || (!curVal && !isSub)}
+                                    className={cn(
+                                      "h-8.5 px-3.5 rounded-xl font-bold text-xs shrink-0 shadow-xs",
+                                      isSub
+                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                        : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
+                                    )}
+                                  >
+                                    {isSub ? "Ubah" : "Simpan"}
+                                  </Button>
+                                </div>
+
+                                {/* Quick Chips */}
+                                <div className="flex items-center gap-1">
+                                  {quickChips.map(chip => {
+                                    const targetP = calculateQuickPrice(baseP, chip.pct);
+                                    const isSelected = pVal === targetP;
+                                    return (
+                                      <button
+                                        key={chip.label}
+                                        type="button"
+                                        onClick={() => setPredictionInput(prev => ({ ...prev, [stock.id]: String(targetP) }))}
+                                        className={cn(
+                                          "flex-1 py-1 rounded-lg text-[9.5px] font-mono font-bold border transition-all active:scale-95",
+                                          isSelected
+                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/50"
+                                        )}
+                                      >
+                                        {chip.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                {isInv && (
+                                  <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
+                                    {!isValidTickSize(pVal, baseP) ? `Harus kelipatan Rp ${pVal > 0 ? getTickSize(pVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {/* 2. Live Price Chart (Compact & Smooth) */}
                           <div className="p-2 rounded-2xl bg-card/80 border border-border/70">
@@ -1934,214 +1938,19 @@ function TradingPageContent() {
 
                     const isSubmitted = predictionsSubmitted[s.id] !== undefined;
                     const submittedVal = predictionsSubmitted[s.id];
-                    const curInputVal = predictionInput[s.id] ?? (isSubmitted ? String(submittedVal) : "");
-                    const predVal = parseInt(curInputVal) || 0;
-                    const isInvalid = predVal > 0 && (!isValidTickSize(predVal, baseP) || predVal > upper || predVal < lower);
-                    const diffPct = predVal > 0 && baseP > 0 ? ((predVal - baseP) / baseP) * 100 : 0;
-
-                    const quickChips = [
-                      { label: "-5%", pct: -5 },
-                      { label: "-2%", pct: -2 },
-                      { label: "Sama", pct: 0 },
-                      { label: "+2%", pct: 2 },
-                      { label: "+5%", pct: 5 },
-                    ];
-
-                    if (phase === "PRE_MARKET") {
-                      return (
-                        <div
-                          key={s.id}
-                          className={cn(
-                            "group relative rounded-3xl border p-5 shadow-xs transition-all duration-200 flex flex-col justify-between gap-3.5 bg-card",
-                            isSubmitted
-                              ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02] shadow-emerald-500/5"
-                              : "border-border/80 hover:border-amber-500/40"
-                          )}
-                        >
-                          {/* Top: Identity & Status (Clickable to open trading workstation) */}
-                          <div
-                            onClick={() => selectStock(s)}
-                            className="space-y-2.5 cursor-pointer"
-                            title={`Klik kartu untuk masuk ke tampilan trading ${safeKode}`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="flex size-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary font-mono font-black text-sm shrink-0 border border-primary/20 group-hover:scale-105 transition-transform shadow-2xs">
-                                  {safeKode}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    <h4 className="font-extrabold text-sm text-foreground group-hover:text-primary transition-colors truncate">
-                                      {safeKode}
-                                    </h4>
-                                    <span className={cn(
-                                      "text-[8.5px] px-2 py-0.5 rounded-full border font-semibold shrink-0",
-                                      sektorWarna[meta.sektor] || "bg-muted text-muted-foreground border-border/60"
-                                    )}>
-                                      {meta.sektor}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground truncate">{safeNama}</p>
-                                </div>
-                              </div>
-
-                              {isSubmitted ? (
-                                <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] shrink-0 flex items-center gap-1">
-                                  <CheckCircle2 className="size-3.5" />
-                                  <span>✓ Terisi (Rp {submittedVal.toLocaleString("id-ID")})</span>
-                                </span>
-                              ) : (
-                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] shrink-0">
-                                  Belum Diisi
-                                </span>
-                              )}
-                            </div>
-
-                            <p className="text-[11.5px] text-muted-foreground line-clamp-2 leading-relaxed">
-                              {meta.deskripsi}
-                            </p>
-                          </div>
-
-                          {/* Middle: Benchmark Price (Harga Kemarin & Batas ARA/ARB) */}
-                          <div
-                            onClick={() => selectStock(s)}
-                            className="grid grid-cols-2 gap-2 p-2.5 rounded-2xl bg-muted/30 dark:bg-zinc-900/50 border border-border/60 text-xs font-mono cursor-pointer hover:bg-muted/50 transition-colors"
-                            title={`Klik untuk masuk ke tampilan trading ${safeKode}`}
-                          >
-                            <div>
-                              <span className="text-[9px] font-sans font-semibold text-muted-foreground uppercase block">
-                                Harga Kemarin
-                              </span>
-                              <span className="font-extrabold text-xs sm:text-sm text-foreground">
-                                Rp {baseP.toLocaleString("id-ID")}
-                              </span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-[9px] font-sans font-semibold text-muted-foreground uppercase block">
-                                Batas ARA / ARB
-                              </span>
-                              <span className="font-semibold text-[10.5px] text-muted-foreground">
-                                Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Form Input Perkiraan Harga (Tebak Harga) */}
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="space-y-2 pt-2 border-t border-border/50"
-                          >
-                            <div className="flex items-center justify-between text-xs font-bold text-foreground">
-                              <span>Perkiraan Harga Pembukaan:</span>
-                              {predVal > 0 && (
-                                <span className={cn(
-                                  "font-mono text-[10.5px] font-bold px-2 py-0.5 rounded-md",
-                                  predVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                                )}>
-                                  {predVal >= baseP ? "+" : ""}{diffPct.toFixed(2)}%
-                                </span>
-                              )}
-                            </div>
-
-                            <PriceInput
-                              value={curInputVal}
-                              basePrice={baseP}
-                              onChange={(val) => setPredictionInput(prev => ({ ...prev, [s.id]: val }))}
-                              min={1}
-                              max={upper}
-                              className="h-10 rounded-2xl text-sm"
-                            />
-
-                            {/* Quick Percentage Chips */}
-                            <div className="flex items-center gap-1 justify-between">
-                              {quickChips.map(chip => {
-                                const targetP = calculateQuickPrice(baseP, chip.pct);
-                                const isSelected = predVal === targetP;
-                                return (
-                                  <button
-                                    key={chip.label}
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPredictionInput(prev => ({ ...prev, [s.id]: String(targetP) }));
-                                    }}
-                                    className={cn(
-                                      "flex-1 py-1 rounded-xl text-[10px] font-mono font-bold border transition-all active:scale-95",
-                                      isSelected
-                                        ? "bg-amber-500 text-white border-amber-500 shadow-xs"
-                                        : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
-                                    )}
-                                  >
-                                    {chip.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-
-                            <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                              <TickSizeBadge price={predVal} basePrice={baseP} />
-                              <span>Kelipatan fraksi BEI</span>
-                            </div>
-
-                            {isInvalid && (
-                              <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
-                                {!isValidTickSize(predVal, baseP) ? `Harus kelipatan Rp ${predVal > 0 ? getTickSize(predVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
-                              </p>
-                            )}
-
-                            {/* Dual Action Buttons */}
-                            <div className="space-y-2 pt-1">
-                              <Button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSubmitPrediction(s.id);
-                                }}
-                                disabled={isInvalid || (!curInputVal && !isSubmitted)}
-                                className={cn(
-                                  "w-full h-10 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-1.5",
-                                  isSubmitted
-                                    ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
-                                    : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
-                                )}
-                              >
-                                {isSubmitted ? (
-                                  <>
-                                    <CheckCircle2 className="size-3.5" />
-                                    <span>Simpan Perubahan Perkiraan</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="size-3.5" />
-                                    <span>Simpan Perkiraan Harga</span>
-                                  </>
-                                )}
-                              </Button>
-
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  selectStock(s);
-                                }}
-                                className="w-full h-10 rounded-2xl border-border/80 hover:border-primary/50 hover:bg-primary/5 text-foreground font-bold text-xs flex items-center justify-center gap-1.5 transition-all group-hover:border-primary/40 shadow-2xs"
-                              >
-                                <Zap className="size-3.5 text-primary fill-primary/30" />
-                                <span>Buka Terminal Transaksi {safeKode} ›</span>
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
 
                     return (
                       <div
                         key={s.id}
                         className={cn(
-                          "group relative rounded-3xl border border-border/80 hover:border-emerald-500/50 bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-4",
-                          isOrdered ? "border-emerald-500/30 bg-emerald-500/[0.02]" : ""
+                          "group relative rounded-3xl border bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-4",
+                          phase === "PRE_MARKET"
+                            ? isSubmitted
+                              ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]"
+                              : "border-border/80 hover:border-amber-500/40"
+                            : isOrdered
+                              ? "border-emerald-500/30 bg-emerald-500/[0.02]"
+                              : "border-border/80 hover:border-emerald-500/50"
                         )}
                       >
                         {/* Top: Identity, Sector, Description */}
@@ -2167,11 +1976,24 @@ function TradingPageContent() {
                               </div>
                             </div>
 
-                            {isOrdered && (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold shrink-0 flex items-center gap-1">
-                                <CheckCircle2 className="size-3" />
-                                <span>Diorder</span>
-                              </span>
+                            {phase === "PRE_MARKET" ? (
+                              isSubmitted ? (
+                                <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] shrink-0 flex items-center gap-1">
+                                  <CheckCircle2 className="size-3.5" />
+                                  <span>✓ Terisi (Rp {submittedVal.toLocaleString("id-ID")})</span>
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] shrink-0">
+                                  Belum Diisi
+                                </span>
+                              )
+                            ) : (
+                              isOrdered && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                                  <CheckCircle2 className="size-3" />
+                                  <span>Diorder</span>
+                                </span>
+                              )
                             )}
                           </div>
 
@@ -2180,35 +2002,59 @@ function TradingPageContent() {
                           </p>
                         </div>
 
-                        {/* Middle: Live Price, Change, ARA/ARB */}
-                        <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2">
-                          <div className="flex items-center justify-between font-mono">
-                            <div>
-                              <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
-                                Harga Real-Time
-                              </span>
-                              <span className="font-black text-lg text-foreground">
-                                Rp {lastP.toLocaleString("id-ID")}
+                        {/* Middle: Price Banner (Benchmark in PRE_MARKET or Live in TRADING) */}
+                        {phase === "PRE_MARKET" ? (
+                          <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2 font-mono">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
+                                  Harga Acuan
+                                </span>
+                                <span className="font-black text-lg text-foreground">
+                                  Rp {baseP.toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-sans font-semibold px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                Pra-Pembukaan
                               </span>
                             </div>
 
-                            <div className={cn(
-                              "px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 shrink-0",
-                              isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
-                            )}>
-                              {isPositive ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
-                              <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
+                            <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground">
+                              <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
+                              <span>·</span>
+                              <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
                             </div>
                           </div>
+                        ) : (
+                          <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2">
+                            <div className="flex items-center justify-between font-mono">
+                              <div>
+                                <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
+                                  Harga Real-Time
+                                </span>
+                                <span className="font-black text-lg text-foreground">
+                                  Rp {lastP.toLocaleString("id-ID")}
+                                </span>
+                              </div>
 
-                          <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground font-mono">
-                            <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
-                            <span>·</span>
-                            <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
+                              <div className={cn(
+                                "px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 shrink-0",
+                                isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
+                              )}>
+                                {isPositive ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                                <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground font-mono">
+                              <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
+                              <span>·</span>
+                              <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
+                            </div>
                           </div>
-                        </div>
+                        )}
 
-                        {/* Bottom: Portfolio Info & Trade Button */}
+                        {/* Bottom: Portfolio Info & CTA Button */}
                         <div className="space-y-2 pt-1">
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-muted-foreground font-medium text-[11px]">Kepemilikan:</span>
@@ -2219,10 +2065,20 @@ function TradingPageContent() {
 
                           <Button
                             onClick={() => selectStock(s)}
-                            className="w-full h-11 rounded-2xl bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 active:scale-[0.98] min-h-[44px] flex items-center justify-center gap-2 group-hover:shadow-lg transition-all"
+                            className={cn(
+                              "w-full h-11 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] min-h-[44px] flex items-center justify-center gap-2 group-hover:shadow-lg transition-all",
+                              phase === "PRE_MARKET"
+                                ? "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
+                                : "bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground shadow-primary/20"
+                            )}
                           >
                             <Zap className="size-4 fill-current" />
-                            <span>Buka Terminal Transaksi {safeKode} ›</span>
+                            <span>
+                              {phase === "PRE_MARKET" 
+                                ? (isSubmitted ? `Buka Terminal ${safeKode} ›` : `Isi Perkiraan & Trade ${safeKode} ›`)
+                                : `Buka Terminal Transaksi ${safeKode} ›`
+                              }
+                            </span>
                           </Button>
                         </div>
                       </div>
@@ -2469,6 +2325,124 @@ function TradingPageContent() {
 
                       {/* Right Column (5/12): Order Execution Panel & Portfolio */}
                       <div className="col-span-12 lg:col-span-5 space-y-4">
+                        {/* PRE_MARKET Prediction Card */}
+                        {phase === "PRE_MARKET" && (() => {
+                          const isSub = predictionsSubmitted[activeStock.id] !== undefined;
+                          const subVal = predictionsSubmitted[activeStock.id];
+                          const curVal = predictionInput[activeStock.id] ?? (isSub ? String(subVal) : "");
+                          const pVal = parseInt(curVal) || 0;
+                          const isInv = pVal > 0 && (!isValidTickSize(pVal, baseP) || pVal > upper || pVal < lower);
+                          const diff = pVal > 0 && baseP > 0 ? ((pVal - baseP) / baseP) * 100 : 0;
+                          const quickChips = [
+                            { label: "-5%", pct: -5 },
+                            { label: "-2%", pct: -2 },
+                            { label: "Sama", pct: 0 },
+                            { label: "+2%", pct: 2 },
+                            { label: "+5%", pct: 5 },
+                          ];
+
+                          return (
+                            <Card className="border border-amber-500/40 dark:border-amber-500/30 bg-card/95 shadow-sm rounded-3xl overflow-hidden">
+                              <CardHeader className="py-3 px-5 border-b border-amber-500/20 bg-amber-500/10 flex flex-row items-center justify-between">
+                                <CardTitle className="text-xs font-bold flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                                  <Sparkles className="size-3.5 text-amber-500" />
+                                  <span>Perkiraan Harga Pembukaan ({safeKode})</span>
+                                </CardTitle>
+                                {isSub ? (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] flex items-center gap-1">
+                                    <CheckCircle2 className="size-3" />
+                                    <span>Terisi (Rp {subVal.toLocaleString("id-ID")})</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px]">
+                                    Belum Diisi
+                                  </span>
+                                )}
+                              </CardHeader>
+                              <CardContent className="p-5 space-y-3">
+                                <div className="flex items-center justify-between text-xs font-bold text-foreground">
+                                  <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
+                                  {pVal > 0 && (
+                                    <span className={cn(
+                                      "font-mono text-[10.5px] font-bold px-2 py-0.5 rounded-md",
+                                      pVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                    )}>
+                                      {pVal >= baseP ? "+" : ""}{diff.toFixed(2)}%
+                                    </span>
+                                  )}
+                                </div>
+
+                                <PriceInput
+                                  value={curVal}
+                                  basePrice={baseP}
+                                  onChange={(val) => setPredictionInput(prev => ({ ...prev, [activeStock.id]: val }))}
+                                  min={1}
+                                  max={upper}
+                                  className="h-10 rounded-2xl text-sm"
+                                />
+
+                                {/* Quick Percentage Chips */}
+                                <div className="flex items-center gap-1.5 justify-between">
+                                  {quickChips.map(chip => {
+                                    const targetP = calculateQuickPrice(baseP, chip.pct);
+                                    const isSelected = pVal === targetP;
+                                    return (
+                                      <button
+                                        key={chip.label}
+                                        type="button"
+                                        onClick={() => setPredictionInput(prev => ({ ...prev, [activeStock.id]: String(targetP) }))}
+                                        className={cn(
+                                          "flex-1 py-1 rounded-xl text-[10px] font-mono font-bold border transition-all active:scale-95",
+                                          isSelected
+                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
+                                        )}
+                                      >
+                                        {chip.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+                                  <TickSizeBadge price={pVal} basePrice={baseP} />
+                                  <span>Batas: Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
+                                </div>
+
+                                {isInv && (
+                                  <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
+                                    {!isValidTickSize(pVal, baseP) ? `Harus kelipatan Rp ${pVal > 0 ? getTickSize(pVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
+                                  </p>
+                                )}
+
+                                <Button
+                                  type="button"
+                                  onClick={() => handleSubmitPrediction(activeStock.id)}
+                                  disabled={isInv || (!curVal && !isSub)}
+                                  className={cn(
+                                    "w-full h-10 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-1.5",
+                                    isSub
+                                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
+                                      : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
+                                  )}
+                                >
+                                  {isSub ? (
+                                    <>
+                                      <CheckCircle2 className="size-3.5" />
+                                      <span>Simpan Perubahan Perkiraan</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Sparkles className="size-3.5" />
+                                      <span>Simpan Perkiraan Harga</span>
+                                    </>
+                                  )}
+                                </Button>
+                              </CardContent>
+                            </Card>
+                          );
+                        })()}
+
                         {/* Order Execution Card */}
                         <Card className={cn(
                           "border rounded-3xl bg-card/95 shadow-sm transition-all duration-300",
@@ -2478,7 +2452,7 @@ function TradingPageContent() {
                             <CardTitle className="text-xs font-bold flex items-center justify-between">
                               <div className="flex items-center gap-2">
                                 {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
-                                <span>Eksekusi Order ({safeKode})</span>
+                                <span>{phase === "PRE_MARKET" ? "Simulasi Order Latihan" : "Eksekusi Order"} ({safeKode})</span>
                               </div>
                               <span className="text-[10px] font-mono text-muted-foreground bg-background/80 px-2 py-0.5 rounded-lg border border-border/50">
                                 Milik: <b className="text-foreground">{userLot} Lot</b>

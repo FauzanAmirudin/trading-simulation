@@ -693,7 +693,7 @@ export default function RespondentProfileDetailPage({
       </div>
 
       {/* ── 6. Mobile Floating Sticky Thumb-Zone Pager Bar (Fixed Sepertiga Bawah) ── */}
-      <div className="fixed bottom-3 left-2 right-2 sm:hidden z-40">
+      <div className="fixed bottom-[4.5rem] left-2 right-2 sm:hidden z-40">
         <div className="rounded-2xl bg-card/95 border border-border/90 backdrop-blur-xl p-1.5 shadow-lg flex items-center justify-between gap-1.5">
           {/* Prev Button */}
           <Button

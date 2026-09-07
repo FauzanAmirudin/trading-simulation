@@ -9,11 +9,9 @@ import {
   ScrollText,
   Activity,
   Trophy,
-  User,
   LogOut,
   Moon,
   Sun,
-  Zap,
   ClipboardList,
   Brain,
 } from "lucide-react";
@@ -33,7 +31,7 @@ export default function MobileBottomNav() {
 
   useEffect(() => {
     const socket = getSocket();
-    const onSessionState = (data: any) => {
+    const onSessionState = (data: { status?: string }) => {
       setIsSessionActive(Boolean(data && data.status === "active"));
     };
     const onSubSessionStarted = () => setIsSessionActive(true);
@@ -197,61 +195,62 @@ export default function MobileBottomNav() {
         </div>
       )}
 
-      {/* Modern Ergonomic Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden pointer-events-none">
-        <div className="pointer-events-auto bg-background/95 backdrop-blur-xl border-t border-border/60 shadow-[0_-10px_30px_rgba(0,0,0,0.1)] dark:shadow-[0_-10px_30px_rgba(0,0,0,0.5)] px-2 sm:px-4 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
-          <nav className="flex items-center justify-around gap-1 sm:gap-2 max-w-sm mx-auto">
-            {tabs.map((tab) => {
-              const active = pathname === tab.href;
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.href}
-                  onClick={() => router.push(tab.href)}
-                  className={cn(
-                    "flex flex-col items-center justify-center flex-1 py-1 px-1 sm:px-3 rounded-2xl transition-all duration-200 min-h-[48px] relative group active:scale-95",
-                    active
-                      ? "text-primary font-bold"
-                      : "text-muted-foreground hover:text-foreground"
+      {/* Modern Ergonomic Bottom Navigation Bar — Sticky to Screen Bottom */}
+      <nav
+        aria-label="Mobile Navigation"
+        className="fixed inset-x-0 bottom-0 z-50 md:hidden bg-background/95 backdrop-blur-xl border-t border-border/70 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.4)] px-2 sm:px-4 pt-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] translate-z-0"
+      >
+        <div className="flex items-center justify-around gap-1 sm:gap-2 max-w-sm mx-auto">
+          {tabs.map((tab) => {
+            const active = pathname === tab.href;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.href}
+                onClick={() => router.push(tab.href)}
+                className={cn(
+                  "flex flex-col items-center justify-center flex-1 py-1 px-1 sm:px-3 rounded-2xl transition-all duration-200 min-h-[48px] relative group active:scale-95 touch-manipulation",
+                  active
+                    ? "text-primary font-bold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {/* Active Indicator Background */}
+                {active && (
+                  <div className="absolute inset-0 bg-primary/10 dark:bg-primary/15 rounded-2xl -z-10 animate-in fade-in" />
+                )}
+
+                <div className="relative">
+                  <Icon className={cn("size-4.5 sm:size-5 transition-transform", active ? "scale-110 text-primary" : "text-muted-foreground")} />
+                  {tab.badge && (
+                    <span className="absolute -top-1 -right-1.5 flex size-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+                    </span>
                   )}
-                >
-                  {/* Active Indicator Background */}
-                  {active && (
-                    <div className="absolute inset-0 bg-primary/10 dark:bg-primary/15 rounded-2xl -z-10 animate-in fade-in" />
-                  )}
+                </div>
 
-                  <div className="relative">
-                    <Icon className={cn("size-4.5 sm:size-5 transition-transform", active ? "scale-110 text-primary" : "text-muted-foreground")} />
-                    {tab.badge && (
-                      <span className="absolute -top-1 -right-1.5 flex size-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
-                      </span>
-                    )}
-                  </div>
+                <span className="text-[10px] sm:text-[11px] mt-1 leading-none tracking-tight font-medium">
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
 
-                  <span className="text-[10px] sm:text-[11px] mt-1 leading-none tracking-tight font-medium">
-                    {tab.label}
-                  </span>
-                </button>
-              );
-            })}
-
-            {/* Profile Tab */}
-            <button
-              onClick={() => setShowProfileSheet(true)}
-              className="flex flex-col items-center justify-center flex-1 py-1 px-1 sm:px-3 rounded-2xl text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-200 min-h-[48px]"
-            >
-              <div className="flex size-4.5 sm:size-5 items-center justify-center rounded-full bg-muted text-[9.5px] sm:text-[10px] font-bold text-foreground ring-1 ring-border/80">
-                {user.nama.slice(0, 1).toUpperCase()}
-              </div>
-              <span className="text-[10px] sm:text-[11px] mt-1 leading-none tracking-tight font-medium">
-                Profil
-              </span>
-            </button>
-          </nav>
+          {/* Profile Tab */}
+          <button
+            onClick={() => setShowProfileSheet(true)}
+            className="flex flex-col items-center justify-center flex-1 py-1 px-1 sm:px-3 rounded-2xl text-muted-foreground hover:text-foreground active:scale-95 touch-manipulation transition-all duration-200 min-h-[48px]"
+          >
+            <div className="flex size-4.5 sm:size-5 items-center justify-center rounded-full bg-muted text-[9.5px] sm:text-[10px] font-bold text-foreground ring-1 ring-border/80">
+              {user.nama.slice(0, 1).toUpperCase()}
+            </div>
+            <span className="text-[10px] sm:text-[11px] mt-1 leading-none tracking-tight font-medium">
+              Profil
+            </span>
+          </button>
         </div>
-      </div>
+      </nav>
     </>
   );
 }

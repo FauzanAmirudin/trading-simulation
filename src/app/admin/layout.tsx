@@ -8,14 +8,14 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col md:flex-row bg-background">
+    <div className="min-h-screen min-h-[100dvh] flex flex-col md:flex-row bg-background">
       {/* Sidebar Desktop (Full Height dari atas sampai bawah di sisi kiri) */}
       <AppSidebar />
 
       {/* Kolom Kanan: Header (sejajar di samping sidebar) & Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen min-h-[100dvh]">
         <Navbar />
-        <main className="flex-1 overflow-y-auto pb-24 md:pb-6 w-full max-w-full">
+        <main className="flex-1 pb-20 md:pb-6 w-full max-w-full">
           {children}
         </main>
       </div>
