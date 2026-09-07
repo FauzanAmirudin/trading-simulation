@@ -13,8 +13,39 @@ export default function QuestionnaireGuard({
   const { user, hydrated } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(true);
-  const [isAllowed, setIsAllowed] = useState(false);
+
+  // Optimistic initial evaluation to eliminate delay when returning to dashboard
+  const [checking, setChecking] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u?.role === "admin") return false;
+        const cachedQs = sessionStorage.getItem(`simulasi_qs_done_${u?.id}`);
+        if (cachedQs === "true") return false;
+      }
+    } catch {
+      // ignore
+    }
+    return true;
+  });
+
+  const [isAllowed, setIsAllowed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u?.role === "admin") return true;
+        const cachedQs = sessionStorage.getItem(`simulasi_qs_done_${u?.id}`);
+        if (cachedQs === "true") return true;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  });
 
   useEffect(() => {
     if (!hydrated) return;
@@ -24,39 +55,68 @@ export default function QuestionnaireGuard({
       return;
     }
 
-    // Admins always bypass questionnaire
+    // Admins always bypass questionnaire instantly
     if (user.role === "admin") {
       setIsAllowed(true);
       setChecking(false);
       return;
     }
 
-    // Respondent check
+    // Check fast session cache first
+    try {
+      const cached = sessionStorage.getItem(`simulasi_qs_done_${user.id}`);
+      if (cached === "true") {
+        setIsAllowed(true);
+        setChecking(false);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    let isMounted = true;
+
     async function checkStatus() {
       try {
         const res = await fetch(`/api/questionnaire/status?userId=${user?.id}`);
         const data = await res.json();
 
         if (data.success && data.isCompleted) {
-          setIsAllowed(true);
+          try {
+            sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
+          } catch {
+            // ignore
+          }
+          if (isMounted) {
+            setIsAllowed(true);
+            setChecking(false);
+          }
         } else {
           // If questionnaire is not completed, redirect to questionnaire page
           if (pathname !== "/questionnaire") {
             router.push("/questionnaire");
             return;
           }
-          setIsAllowed(true);
+          if (isMounted) {
+            setIsAllowed(true);
+            setChecking(false);
+          }
         }
       } catch (err) {
         console.error("Error checking questionnaire guard status:", err);
-        // Fallback: allow to avoid infinite blocking in case of temporary network glitches
-        setIsAllowed(true);
-      } finally {
-        setChecking(false);
+        // Fallback: allow to avoid infinite blocking in case of network glitch
+        if (isMounted) {
+          setIsAllowed(true);
+          setChecking(false);
+        }
       }
     }
 
     checkStatus();
+
+    return () => {
+      isMounted = false;
+    };
   }, [hydrated, user, pathname, router]);
 
   if (!hydrated || checking) {
@@ -76,3 +136,4 @@ export default function QuestionnaireGuard({
 
   return <>{children}</>;
 }
+

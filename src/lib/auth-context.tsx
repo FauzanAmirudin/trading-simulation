@@ -115,12 +115,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback((reason?: string | unknown) => {
     const reasonStr = typeof reason === "string" ? reason : undefined;
+    const prevUserId = user?.id;
     setUser(null);
     setBalance(null);
 
     try {
       localStorage.removeItem("user");
       localStorage.removeItem("simulasi_investasi_last_active");
+      if (typeof window !== "undefined") {
+        if (prevUserId) {
+          sessionStorage.removeItem(`simulasi_qs_done_${prevUserId}`);
+          sessionStorage.removeItem(`simulasi_balance_${prevUserId}`);
+        }
+      }
 
       if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
         const bc = new BroadcastChannel(BROADCAST_CHANNEL_NAME);

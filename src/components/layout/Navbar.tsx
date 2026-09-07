@@ -35,14 +35,17 @@ export function Navbar() {
 
         {/* Right Navigation & Controls */}
         <nav className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {!hydrated ? (
-            pathname === "/login" ? (
-              <div className="flex items-center gap-1.5">
-                <ThemeToggle />
-              </div>
-            ) : (
-              <div className="h-7 w-14" />
-            )
+          {!hydrated && !user ? (
+            <div className="flex items-center gap-1.5">
+              <ThemeToggle />
+              {pathname !== "/login" && (
+                <Link href="/login" prefetch={true}>
+                  <Button size="sm" variant="default" className="rounded-xl px-3 text-xs font-semibold h-7.5 shadow-xs">
+                    Masuk
+                  </Button>
+                </Link>
+              )}
+            </div>
           ) : user ? (
             <>
               {/* Desktop links */}

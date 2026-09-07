@@ -27,46 +27,54 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Check user exists
-    const userList = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-    if (userList.length === 0) {
-      return NextResponse.json({ error: "User tidak ditemukan." }, { status: 404 });
-    }
-
-    const user = userList[0];
-
-    // Admin accounts bypass questionnaire
-    if (user.role === "admin") {
-      return NextResponse.json({
-        success: true,
-        isCompleted: true,
-        isAdmin: true,
-      });
-    }
-
-    // Check respondent profile
-    const profile = await db
+    // Combined single query with LEFT JOIN for optimal 1-hop DB performance
+    const rows = await db
       .select({
+        userId: users.id,
+        role: users.role,
         isCompleted: respondentProfiles.isCompleted,
         completedAt: respondentProfiles.completedAt,
       })
-      .from(respondentProfiles)
-      .where(eq(respondentProfiles.userId, userId))
+      .from(users)
+      .leftJoin(respondentProfiles, eq(users.id, respondentProfiles.userId))
+      .where(eq(users.id, userId))
       .limit(1);
 
-    if (profile.length === 0 || !profile[0].isCompleted) {
-      return NextResponse.json({
-        success: true,
-        isCompleted: false,
-        completedAt: null,
-      });
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "User tidak ditemukan." }, { status: 404 });
     }
 
-    return NextResponse.json({
-      success: true,
-      isCompleted: true,
-      completedAt: profile[0].completedAt,
-    });
+    const row = rows[0];
+
+    // Admin accounts bypass questionnaire
+    if (row.role === "admin") {
+      return NextResponse.json(
+        {
+          success: true,
+          isCompleted: true,
+          isAdmin: true,
+        },
+        {
+          headers: {
+            "Cache-Control": "private, max-age=300, stale-while-revalidate=60",
+          },
+        }
+      );
+    }
+
+    const isCompleted = Boolean(row.isCompleted);
+    return NextResponse.json(
+      {
+        success: true,
+        isCompleted,
+        completedAt: isCompleted ? row.completedAt : null,
+      },
+      {
+        headers: {
+          "Cache-Control": "private, max-age=120, stale-while-revalidate=60",
+        },
+      }
+    );
   } catch (error: any) {
     console.error("Error checking questionnaire status:", error);
     return NextResponse.json(

@@ -39,6 +39,7 @@ agent
 .gemini/
 .agents/
 .antigravity/
+skills-lock.json
 .cursor/
 .windsurf/
 .codebase-memory/

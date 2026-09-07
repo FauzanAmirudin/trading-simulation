@@ -21,8 +21,21 @@ export default function LoginPage() {
   const [nama, setNama] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { user, hydrated, login } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (hydrated && user) {
+      router.replace(user.role === "admin" ? "/admin" : "/dashboard");
+    }
+  }, [hydrated, user, router]);
+
+  useEffect(() => {
+    // Prefetch destination routes so post-login transition is instant (0ms)
+    router.prefetch("/dashboard");
+    router.prefetch("/admin");
+    router.prefetch("/questionnaire");
+  }, [router]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {

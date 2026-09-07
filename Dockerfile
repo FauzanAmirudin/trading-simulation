@@ -37,5 +37,6 @@ COPY --from=builder /app/drizzle ./drizzle
 
 EXPOSE 3000
 
-# Push DB schema, run auto-seeder (idempotent), and start the custom Next.js + Socket server
-CMD npx drizzle-kit push && npx tsx src/db/init.ts && npx tsx server.ts
+# Fast server startup with optional initial schema sync (controlled via AUTO_INIT_DB=true)
+CMD sh -c "if [ \"$AUTO_INIT_DB\" = \"true\" ]; then npx drizzle-kit push && npx tsx src/db/init.ts; fi; npx tsx server.ts"
+

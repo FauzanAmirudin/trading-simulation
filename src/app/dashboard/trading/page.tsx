@@ -1227,14 +1227,6 @@ function TradingPageContent() {
                       })}
                     </div>
 
-                    {/* Mobile Practice Mode Banner */}
-                    {phase === "PRE_MARKET" && (
-                      <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[10px] font-medium flex items-center gap-1.5 shrink-0">
-                        <Sparkles className="size-3.5 text-amber-500 shrink-0" />
-                        <span><b>Mode Latihan Pra-Pembukaan:</b> Bebas BID/ASK, saldo kas &amp; lot aman (tidak terpotong).</span>
-                      </div>
-                    )}
-
                     {/* Modal Header: Stock Switcher & Live Timer */}
                     <div className="flex items-center justify-between border-b border-border/50 pb-1.5 shrink-0">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -1532,13 +1524,13 @@ function TradingPageContent() {
                               <span>ARA/ARB: {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
                             </div>
 
-                            {/* 2-Column Form Grid (Harga & Lot) */}
-                            <div className="grid grid-cols-2 gap-2">
-                              {/* Left: Input Harga */}
+                            {/* Form Input Nominal Harga & Jumlah Lot (Stacked Atas - Bawah) */}
+                            <div className="space-y-2">
+                              {/* 1. Input Harga Section */}
                               <div className="space-y-1">
-                                <div className="flex items-center justify-between text-[9.5px]">
-                                  <span className="font-bold text-foreground">Harga (Rp):</span>
-                                  <span className="text-[8px] text-muted-foreground">Fraksi BEI</span>
+                                <div className="flex items-center justify-between text-[10px]">
+                                  <span className="font-bold text-foreground">Harga Order (Rp)</span>
+                                  <TickSizeBadge price={pNum} basePrice={baseP} />
                                 </div>
                                 
                                 <PriceInput
@@ -1547,54 +1539,53 @@ function TradingPageContent() {
                                   basePrice={baseP}
                                   min={1}
                                   placeholder="0"
-                                  compact={true}
                                 />
 
                                 {/* Quick Price Chips */}
-                                <div className="grid grid-cols-3 gap-1 pt-0.5 text-[9px] font-mono">
+                                <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
                                   <button
                                     type="button"
                                     onClick={() => setOrderPrice(String(modalStockPrice))}
-                                    className="py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
                                   >
                                     Pasar
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setOrderPrice(String(upper))}
-                                    className="py-1 px-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-center font-bold active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-center font-bold active:scale-95"
                                   >
                                     ARA
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setOrderPrice(String(lower))}
-                                    className="py-1 px-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center font-bold active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center font-bold active:scale-95"
                                   >
                                     ARB
                                   </button>
                                 </div>
                               </div>
 
-                              {/* Right: Input Lot */}
+                              {/* 2. Input Lot Section */}
                               <div className="space-y-1">
-                                <div className="flex items-center justify-between text-[9.5px]">
-                                  <span className="font-bold text-foreground">Jumlah (Lot):</span>
-                                  <span className="text-[8.5px] text-muted-foreground font-mono">
+                                <div className="flex items-center justify-between text-[10px]">
+                                  <span className="font-bold text-foreground">Jumlah Lot</span>
+                                  <span className="text-[9px] text-muted-foreground font-mono">
                                     {phase === "PRE_MARKET"
-                                      ? "Latihan Bebas"
+                                      ? "Mode Bebas Lot"
                                       : orderType === "BID" 
-                                        ? (pNum > 0 ? `Maks: ${Math.floor(balance / (pNum * 100))}` : "") 
-                                        : `Maks: ${userOwnedLot}`
+                                        ? (pNum > 0 ? `Maks: ${Math.floor(balance / (pNum * 100))} Lot` : "") 
+                                        : `Maks: ${userOwnedLot} Lot`
                                     }
                                   </span>
                                 </div>
 
-                                <div className="flex items-center rounded-xl border border-border/80 bg-background overflow-hidden h-8.5">
+                                <div className="flex items-center rounded-xl border border-border/80 bg-background overflow-hidden h-9 px-1">
                                   <button
                                     type="button"
                                     onClick={() => setOrderLot(String(Math.max(1, (parseInt(orderLot) || 2) - 1)))}
-                                    className="px-2.5 h-full flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
+                                    className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
                                   >
                                     -
                                   </button>
@@ -1604,32 +1595,39 @@ function TradingPageContent() {
                                     placeholder="0"
                                     value={orderLot}
                                     onChange={e => setOrderLot(e.target.value)}
-                                    className="h-full border-0 text-center font-mono font-bold text-xs p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
+                                    className="h-full border-0 text-center font-mono font-bold text-sm p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => setOrderLot(String((parseInt(orderLot) || 0) + 1))}
-                                    className="px-2.5 h-full flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
+                                    className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
                                   >
                                     +
                                   </button>
                                 </div>
 
                                 {/* Quick Lot Chips */}
-                                <div className="grid grid-cols-3 gap-1 pt-0.5 text-[9px] font-mono">
+                                <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
                                   <button
                                     type="button"
                                     onClick={() => setOrderLot(String((lotNum || 0) + 1))}
-                                    className="py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
                                   >
                                     +1
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setOrderLot(String((lotNum || 0) + 5))}
-                                    className="py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
                                   >
                                     +5
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderLot(String((lotNum || 0) + 10))}
+                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
+                                  >
+                                    +10
                                   </button>
                                   <button
                                     type="button"
@@ -1645,9 +1643,9 @@ function TradingPageContent() {
                                         if (userOwnedLot > 0) setOrderLot(String(userOwnedLot));
                                       }
                                     }}
-                                    className="py-1 px-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-center font-bold active:scale-95"
+                                    className="flex-1 py-1 px-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-center font-bold active:scale-95"
                                   >
-                                    Max
+                                    Maks
                                   </button>
                                 </div>
                               </div>
@@ -2178,16 +2176,6 @@ function TradingPageContent() {
                         </div>
                       </div>
                     </div>
-
-                    {/* Mode Latihan Pra-Pembukaan Informational Banner */}
-                    {phase === "PRE_MARKET" && (
-                      <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-medium shadow-xs">
-                        <Sparkles className="size-4 shrink-0 text-amber-500" />
-                        <div className="flex-1">
-                          <span className="font-bold">Mode Latihan Pra-Pembukaan Aktif:</span> Anda dapat mencoba simulasi order Beli (BID) &amp; Jual (ASK). Order latihan ini langsung muncul di antrean Order Book secara real-time dan <b className="underline">TIDAK memotong saldo kas ataupun lot saham Anda</b>. Perkiraan harga awal Anda tetap aman tersimpan.
-                        </div>
-                      </div>
-                    )}
 
                     {/* Active Stock Identity & Live Price Ribbon */}
                     <div className="flex items-center justify-between px-5 py-3.5 rounded-3xl bg-gradient-to-r from-card via-card/95 to-muted/20 border border-border/80 shadow-xs">

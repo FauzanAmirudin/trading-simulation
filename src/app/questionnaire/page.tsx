@@ -79,7 +79,10 @@ export default function QuestionnairePage() {
         const questionsData = await questionsRes.json();
 
         if (statusData.success && statusData.isCompleted) {
-          // Already completed -> redirect straight to dashboard
+          // Already completed -> cache and redirect straight to dashboard
+          try {
+            sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
+          } catch {}
           router.push("/dashboard/trading");
           return;
         }
@@ -160,6 +163,9 @@ export default function QuestionnairePage() {
 
       const data = await res.json();
       if (res.ok && data.success) {
+        try {
+          sessionStorage.setItem(`simulasi_qs_done_${user.id}`, "true");
+        } catch {}
         setCurrentStep(3);
         toast.success("Kuesioner berhasil dikirimkan!");
       } else {
