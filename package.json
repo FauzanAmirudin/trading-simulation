@@ -19,7 +19,8 @@
     "db:set-password": "tsx src/db/set-password.ts",
     "db:create-users": "tsx src/db/create-users.ts",
     "db:seed:questionnaire": "tsx src/db/seed-questionnaire.ts",
-    "db:seed:portfolios": "tsx src/db/seed-portfolios.ts"
+    "db:seed:portfolios": "tsx src/db/seed-portfolios.ts",
+    "db:reset": "tsx src/db/reset-experiment.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
