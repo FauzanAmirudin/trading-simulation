@@ -2,7 +2,6 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import type { InterventionType } from "@/lib/experimental-matrix";
-import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface RunningTextProps {
@@ -96,22 +95,12 @@ export default function RunningText({
           role="marquee"
           aria-live="polite"
         >
-          {/* Left Fluid Sticky Category Badge */}
-          <div className="relative z-20 flex items-center gap-1 sm:gap-1.5 pl-2 sm:pl-2.5 pr-1.5 sm:pr-2 py-1.5 sm:py-2 shrink-0 bg-zinc-950/90 border-r border-border/30 backdrop-blur-md">
+          {/* Left Fluid Sticky Beacon */}
+          <div className="relative z-20 flex items-center pl-2.5 sm:pl-3 pr-2.5 sm:pr-3 py-1.5 sm:py-2 shrink-0 bg-zinc-950/90 border-r border-border/30 backdrop-blur-md">
             <span className="relative flex size-1.5 sm:size-2 shrink-0">
               <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", colorCls.beaconBg)} />
               <span className={cn("relative inline-flex rounded-full size-1.5 sm:size-2", colorCls.beaconBg)} />
             </span>
-            <div className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md sm:rounded-lg border text-[9.5px] sm:text-[11px] font-black tracking-wider uppercase", colorCls.badgeBg)}>
-              {isPositive ? (
-                <TrendingUp className="size-2.5 sm:size-3 shrink-0" />
-              ) : (
-                <TrendingDown className="size-2.5 sm:size-3 shrink-0" />
-              )}
-              <span className="whitespace-nowrap font-sans">
-                {isPositive ? "Berita Baik" : "Berita Buruk"}
-              </span>
-            </div>
           </div>
 
           {/* Scrolling ticker area with relative fluid edge fades */}

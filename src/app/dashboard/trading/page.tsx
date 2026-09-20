@@ -16,7 +16,7 @@ import {
   PauseCircle, Minus, Plus, Activity,
 } from "lucide-react";
 import { toast } from "sonner";
-import { InterventionType, SubSessionPhase, getPhaseLabel, getInterventionLabel } from "@/lib/experimental-matrix";
+import { InterventionType, SubSessionPhase, getPhaseLabel } from "@/lib/experimental-matrix";
 import { PriceInput, TickSizeBadge } from "@/components/ui/price-input";
 import { getAutoRejectionLimits, isValidTickSize, getTickSize, snapToTickSize, calculateQuickPrice } from "@/lib/market-rules";
 import RunningText from "@/components/trading/RunningText";
@@ -451,7 +451,7 @@ function TradingPageContent() {
         setRunningText({
           active: true,
           type: data.type,
-          title: title || (data.type === "BERITA_BAIK" ? "Berita Baik" : "Berita Buruk"),
+          title: title || "",
           content: content,
         });
       }
@@ -490,7 +490,7 @@ function TradingPageContent() {
         setIsPredictionModalOpen(false);
       }
       if (data.activeIntervention && data.activeIntervention !== "NONE") {
-        const title = data.interventionTitle || (data.activeIntervention === "BERITA_BAIK" ? "Berita Baik" : "Berita Buruk");
+        const title = data.interventionTitle || "";
         const content = data.interventionContent || "";
         if (content || title) {
           setRunningText({
@@ -939,11 +939,6 @@ function TradingPageContent() {
             )}>
               {phase === "PRE_MARKET" ? "Pra-Pembukaan" : "Perdagangan"}
             </span>
-            {activeIntervention !== "NONE" && (
-              <span className="px-2 py-0.5 rounded-lg bg-primary/10 text-primary text-[10.5px] font-semibold border border-primary/20">
-                {getInterventionLabel(activeIntervention)}
-              </span>
-            )}
           </div>
 
           {/* Deduplicated Countdown Timer Pill (Enlarged & High-Legibility) */}

@@ -20,7 +20,6 @@ import {
   ScrollText,
   Clock,
   Wallet,
-  Zap,
   ChevronRight,
   PieChart,
   Eye,
@@ -34,7 +33,6 @@ import {
   InterventionType,
   SubSessionPhase,
   getPhaseLabel,
-  getInterventionLabel,
 } from "@/lib/experimental-matrix";
 import RunningText from "@/components/trading/RunningText";
 
@@ -203,7 +201,7 @@ export default function DashboardPage() {
       setActiveIntervention(intervention);
 
       if (intervention !== "NONE") {
-        const title = data.interventionTitle || (data.interventionCache?.[intervention]?.title) || (intervention === "BERITA_BAIK" ? "Berita Baik" : "Berita Buruk");
+        const title = data.interventionTitle || (data.interventionCache?.[intervention]?.title) || "";
         const content = data.interventionContent || (data.interventionCache?.[intervention]?.content) || "";
         setInterventionContent({ title, content });
       } else {
@@ -399,31 +397,16 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {activeIntervention !== "NONE" && (
-            <div
-              className={cn(
-                "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border shrink-0",
-                activeIntervention === "BERITA_BAIK"
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                  : activeIntervention === "BERITA_BURUK"
-                  ? "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
-                  : "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
-              )}
-            >
-              <Zap className="size-2.5 shrink-0" />
-              <span className="truncate max-w-[75px] sm:max-w-[120px]">{getInterventionLabel(activeIntervention)}</span>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ─── 2. RUNNING TEXT INTERVENSI (BERITA BAIK / BERITA BURUK) ─── */}
+      {/* ─── 2. RUNNING TEXT INTERVENSI ─── */}
       {activeIntervention !== "NONE" && (
         <div className="w-full animate-in fade-in slide-in-from-top-2 duration-300">
           <RunningText
             active={true}
             type={activeIntervention}
-            title={interventionContent?.title || (activeIntervention === "BERITA_BAIK" ? "Berita Baik" : "Berita Buruk")}
+            title={interventionContent?.title || ""}
             content={interventionContent?.content || ""}
           />
         </div>
