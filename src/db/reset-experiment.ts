@@ -2,6 +2,7 @@ import "dotenv/config";
 import { db } from "./connect";
 import { users, stocks, portfolios } from "./schema";
 import { eq, sql } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 
 export async function resetExperiment() {
   console.log("=======================================================");
@@ -25,6 +26,52 @@ export async function resetExperiment() {
     RESTART IDENTITY CASCADE;
   `);
   console.log("✓ Seluruh tabel riwayat berhasil dikosongkan.");
+
+  // 1.5. Pastikan seluruh akun responden (responden1 s.d responden90) tersedia
+  console.log("1.5. Memeriksa keberadaan akun responden (responden1 s.d responden90)...");
+  const existingUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
+  const existingMap = new Set(existingUsers.map((u) => u.nama.toLowerCase()));
+  const userHashed = await bcrypt.hash("password123", 12);
+  const toCreate: { nama: string; password: string; role: string; saldo: string }[] = [];
+
+  for (let i = 1; i <= 90; i++) {
+    const username = `responden${i}`;
+    if (!existingMap.has(username.toLowerCase())) {
+      toCreate.push({
+        nama: username,
+        password: userHashed,
+        role: "responden",
+        saldo: "100000000.00",
+      });
+    }
+  }
+
+  const personalAccounts = [
+    { nama: "Andi", password: "password" },
+    { nama: "Budi", password: "password" },
+    { nama: "Citra", password: "password" },
+    { nama: "Doni", password: "password" },
+  ];
+  for (const a of personalAccounts) {
+    if (!existingMap.has(a.nama.toLowerCase())) {
+      const hashed = await bcrypt.hash(a.password, 12);
+      toCreate.push({
+        nama: a.nama,
+        password: hashed,
+        role: "responden",
+        saldo: "100000000.00",
+      });
+    }
+  }
+
+  if (toCreate.length > 0) {
+    for (let i = 0; i < toCreate.length; i += 50) {
+      await db.insert(users).values(toCreate.slice(i, i + 50));
+    }
+    console.log(`✓ Ditambahkan ${toCreate.length} akun responden baru.`);
+  } else {
+    console.log("✓ Seluruh akun responden (1 s.d 90) sudah terdaftar.");
+  }
 
   // 2. Reset Saldo Kas Seluruh Responden ke Rp 100.000.000,00
   console.log("2. Mereset saldo kas seluruh responden ke Rp 100.000.000,00...");

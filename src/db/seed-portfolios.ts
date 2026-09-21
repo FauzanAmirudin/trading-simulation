@@ -14,7 +14,10 @@ export async function seedInitialPortfolios(initialLot: number = 10) {
     }))
   );
   if (toInsert.length > 0) {
-    await db.insert(portfolios).values(toInsert).onConflictDoNothing();
+    const chunkSize = 300;
+    for (let i = 0; i < toInsert.length; i += chunkSize) {
+      await db.insert(portfolios).values(toInsert.slice(i, i + chunkSize)).onConflictDoNothing();
+    }
   }
   console.log(
     `[DB] Portfolios seeded: ${allUsers.length} users × ${allStocks.length} stocks × ${initialLot} lot`
