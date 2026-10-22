@@ -256,6 +256,7 @@ function TradingPageContent() {
   const [interventionContent, setInterventionContent] = useState<{ title: string; content: string } | null>(null);
   
   // Step-by-step prediction modal state
+  const [userStockOrders, setUserStockOrders] = useState<Record<number, { tipe: "BID" | "ASK"; harga: number; jumlah: number; status?: string }>>({});
   const [predictionsSubmitted, setPredictionsSubmitted] = useState<Record<number, number>>({});
   const [ordersPlacedMap, setOrdersPlacedMap] = useState<Record<number, boolean>>({});
   const [orderBooksMap, setOrderBooksMap] = useState<Record<number, { bids: Order[]; asks: Order[] }>>({});
@@ -311,9 +312,17 @@ function TradingPageContent() {
       setBalance(s);
       updateBalance?.(s);
     };
-    const onUserPredictionsLoaded = (data: { predictions: Record<number, number> }) => {
+    const onUserPredictionsLoaded = (data: { predictions: Record<number, number>; orders?: Record<number, { tipe: "BID" | "ASK"; harga: number; jumlah: number; status?: string }> }) => {
       if (data?.predictions) {
         setPredictionsSubmitted(prev => ({ ...prev, ...data.predictions }));
+      }
+      if (data?.orders) {
+        setUserStockOrders(prev => ({ ...prev, ...data.orders }));
+        const newOrdersPlaced: Record<number, boolean> = {};
+        Object.keys(data.orders).forEach(k => {
+          newOrdersPlaced[Number(k)] = true;
+        });
+        setOrdersPlacedMap(prev => ({ ...prev, ...newOrdersPlaced }));
       }
     };
     const onPredictionSaved = (data: { stockId: number; predictedPrice: number }) => {
@@ -334,6 +343,7 @@ function TradingPageContent() {
       setBids([]);
       setAsks([]);
       setPredictionsSubmitted({});
+      setUserStockOrders({});
       setOrdersPlacedMap({});
       setSkippedStockIds([]);
       setIsPaused(false);
@@ -361,21 +371,10 @@ function TradingPageContent() {
       setBids([]);
       setAsks([]);
       if (localTimerRef.current) { clearInterval(localTimerRef.current); localTimerRef.current = null; }
-      if (data.phase === "PRE_MARKET") {
-        setShowPredictionUI(true);
-        setIsPredictionModalOpen(false);
-        setIsOrderModalOpen(false);
-        socket.emit("get-user-predictions", { userId: user.id });
-      } else if (data.phase === "TRADING") {
-        setShowPredictionUI(false);
-        setIsPredictionModalOpen(false);
-        setIsOrderModalOpen(false);
-        setOrdersPlacedMap({});
-      } else {
-        setShowPredictionUI(false);
-        setIsPredictionModalOpen(false);
-        setIsOrderModalOpen(false);
-      }
+      setShowPredictionUI(false);
+      setIsPredictionModalOpen(false);
+      setIsOrderModalOpen(false);
+      socket.emit("get-user-predictions", { userId: user.id });
     };
     const onTimerTick = (data: { timeLeft: number }) => { setSessionTimer(data.timeLeft); };
     const onExperimentPaused = (data?: { timeLeft?: number }) => {
@@ -712,23 +711,32 @@ function TradingPageContent() {
     const base = snapToTickSize(rawBase);
     setCurrentPrice(base);
     setPriceChange(0);
-    setPriceHistory([{ time: "Pra-Buka", price: base }]);
-    if (predictionsSubmitted[s.id]) {
+    setPriceHistory([{ time: "Mulai", price: base }]);
+    if (userStockOrders[s.id]) {
+      setOrderType(userStockOrders[s.id].tipe as "BID" | "ASK");
+      setOrderPrice(String(userStockOrders[s.id].harga));
+      setOrderLot(String(userStockOrders[s.id].jumlah));
+    } else if (predictionsSubmitted[s.id]) {
       setOrderPrice(String(predictionsSubmitted[s.id]));
+      setOrderLot("1");
     } else {
       setOrderPrice(String(base));
+      setOrderLot("1");
     }
-    setOrderLot("1");
     setIsOrderModalOpen(true);
 
     const socket = getSocket();
     socket.emit("get-orderbook", { stockId: s.id });
     socket.emit("get-price-history", { stockId: s.id });
     if (user) socket.emit("get-portfolio", { userId: user.id });
-  }, [openingPrices, lastPrices, predictionsSubmitted, user, orderBooksMap]);
+  }, [openingPrices, lastPrices, predictionsSubmitted, userStockOrders, user, orderBooksMap]);
 
   const handlePlaceOrder = useCallback(() => {
     if (!user || !stock) return;
+    if (userStockOrders[stock.id]) {
+      toast.error("Anda sudah melakukan transaksi untuk saham ini (maksimal 1 transaksi per saham)");
+      return;
+    }
     const price = parseInt(orderPrice);
     const lot = parseInt(orderLot);
     if (!price || !lot) { toast.error("Isi harga dan jumlah"); return; }
@@ -746,14 +754,14 @@ function TradingPageContent() {
       return;
     }
 
-    const userOwnedLot = portfoliosMap[stock.id] ?? 10;
-    if (phase === "TRADING" && orderType === "ASK" && lot > userOwnedLot) {
+    const userOwnedLot = portfoliosMap[stock.id] ?? 0;
+    if (orderType === "ASK" && lot > userOwnedLot) {
       toast.error(`Jumlah lot melebihi kepemilikan (${userOwnedLot} lot)`);
       return;
     }
 
     const totalEst = price * (lot * 100);
-    if (phase === "TRADING" && orderType === "BID" && totalEst > balance) {
+    if (orderType === "BID" && totalEst > balance) {
       toast.error("Saldo kas tidak mencukupi untuk order ini");
       return;
     }
@@ -764,8 +772,6 @@ function TradingPageContent() {
     socket.once("order-placed", (data?: { isPreMarket?: boolean; message?: string }) => {
       const curStockKode = (stock as any).kodeSaham || (stock as any).kode || "Saham";
       toast.success(data?.message || `Order ${orderType === "BID" ? "Beli" : "Jual"} ${curStockKode}: ${lot} lot @ Rp ${price.toLocaleString("id-ID")} berhasil dikirim!`);
-      setOrderPrice(""); 
-      setOrderLot("");
       
       // Request updated orderbook immediately
       socket.emit("get-orderbook", { stockId: stock.id });
@@ -773,13 +779,22 @@ function TradingPageContent() {
 
       const newOrders = { ...ordersPlacedMap, [stock.id]: true };
       setOrdersPlacedMap(newOrders);
-
-      // PENTING: Pengguna TETAP berada di saham aktif dan melihat order-nya terisi di kolom order book secara live!
-      // Pada fase PRE_MARKET (mode latihan), tebakan harga awal pengguna TIDAK ditimpa dan tetap aman.
+      setUserStockOrders(prev => ({
+        ...prev,
+        [stock.id]: {
+          tipe: orderType,
+          harga: price,
+          jumlah: lot,
+        }
+      }));
+      setPredictionsSubmitted(prev => ({
+        ...prev,
+        [stock.id]: price,
+      }));
     });
 
     socket.once("order-error", (data: { message: string }) => toast.error(data.message));
-  }, [user, stock, orderType, orderPrice, orderLot, ordersPlacedMap, stocks, selectStock, handleCloseOrderModal, portfoliosMap, phase, balance]);
+  }, [user, stock, orderType, orderPrice, orderLot, userStockOrders, ordersPlacedMap, portfoliosMap, balance]);
 
   const findNextUnsubmittedStock = useCallback((currentStockId: number, currentSubmitted: Record<number, number>, skipped: number[]) => {
     const unsubmitted = stocks.filter(s => currentSubmitted[s.id] === undefined);
@@ -922,7 +937,10 @@ function TradingPageContent() {
       </div>
 
       {/* ── Responsive Header Layout (Stacking on Narrow Screens) ─ */}
-      <div className="space-y-1 sm:space-y-1.5">
+      <div className={cn(
+        "space-y-1 sm:space-y-1.5",
+        (isOrderModalOpen && stock) ? "hidden md:block" : "block"
+      )}>
         {/* Top meta row: Session Pills & Timer */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -931,13 +949,8 @@ function TradingPageContent() {
                 R{roundNumber}-S{subSession}
               </span>
             )}
-            <span className={cn(
-              "px-2 py-0.5 rounded-lg text-[10.5px] font-bold border",
-              phase === "PRE_MARKET" 
-                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" 
-                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-            )}>
-              {phase === "PRE_MARKET" ? "Pra-Pembukaan" : "Perdagangan"}
+            <span className="px-2 py-0.5 rounded-lg text-[10.5px] font-bold border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+              Perdagangan
             </span>
           </div>
 
@@ -962,13 +975,10 @@ function TradingPageContent() {
         {/* Bottom title row: Fluid Typography Clamp & Anti-Orphan Balanced Copy */}
         <div className="space-y-0.5">
           <h1 className="font-extrabold tracking-tight text-foreground text-[clamp(1.1rem,4.5vw,1.4rem)] leading-tight">
-            {phase === "PRE_MARKET" ? "Pra-Pembukaan Pasar" : "Perdagangan Saham"}
+            Perdagangan Saham
           </h1>
           <p className="text-[11px] sm:text-xs text-muted-foreground text-balance leading-relaxed">
-            {phase === "PRE_MARKET" 
-              ? "Sesi lelang pra-pembukaan untuk penentuan harga pembukaan saham."
-              : "Pilih saham untuk transaksi dan pantau grafik harga live."
-            }
+            Pilih Jual atau Beli (maksimal 1 transaksi per saham). Harga dan lot yang Anda masukkan menjadi order aktif dan harga prediksi yang terekam di sistem & laporan.
           </p>
         </div>
       </div>
@@ -991,10 +1001,14 @@ function TradingPageContent() {
       {/* ── UNIFIED TRADING INTERFACE: Dual Adaptive Interface (Mobile Modal vs Desktop Full Workstation) ── */}
       <div>
           {/* ══════════════════════════════════════════════════════════
-              1. MOBILE VIEW (md:hidden): Compact Catalog + Centered Modal
+              1. MOBILE VIEW (md:hidden): Dynamic Mobile Page View
+                 - Saat saham dipilih: Halaman Transaksi Saham Penuh
+                 - Saat tidak ada saham: Halaman Katalog & Saldo
              ══════════════════════════════════════════════════════════ */}
           <div className="md:hidden space-y-2.5 sm:space-y-3">
-            {/* ── Sleek Modern Fintech Hero Card ─────────────── */}
+            {!(isOrderModalOpen && stock) ? (
+              <div className="space-y-2.5 sm:space-y-3">
+                {/* ── Sleek Modern Fintech Hero Card ─────────────── */}
             <div className="rounded-3xl border border-border/80 bg-gradient-to-br from-card via-card/90 to-emerald-500/5 p-3 sm:p-4 shadow-xs space-y-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1004,19 +1018,16 @@ function TradingPageContent() {
                   </span>
                   <div className="min-w-0">
                     <span className="font-extrabold text-xs text-foreground block truncate">
-                      {phase === "PRE_MARKET" ? "Sesi Pra-Pembukaan Pasar" : "Pasar Perdagangan Aktif"}
+                      Pasar Perdagangan Aktif
                     </span>
                     <span className="text-[10px] text-muted-foreground block truncate">
-                      {phase === "PRE_MARKET" ? "Tap saham untuk order lelang pra-pembukaan" : "Tap saham untuk transaksi live order"}
+                      Pilih Jual atau Beli (1x per saham)
                     </span>
                   </div>
                 </div>
 
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] shrink-0">
-                  {phase === "PRE_MARKET" 
-                    ? `${Object.keys(ordersPlacedMap).length}/${stocks.length} Terorder`
-                    : `${stocks.length} Saham`
-                  }
+                  {Object.keys(userStockOrders).length}/{stocks.length} Terorder
                 </span>
               </div>
 
@@ -1047,8 +1058,8 @@ function TradingPageContent() {
                 <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                   Daftar Saham ({stocks.length})
                 </span>
-                <span className="text-[9px] text-muted-foreground">
-                  {phase === "PRE_MARKET" ? "Pilih untuk isi perkiraan & latihan" : "Pilih untuk trade"}
+                <span className="text-[9px] text-muted-foreground font-mono">
+                  {Object.keys(userStockOrders).length === stocks.length ? "Semua Saham Terorder ✓" : "1 Transaksi / Saham"}
                 </span>
               </div>
 
@@ -1062,10 +1073,8 @@ function TradingPageContent() {
                   const chg = openP > 0 ? ((lastP - openP) / openP) * 100 : 0;
                   const userLot = portfoliosMap[s.id] || 0;
                   const isPositive = chg >= 0;
-                  const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
-                  const isSubmitted = predictionsSubmitted[s.id] !== undefined;
-                  const submittedVal = predictionsSubmitted[s.id];
-                  const isOrdered = ordersPlacedMap[s.id] === true;
+                  const existingOrder = userStockOrders[s.id];
+                  const isOrdered = !!existingOrder || ordersPlacedMap[s.id] === true;
 
                   return (
                     <button
@@ -1073,13 +1082,9 @@ function TradingPageContent() {
                       onClick={() => selectStock(s)}
                       className={cn(
                         "group text-left w-full rounded-2xl border p-2.5 sm:p-3 transition-all duration-200 shadow-2xs active:scale-[0.985] min-h-[60px] flex items-center justify-between gap-2.5 bg-card/90 hover:bg-muted/30",
-                        phase === "PRE_MARKET"
-                          ? isSubmitted
-                            ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]"
-                            : "border-border/80 hover:border-amber-500/40"
-                          : isOrdered
-                            ? "border-emerald-500/30 bg-emerald-500/[0.02]"
-                            : "border-border/80 hover:border-emerald-500/50"
+                        isOrdered
+                          ? "border-emerald-500/30 bg-emerald-500/[0.02]"
+                          : "border-border/80 hover:border-emerald-500/50"
                       )}
                     >
                       {/* Left Ticker Avatar & Metadata */}
@@ -1114,87 +1119,105 @@ function TradingPageContent() {
 
                       {/* Right Price & Status / Action CTA */}
                       <div className="text-right shrink-0 flex items-center gap-2">
-                        {phase === "PRE_MARKET" ? (
-                          <div className="flex items-center gap-2">
-                            <div className="font-mono text-right">
-                              <span className="text-[8.5px] font-sans text-muted-foreground block">Acuan</span>
-                              <div className="text-xs sm:text-sm font-extrabold text-foreground">
-                                Rp {baseP.toLocaleString("id-ID")}
-                              </div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-mono text-right">
+                            <div className="text-xs sm:text-sm font-extrabold text-foreground">
+                              Rp {lastP.toLocaleString("id-ID")}
                             </div>
-
-                            {isSubmitted ? (
-                              <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1 shrink-0">
-                                <CheckCircle2 className="size-3" />
-                                <span>Rp {submittedVal.toLocaleString("id-ID")}</span>
-                              </span>
-                            ) : (
-                              <span className="px-2 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
-                                <Sparkles className="size-3 text-amber-500" />
-                                <span>Prediksi</span>
-                              </span>
-                            )}
+                            <div className={cn(
+                              "text-[9.5px] font-bold flex items-center justify-end gap-0.5",
+                              isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                            )}>
+                              {isPositive ? <TrendingUp className="size-2.5" /> : <TrendingDown className="size-2.5" />}
+                              <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
+                            </div>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <div className="font-mono text-right">
-                              <div className="text-xs sm:text-sm font-extrabold text-foreground">
-                                Rp {lastP.toLocaleString("id-ID")}
-                              </div>
-                              <div className={cn(
-                                "text-[9.5px] font-bold flex items-center justify-end gap-0.5",
-                                isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+
+                          {existingOrder ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-xl border text-[9.5px] font-bold flex items-center gap-1 font-mono",
+                                existingOrder.tipe === "BID"
+                                  ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                                  : "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400"
                               )}>
-                                {isPositive ? <TrendingUp className="size-2.5" /> : <TrendingDown className="size-2.5" />}
-                                <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
-                              </div>
-                            </div>
-
-                            {isOrdered ? (
-                              <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] flex items-center gap-1 shrink-0">
                                 <CheckCircle2 className="size-2.5" />
-                                <span>Terorder</span>
+                                <span>{existingOrder.tipe === "BID" ? "Beli" : "Jual"} {existingOrder.jumlah}L @ Rp {existingOrder.harga.toLocaleString("id-ID")}</span>
                               </span>
-                            ) : (
-                              <span className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] flex items-center gap-1 group-hover:bg-emerald-500/20 transition-all shrink-0 min-h-[34px]">
-                                <Zap className="size-3 text-emerald-500 fill-emerald-500/30" />
-                                <span>Trade</span>
-                              </span>
-                            )}
-                          </div>
-                        )}
+                              <span className="text-[8px] text-muted-foreground font-sans">1x Terorder</span>
+                            </div>
+                          ) : (
+                            <span className="px-2.5 py-1.5 rounded-xl bg-primary/10 border border-primary/30 text-primary font-bold text-[11px] flex items-center gap-1 group-hover:bg-primary/20 transition-all shrink-0 min-h-[34px]">
+                              <Zap className="size-3 text-primary fill-primary/30" />
+                              <span>Pilih Beli/Jual</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </button>
                   );
                 })}
               </div>
             </div>
+          </div>
+        ) : (
+          /* ── Mobile Full-Page Trading Screen (Charts + Orderbook + Order Form) ── */
+          <div className="space-y-2.5 pb-24 animate-in fade-in duration-200">
+            {/* Top Navigation Bar: Tombol Kembali + Sesi & Live Timer */}
+            <div className="flex items-center justify-between gap-2 p-2.5 rounded-2xl bg-card border border-border/70 shadow-xs">
+              <button
+                type="button"
+                onClick={handleCloseOrderModal}
+                className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground active:scale-95 transition-all py-1.5 px-3 rounded-xl bg-muted/60 border border-border/60 hover:bg-muted shadow-2xs"
+                title="Kembali ke Daftar Saham"
+              >
+                <ArrowLeft className="size-3.5" />
+                <span>Daftar Saham</span>
+              </button>
 
-            {/* ── Mobile Unified Full-View Trading Order Modal (Charts + Orderbook + Order Form) ── */}
-            {isOrderModalOpen && stock && (
-              <div className="fixed inset-0 z-[80] md:hidden flex items-center justify-center p-2 sm:p-3 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-                <div className="fixed inset-0" onClick={handleCloseOrderModal} />
-                
-                <div className="relative z-10 w-full max-w-[440px] max-h-[96vh] flex flex-col gap-1.5 animate-in zoom-in-95 duration-200">
-                  {/* Running text directly above order modal card with a small gap */}
-                  {runningText.active && runningText.type !== "NONE" && (
-                    <div className="w-full shrink-0 animate-in slide-in-from-top-2 duration-200 shadow-xl">
-                      <RunningText
-                        active={runningText.active}
-                        type={runningText.type}
-                        title={runningText.title}
-                        content={runningText.content}
-                      />
-                    </div>
-                  )}
-
-                  {/* Modal Card Content (Unified Single-View) */}
-                  <div className={cn(
-                    "w-full bg-background dark:bg-zinc-950 border rounded-3xl p-3 sm:p-4 shadow-2xl shadow-black/50 flex flex-col max-h-[88vh] overflow-hidden",
-                    orderType === "BID" 
-                      ? "border-emerald-500/30 dark:border-emerald-500/40 shadow-emerald-500/10" 
-                      : "border-rose-500/30 dark:border-rose-500/40 shadow-rose-500/10"
+              <div className="flex items-center gap-1.5 shrink-0">
+                {roundNumber && (
+                  <span className="px-2 py-1 rounded-lg bg-muted text-[10px] font-mono font-semibold text-muted-foreground border border-border/60">
+                    R{roundNumber}-S{subSession}
+                  </span>
+                )}
+                {sessionActive && (
+                  <span className={cn(
+                    "px-2.5 py-1 rounded-xl border font-mono font-black text-xs flex items-center gap-1.5 shadow-xs",
+                    isPaused
+                      ? "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-300"
+                      : sessionTimer <= 10
+                        ? "bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400 animate-pulse ring-2 ring-rose-500/30"
+                        : sessionTimer <= 30
+                          ? "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                          : "bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
                   )}>
+                    <Timer className="size-3.5 shrink-0" />
+                    <span>{Math.floor(sessionTimer / 60)}:{String(sessionTimer % 60).padStart(2, "0")}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Running text directly above order card with a small gap */}
+            {runningText.active && runningText.type !== "NONE" && (
+              <div className="w-full shrink-0 animate-in slide-in-from-top-2 duration-200 shadow-xs">
+                <RunningText
+                  active={runningText.active}
+                  type={runningText.type}
+                  title={runningText.title}
+                  content={runningText.content}
+                />
+              </div>
+            )}
+
+            {/* Trading Card Content (Unified Single-View Page) */}
+            <div className={cn(
+              "w-full bg-card/95 border rounded-3xl p-3 sm:p-4 shadow-sm flex flex-col space-y-2.5",
+              orderType === "BID" 
+                ? "border-emerald-500/30 dark:border-emerald-500/40 shadow-emerald-500/5" 
+                : "border-rose-500/30 dark:border-rose-500/40 shadow-rose-500/5"
+            )}>
                     {/* Segmented Top Multi-Stock Step Bar */}
                     <div className="flex items-center gap-1 w-full shrink-0 pb-1">
                       {stocks.map((s, idx) => {
@@ -1313,7 +1336,7 @@ function TradingPageContent() {
                       const isLotInvalid = lotNum > 0 && ((orderType === "ASK" && lotNum > userOwnedLot) || (orderType === "BID" && totalEst > balance));
 
                       return (
-                        <div className="flex-1 overflow-y-auto space-y-2.5 py-2 pr-0.5" style={{ scrollbarWidth: 'thin' }}>
+                        <div className="space-y-2.5 py-1">
                           {/* 1. Stock Identity & Metrics Banner */}
                           <div className="p-2.5 rounded-2xl bg-card/80 border border-border/70 space-y-1.5 shadow-2xs">
                             <div className="flex items-center justify-between gap-2">
@@ -1354,106 +1377,44 @@ function TradingPageContent() {
                             </div>
                           </div>
 
-                          {/* 1.5. PRE_MARKET Prediction Section */}
-                          {phase === "PRE_MARKET" && (() => {
-                            const isSub = predictionsSubmitted[stock.id] !== undefined;
-                            const subVal = predictionsSubmitted[stock.id];
-                            const curVal = predictionInput[stock.id] ?? (isSub ? String(subVal) : "");
-                            const pVal = parseInt(curVal) || 0;
-                            const isInv = pVal > 0 && (!isValidTickSize(pVal, baseP) || pVal > upper || pVal < lower);
-                            const diff = pVal > 0 && baseP > 0 ? ((pVal - baseP) / baseP) * 100 : 0;
-                            const quickChips = [
-                              { label: "-5%", pct: -5 },
-                              { label: "-2%", pct: -2 },
-                              { label: "Sama", pct: 0 },
-                              { label: "+2%", pct: 2 },
-                              { label: "+5%", pct: 5 },
-                            ];
-
+                          {/* 1.5. Order & Prediction Status Card (If already ordered) */}
+                          {userStockOrders[stock.id] && (() => {
+                            const existingOrder = userStockOrders[stock.id];
                             return (
-                              <div className="p-3 rounded-2xl bg-amber-500/[0.04] border border-amber-500/30 space-y-2 shadow-2xs">
+                              <div className="p-3 rounded-2xl bg-emerald-500/[0.08] border border-emerald-500/30 space-y-2 shadow-2xs">
                                 <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
-                                    <Sparkles className="size-3.5 text-amber-500" />
-                                    <span>Perkiraan Harga Pembukaan</span>
+                                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                                    <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+                                    <span>Transaksi Selesai & Terekam (1x)</span>
                                   </div>
-                                  {isSub ? (
-                                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] flex items-center gap-1">
-                                      <CheckCircle2 className="size-3" />
-                                      <span>Rp {subVal.toLocaleString("id-ID")}</span>
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-full text-[10px] font-bold font-mono border",
+                                    existingOrder.tipe === "BID"
+                                      ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
+                                      : "bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/40"
+                                  )}>
+                                    {existingOrder.tipe === "BID" ? "BELI (BID)" : "JUAL (ASK)"}
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 p-2 rounded-xl bg-card/90 border border-border/70 text-center font-mono">
+                                  <div>
+                                    <span className="text-[8.5px] text-muted-foreground uppercase font-sans block">Harga Tebak/Order</span>
+                                    <span className="font-black text-xs text-foreground">
+                                      Rp {existingOrder.harga.toLocaleString("id-ID")}
                                     </span>
-                                  ) : (
-                                    <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[9.5px]">
-                                      Belum Disimpan
+                                  </div>
+                                  <div>
+                                    <span className="text-[8.5px] text-muted-foreground uppercase font-sans block">Jumlah</span>
+                                    <span className="font-black text-xs text-foreground">
+                                      {existingOrder.jumlah} Lot
                                     </span>
-                                  )}
+                                  </div>
                                 </div>
 
-                                <div className="flex items-center justify-between text-[10.5px]">
-                                  <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
-                                  {pVal > 0 && (
-                                    <span className={cn(
-                                      "font-mono text-[10px] font-bold px-1.5 py-0.2 rounded",
-                                      pVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                                    )}>
-                                      {pVal >= baseP ? "+" : ""}{diff.toFixed(2)}%
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <PriceInput
-                                    value={curVal}
-                                    basePrice={baseP}
-                                    onChange={(val) => setPredictionInput(prev => ({ ...prev, [stock.id]: val }))}
-                                    min={1}
-                                    max={upper}
-                                    className="h-8.5 rounded-xl text-xs flex-1"
-                                  />
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => handleSubmitPrediction(stock.id)}
-                                    disabled={isInv || (!curVal && !isSub)}
-                                    className={cn(
-                                      "h-8.5 px-3.5 rounded-xl font-bold text-xs shrink-0 shadow-xs",
-                                      isSub
-                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                                        : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
-                                    )}
-                                  >
-                                    {isSub ? "Ubah" : "Simpan"}
-                                  </Button>
-                                </div>
-
-                                {/* Quick Chips */}
-                                <div className="flex items-center gap-1">
-                                  {quickChips.map(chip => {
-                                    const targetP = calculateQuickPrice(baseP, chip.pct);
-                                    const isSelected = pVal === targetP;
-                                    return (
-                                      <button
-                                        key={chip.label}
-                                        type="button"
-                                        onClick={() => setPredictionInput(prev => ({ ...prev, [stock.id]: String(targetP) }))}
-                                        className={cn(
-                                          "flex-1 py-1 rounded-lg text-[9.5px] font-mono font-bold border transition-all active:scale-95",
-                                          isSelected
-                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
-                                            : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/50"
-                                        )}
-                                      >
-                                        {chip.label}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-
-                                {isInv && (
-                                  <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
-                                    {!isValidTickSize(pVal, baseP) ? `Harus kelipatan Rp ${pVal > 0 ? getTickSize(pVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
-                                  </p>
-                                )}
+                                <p className="text-[9.5px] text-muted-foreground text-center">
+                                  Total: <b className="font-mono text-foreground">Rp {(existingOrder.harga * existingOrder.jumlah * 100).toLocaleString("id-ID")}</b> · Tercatat di order lelang & laporan
+                                </p>
                               </div>
                             );
                           })()}
@@ -1475,211 +1436,210 @@ function TradingPageContent() {
                           </div>
 
                           {/* 3. Order Execution Form Section */}
-                          <div className="p-2.5 rounded-2xl bg-card/80 border border-border/70 space-y-2">
-                            {/* BID / ASK Switcher Buttons */}
-                            <div className="grid grid-cols-2 p-0.5 rounded-xl bg-muted/60 dark:bg-zinc-900 border border-border/80 text-[11px] font-bold">
-                              <button
-                                type="button"
-                                onClick={() => setOrderType("BID")}
-                                className={cn(
-                                  "py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all",
-                                  orderType === "BID" 
-                                    ? "bg-emerald-500 text-white shadow-xs" 
-                                    : "text-muted-foreground hover:text-foreground"
-                                )}
-                              >
-                                <ArrowDownToLine className="size-3.5" />
-                                <span>Beli (BID)</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setOrderType("ASK")}
-                                className={cn(
-                                  "py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all",
-                                  orderType === "ASK" 
-                                    ? "bg-rose-500 text-white shadow-xs" 
-                                    : "text-muted-foreground hover:text-foreground"
-                                )}
-                              >
-                                <ArrowUpFromLine className="size-3.5" />
-                                <span>Jual (ASK)</span>
-                              </button>
+                          {userStockOrders[stock.id] ? (
+                            <div className="p-3 rounded-2xl bg-muted/40 border border-border/70 text-center space-y-1">
+                              <span className="text-xs font-bold text-foreground block">
+                                Transaksi Saham Ini Sudah Dipilih
+                              </span>
+                              <p className="text-[10px] text-muted-foreground">
+                                Aturan ronde ini memperbolehkan 1 transaksi (Jual atau Beli) per saham.
+                              </p>
                             </div>
+                          ) : (
+                            <div className="p-2.5 rounded-2xl bg-card/80 border border-border/70 space-y-2">
+                              {/* BID / ASK Switcher Buttons */}
+                              <div className="grid grid-cols-2 p-0.5 rounded-xl bg-muted/60 dark:bg-zinc-900 border border-border/80 text-[11px] font-bold">
+                                <button
+                                  type="button"
+                                  onClick={() => setOrderType("BID")}
+                                  className={cn(
+                                    "py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all",
+                                    orderType === "BID" 
+                                      ? "bg-emerald-500 text-white shadow-xs" 
+                                      : "text-muted-foreground hover:text-foreground"
+                                  )}
+                                >
+                                  <ArrowDownToLine className="size-3.5" />
+                                  <span>Beli (BID)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setOrderType("ASK")}
+                                  className={cn(
+                                    "py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all",
+                                    orderType === "ASK" 
+                                      ? "bg-rose-500 text-white shadow-xs" 
+                                      : "text-muted-foreground hover:text-foreground"
+                                  )}
+                                >
+                                  <ArrowUpFromLine className="size-3.5" />
+                                  <span>Jual (ASK)</span>
+                                </button>
+                              </div>
 
-                            {/* Kas & Ownership Bar */}
-                            <div className="flex items-center justify-between text-[9.5px] text-muted-foreground px-0.5 font-mono">
-                              <span>
-                                {phase === "PRE_MARKET"
-                                  ? "Mode Latihan: Saldo & Lot Bebas (Aman)"
-                                  : orderType === "BID" 
+                              {/* Kas & Ownership Bar */}
+                              <div className="flex items-center justify-between text-[9.5px] text-muted-foreground px-0.5 font-mono">
+                                <span>
+                                  {orderType === "BID" 
                                     ? `Sisa Kas: Rp ${balance.toLocaleString("id-ID")} `
                                     : `Milik: ${userOwnedLot} Lot (${stock.kodeSaham})`
-                                }
-                              </span>
-                              <span>ARA/ARB: {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
-                            </div>
-
-                            {/* Form Input Nominal Harga & Jumlah Lot (Stacked Atas - Bawah) */}
-                            <div className="space-y-2">
-                              {/* 1. Input Harga Section */}
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between text-[10px]">
-                                  <span className="font-bold text-foreground">Harga Order (Rp)</span>
-                                  <TickSizeBadge price={pNum} basePrice={baseP} />
-                                </div>
-                                
-                                <PriceInput
-                                  value={orderPrice}
-                                  onChange={setOrderPrice}
-                                  basePrice={baseP}
-                                  min={1}
-                                  placeholder="0"
-                                />
-
-                                {/* Quick Price Chips */}
-                                <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderPrice(String(modalStockPrice))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
-                                  >
-                                    Pasar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderPrice(String(upper))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-center font-bold active:scale-95"
-                                  >
-                                    ARA
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderPrice(String(lower))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center font-bold active:scale-95"
-                                  >
-                                    ARB
-                                  </button>
-                                </div>
+                                  }
+                                </span>
+                                <span>ARA/ARB: {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
                               </div>
 
-                              {/* 2. Input Lot Section */}
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between text-[10px]">
-                                  <span className="font-bold text-foreground">Jumlah Lot</span>
-                                  <span className="text-[9px] text-muted-foreground font-mono">
-                                    {phase === "PRE_MARKET"
-                                      ? "Mode Bebas Lot"
-                                      : orderType === "BID" 
+                              {/* Form Input Nominal Harga & Jumlah Lot (Stacked Atas - Bawah) */}
+                              <div className="space-y-2">
+                                {/* 1. Input Harga Section */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="font-bold text-foreground">Harga Order / Prediksi (Rp)</span>
+                                    <TickSizeBadge price={pNum} basePrice={baseP} />
+                                  </div>
+                                  
+                                  <PriceInput
+                                    value={orderPrice}
+                                    onChange={setOrderPrice}
+                                    basePrice={baseP}
+                                    min={1}
+                                    placeholder="0"
+                                  />
+
+                                  {/* Quick Price Chips */}
+                                  <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderPrice(String(modalStockPrice))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
+                                    >
+                                      Pasar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderPrice(String(upper))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-center font-bold active:scale-95"
+                                    >
+                                      ARA
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderPrice(String(lower))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-center font-bold active:scale-95"
+                                    >
+                                      ARB
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* 2. Input Lot Section */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="font-bold text-foreground">Jumlah Lot</span>
+                                    <span className="text-[9px] text-muted-foreground font-mono">
+                                      {orderType === "BID" 
                                         ? (pNum > 0 ? `Maks: ${Math.floor(balance / (pNum * 100))} Lot` : "") 
                                         : `Maks: ${userOwnedLot} Lot`
-                                    }
+                                      }
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center rounded-xl border border-border/80 bg-background overflow-hidden h-9 px-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderLot(String(Math.max(1, (parseInt(orderLot) || 2) - 1)))}
+                                      className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
+                                    >
+                                      -
+                                    </button>
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      placeholder="0"
+                                      value={orderLot}
+                                      onChange={e => setOrderLot(e.target.value)}
+                                      className="h-full border-0 text-center font-mono font-bold text-sm p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderLot(String((parseInt(orderLot) || 0) + 1))}
+                                      className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+
+                                  {/* Quick Lot Chips */}
+                                  <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderLot(String((lotNum || 0) + 1))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
+                                    >
+                                      +1
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderLot(String((lotNum || 0) + 5))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
+                                    >
+                                      +5
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setOrderLot(String((lotNum || 0) + 10))}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
+                                    >
+                                      +10
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (orderType === "BID") {
+                                          if (pNum > 0) {
+                                            const maxB = Math.floor(balance / (pNum * 100));
+                                            if (maxB > 0) setOrderLot(String(maxB));
+                                          }
+                                        } else {
+                                          if (userOwnedLot > 0) setOrderLot(String(userOwnedLot));
+                                        }
+                                      }}
+                                      className="flex-1 py-1 px-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-center font-bold active:scale-95"
+                                    >
+                                      Maks
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Transaction Summary Single Row */}
+                              <div className="px-2.5 py-1 rounded-xl bg-muted/20 border border-border/50 flex items-center justify-between text-[9.5px] font-mono">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-muted-foreground">Total:</span>
+                                  <span className="font-bold text-foreground">
+                                    Rp {totalEst.toLocaleString("id-ID")}
                                   </span>
                                 </div>
-
-                                <div className="flex items-center rounded-xl border border-border/80 bg-background overflow-hidden h-9 px-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderLot(String(Math.max(1, (parseInt(orderLot) || 2) - 1)))}
-                                    className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
-                                  >
-                                    -
-                                  </button>
-                                  <Input
-                                    type="number"
-                                    min="1"
-                                    placeholder="0"
-                                    value={orderLot}
-                                    onChange={e => setOrderLot(e.target.value)}
-                                    className="h-full border-0 text-center font-mono font-bold text-sm p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderLot(String((parseInt(orderLot) || 0) + 1))}
-                                    className="size-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 font-bold text-base"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-
-                                {/* Quick Lot Chips */}
-                                <div className="flex items-center gap-1 pt-0.5 text-[9.5px] font-mono">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderLot(String((lotNum || 0) + 1))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
-                                  >
-                                    +1
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderLot(String((lotNum || 0) + 5))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
-                                  >
-                                    +5
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setOrderLot(String((lotNum || 0) + 10))}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-center font-medium active:scale-95 text-foreground"
-                                  >
-                                    +10
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (phase === "PRE_MARKET") {
-                                        setOrderLot("10");
-                                      } else if (orderType === "BID") {
-                                        if (pNum > 0) {
-                                          const maxB = Math.floor(balance / (pNum * 100));
-                                          if (maxB > 0) setOrderLot(String(maxB));
-                                        }
-                                      } else {
-                                        if (userOwnedLot > 0) setOrderLot(String(userOwnedLot));
-                                      }
-                                    }}
-                                    className="flex-1 py-1 px-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-center font-bold active:scale-95"
-                                  >
-                                    Maks
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Transaction Summary Single Row */}
-                            <div className="px-2.5 py-1 rounded-xl bg-muted/20 border border-border/50 flex items-center justify-between text-[9.5px] font-mono">
-                              <div className="flex items-center gap-1">
-                                <span className="text-muted-foreground">Total:</span>
-                                <span className="font-bold text-foreground">
-                                  Rp {totalEst.toLocaleString("id-ID")}
-                                </span>
-                              </div>
-                              {orderType === "BID" && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-muted-foreground">Sisa:</span>
-                                  {phase === "PRE_MARKET" ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                                      Rp {balance.toLocaleString("id-ID")} (Aman)
-                                    </span>
-                                  ) : (
+                                {orderType === "BID" && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-muted-foreground">Sisa:</span>
                                     <span className={cn("font-semibold", balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400 font-bold")}>
                                       Rp {(balance - totalEst).toLocaleString("id-ID")}
                                     </span>
-                                  )}
-                                </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Error validations */}
+                              {(isPriceInvalid || isLotInvalid) && (
+                                <p className="text-[9px] text-rose-600 dark:text-rose-400 font-medium px-0.5">
+                                  {isPriceInvalid 
+                                    ? (!isValidTickSize(pNum) ? `Harga harus kelipatan Rp ${getTickSize(pNum)}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`)
+                                    : (orderType === "ASK" ? `Lot melebihi milik (${userOwnedLot} lot)` : "Saldo kas tidak cukup")
+                                  }
+                                </p>
                               )}
                             </div>
-
-                            {/* Error validations */}
-                            {(isPriceInvalid || (phase === "TRADING" && isLotInvalid)) && (
-                              <p className="text-[9px] text-rose-600 dark:text-rose-400 font-medium px-0.5">
-                                {isPriceInvalid 
-                                  ? (!isValidTickSize(pNum) ? `Harga harus kelipatan Rp ${getTickSize(pNum)}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`)
-                                  : (orderType === "ASK" ? `Lot melebihi milik (${userOwnedLot} lot)` : "Saldo kas tidak cukup")
-                                }
-                              </p>
-                            )}
-                          </div>
+                          )}
 
                           {/* 4. Real-Time Auction Order Book (Placed at bottom for variable depth queue) */}
                           <div className="p-2.5 rounded-2xl bg-card/80 border border-border/70 space-y-1.5 font-mono text-[9.5px]">
@@ -1756,36 +1716,46 @@ function TradingPageContent() {
                       const totalEst = pNum * (lotNum * 100);
                       const isPriceInvalid = pNum > 0 && (!isValidTickSize(pNum) || pNum > upper || pNum < lower);
                       const userOwnedLot = portfoliosMap[stock.id] || 0;
-                      const isLotInvalid = lotNum > 0 && phase === "TRADING" && ((orderType === "ASK" && lotNum > userOwnedLot) || (orderType === "BID" && totalEst > balance));
+                      const isLotInvalid = lotNum > 0 && ((orderType === "ASK" && lotNum > userOwnedLot) || (orderType === "BID" && totalEst > balance));
+                      const isAlreadyOrdered = !!userStockOrders[stock.id];
 
                       return (
                         <div className="flex items-center gap-2 pt-1.5 border-t border-border/40 shrink-0">
-                          <Button
-                            onClick={handlePlaceOrder}
-                            disabled={isPriceInvalid || isLotInvalid || lotNum <= 0 || pNum <= 0}
-                            className={cn(
-                              "flex-1 h-10 sm:h-11 rounded-2xl text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] min-h-[42px] flex items-center justify-center gap-1.5",
-                              orderType === "BID"
-                                ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 shadow-emerald-500/20"
-                                : "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-600 shadow-rose-500/20"
-                            )}
-                          >
-                            <Sparkles className="size-3.5" />
-                            <span>
-                              {(() => {
-                                const lotText = lotNum > 0 ? ` · ${lotNum}L` : "";
-                                if (phase === "PRE_MARKET") {
-                                  return orderType === "BID" ? `Kirim Latihan Beli${lotText}` : `Kirim Latihan Jual${lotText}`;
+                          {isAlreadyOrdered ? (
+                            <Button
+                              onClick={() => {
+                                const nextStock = stocks.find(s => !userStockOrders[s.id] && s.id !== stock.id) || stocks[(currentStockIdx + 1) % stocks.length];
+                                if (nextStock && nextStock.id !== stock.id) {
+                                  selectStock(nextStock);
+                                } else {
+                                  handleCloseOrderModal();
                                 }
-                                const remainingCount = stocks.filter(s => !ordersPlacedMap[s.id] && s.id !== stock.id).length;
-                                const isLastUnordered = remainingCount === 0;
-                                if (isLastUnordered) {
-                                  return orderType === "BID" ? `Kirim Beli & Selesai${lotText}` : `Kirim Jual & Selesai${lotText}`;
+                              }}
+                              className="flex-1 h-10 sm:h-11 rounded-2xl bg-primary text-primary-foreground font-bold text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] min-h-[42px] flex items-center justify-center gap-1.5"
+                            >
+                              <SkipForward className="size-3.5" />
+                              <span>{stocks.some(s => !userStockOrders[s.id] && s.id !== stock.id) ? "Lanjut ke Saham Berikutnya ›" : "Selesai (Semua Saham Terorder)"}</span>
+                            </Button>
+                          ) : (
+                            <Button
+                              onClick={handlePlaceOrder}
+                              disabled={isPriceInvalid || isLotInvalid || lotNum <= 0 || pNum <= 0}
+                              className={cn(
+                                "flex-1 h-10 sm:h-11 rounded-2xl text-white font-bold text-xs sm:text-sm shadow-md transition-all active:scale-[0.98] min-h-[42px] flex items-center justify-center gap-1.5",
+                                orderType === "BID"
+                                  ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 shadow-emerald-500/20"
+                                  : "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-600 shadow-rose-500/20"
+                              )}
+                            >
+                              <Sparkles className="size-3.5" />
+                              <span>
+                                {orderType === "BID" 
+                                  ? `Kirim Order Beli (${lotNum > 0 ? `${lotNum} Lot` : "BID"})` 
+                                  : `Kirim Order Jual (${lotNum > 0 ? `${lotNum} Lot` : "ASK"})`
                                 }
-                                return orderType === "BID" ? `Kirim Beli & Lanjut ›${lotText}` : `Kirim Jual & Lanjut ›${lotText}`;
-                              })()}
-                            </span>
-                          </Button>
+                              </span>
+                            </Button>
+                          )}
 
                           {(() => {
                             const nextStock = stocks[(currentStockIdx + 1) % stocks.length];
@@ -1809,16 +1779,15 @@ function TradingPageContent() {
                     })()}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
           {/* ══════════════════════════════════════════════════════════
               2. DESKTOP VIEW (hidden md:block): Modern Minimalist Workstation or Catalog
              ══════════════════════════════════════════════════════════ */}
           <div className="hidden md:block space-y-4">
             {!stock ? (
-              /* A. DESKTOP STOCK CATALOG (DAFTAR SAHAM PERDAGANGAN / PRA-PEMBUKAAN) */
+              /* A. DESKTOP STOCK CATALOG */
               <div className="space-y-4">
                 {/* Desktop Summary Hero Banner */}
                 <div className="rounded-3xl border border-border/80 bg-gradient-to-br from-card via-card/95 to-emerald-500/5 p-5 shadow-xs flex items-center justify-between gap-6">
@@ -1829,41 +1798,30 @@ function TradingPageContent() {
                         <span className="relative inline-flex rounded-full size-3 bg-emerald-500" />
                       </span>
                       <span className="font-extrabold text-base text-foreground">
-                        {phase === "PRE_MARKET" ? "Sesi Pra-Pembukaan Pasar" : "Pasar Perdagangan Aktif"}
+                        Pasar Perdagangan Aktif
                       </span>
-                      <span className={cn(
-                        "px-2.5 py-0.5 rounded-full border font-mono font-bold text-xs",
-                        phase === "PRE_MARKET"
-                          ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
-                          : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                      )}>
-                        {phase === "PRE_MARKET" 
-                          ? `${submittedCount}/${stocks.length} Saham Terisi`
-                          : `${stocks.length} Saham Tersedia`
-                        }
+                      <span className="px-2.5 py-0.5 rounded-full border font-mono font-bold text-xs bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                        {Object.keys(userStockOrders).length}/{stocks.length} Saham Terorder
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      {phase === "PRE_MARKET"
-                        ? "Masukkan perkiraan harga pembukaan setiap saham pada formulir di bawah. Anda juga dapat mengklik kartu atau tombol terminal untuk masuk ke tampilan trading simulasi."
-                        : "Pilih saham di bawah untuk membuka terminal perdagangan, memantau grafik harga real-time, dan mengirimkan order lelang (BID / ASK)."
-                      }
+                      Setiap peserta dapat memilih untuk Jual atau Beli tepat 1 kali pada setiap saham yang tersedia. Harga yang Anda tentukan menjadi order aktif sekaligus harga prediksi Anda yang tersimpan di sistem & terekam di laporan.
                     </p>
                   </div>
 
-                  {/* Right: Pre-market Progress or Financial Balance Cards */}
+                  {/* Right: Order Progress & Financial Balance Cards */}
                   <div className="flex items-center gap-4 shrink-0">
-                    {phase === "PRE_MARKET" && stocks.length > 0 && (
+                    {stocks.length > 0 && (
                       <div className="p-3 rounded-2xl bg-card border border-border/80 min-w-[200px] space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-[10px] uppercase font-semibold text-muted-foreground">Progres Perkiraan</span>
-                          <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
-                            {Math.round((submittedCount / stocks.length) * 100)}%
+                          <span className="text-[10px] uppercase font-semibold text-muted-foreground">Progres Order (1x/Saham)</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            {Math.round((Object.keys(userStockOrders).length / stocks.length) * 100)}%
                           </span>
                         </div>
                         <div className="flex items-center gap-1 w-full">
                           {stocks.map(s => {
-                            const isDone = predictionsSubmitted[s.id] !== undefined;
+                            const isDone = !!userStockOrders[s.id];
                             return (
                               <div
                                 key={s.id}
@@ -1903,13 +1861,10 @@ function TradingPageContent() {
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-2">
                     <h3 className="font-bold text-sm text-foreground">
-                      {phase === "PRE_MARKET" ? "Daftar Saham Pra-Pembukaan" : "Daftar Saham Perdagangan"} ({stocks.length})
+                      Daftar Saham Perdagangan ({stocks.length})
                     </h3>
                     <span className="text-xs text-muted-foreground">
-                      {phase === "PRE_MARKET" 
-                        ? "· Isi perkiraan harga langsung di kartu, atau klik kartu untuk masuk ke terminal transaksi"
-                        : "· Klik kartu atau tombol untuk masuk ke terminal transaksi"
-                      }
+                      · Klik kartu saham untuk membuka terminal, memantau grafik live, dan mengirimkan 1 transaksi (Jual atau Beli)
                     </span>
                   </div>
                 </div>
@@ -1925,25 +1880,19 @@ function TradingPageContent() {
                     const chg = openP > 0 ? ((lastP - openP) / openP) * 100 : 0;
                     const userLot = portfoliosMap[s.id] || 0;
                     const isPositive = chg >= 0;
-                    const isOrdered = ordersPlacedMap[s.id] === true || predictionsSubmitted[s.id] !== undefined;
+                    const existingOrder = userStockOrders[s.id];
+                    const isOrdered = !!existingOrder || ordersPlacedMap[s.id] === true;
                     const baseP = openingPrices[s.id] || Number(s.basePrice) || lastP;
                     const { upper, lower } = getAutoRejectionLimits(baseP);
-
-                    const isSubmitted = predictionsSubmitted[s.id] !== undefined;
-                    const submittedVal = predictionsSubmitted[s.id];
 
                     return (
                       <div
                         key={s.id}
                         className={cn(
                           "group relative rounded-3xl border bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-4",
-                          phase === "PRE_MARKET"
-                            ? isSubmitted
-                              ? "border-emerald-500/40 dark:border-emerald-500/30 bg-emerald-500/[0.02]"
-                              : "border-border/80 hover:border-amber-500/40"
-                            : isOrdered
-                              ? "border-emerald-500/30 bg-emerald-500/[0.02]"
-                              : "border-border/80 hover:border-emerald-500/50"
+                          isOrdered
+                            ? "border-emerald-500/30 bg-emerald-500/[0.02]"
+                            : "border-border/80 hover:border-emerald-500/50"
                         )}
                       >
                         {/* Top: Identity, Sector, Description */}
@@ -1969,24 +1918,20 @@ function TradingPageContent() {
                               </div>
                             </div>
 
-                            {phase === "PRE_MARKET" ? (
-                              isSubmitted ? (
-                                <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] shrink-0 flex items-center gap-1">
-                                  <CheckCircle2 className="size-3.5" />
-                                  <span>✓ Terisi (Rp {submittedVal.toLocaleString("id-ID")})</span>
-                                </span>
-                              ) : (
-                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px] shrink-0">
-                                  Belum Diisi
-                                </span>
-                              )
+                            {existingOrder ? (
+                              <span className={cn(
+                                "px-2.5 py-1 rounded-full border font-mono font-bold text-[10.5px] shrink-0 flex items-center gap-1",
+                                existingOrder.tipe === "BID"
+                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                                  : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
+                              )}>
+                                <CheckCircle2 className="size-3.5" />
+                                <span>{existingOrder.tipe === "BID" ? "Beli" : "Jual"} {existingOrder.jumlah}L @ Rp {existingOrder.harga.toLocaleString("id-ID")}</span>
+                              </span>
                             ) : (
-                              isOrdered && (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold shrink-0 flex items-center gap-1">
-                                  <CheckCircle2 className="size-3" />
-                                  <span>Diorder</span>
-                                </span>
-                              )
+                              <span className="px-2.5 py-0.5 rounded-full bg-muted/60 border border-border/60 text-muted-foreground font-bold text-[10px] shrink-0">
+                                Belum Terorder
+                              </span>
                             )}
                           </div>
 
@@ -1995,57 +1940,33 @@ function TradingPageContent() {
                           </p>
                         </div>
 
-                        {/* Middle: Price Banner (Benchmark in PRE_MARKET or Live in TRADING) */}
-                        {phase === "PRE_MARKET" ? (
-                          <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2 font-mono">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
-                                  Harga Acuan
-                                </span>
-                                <span className="font-black text-lg text-foreground">
-                                  Rp {baseP.toLocaleString("id-ID")}
-                                </span>
-                              </div>
-                              <span className="text-[10px] font-sans font-semibold px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                                Pra-Pembukaan
+                        {/* Middle: Price Banner Real-Time */}
+                        <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2">
+                          <div className="flex items-center justify-between font-mono">
+                            <div>
+                              <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
+                                Harga Real-Time
+                              </span>
+                              <span className="font-black text-lg text-foreground">
+                                Rp {lastP.toLocaleString("id-ID")}
                               </span>
                             </div>
 
-                            <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground">
-                              <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
-                              <span>·</span>
-                              <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
+                            <div className={cn(
+                              "px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 shrink-0",
+                              isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
+                            )}>
+                              {isPositive ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                              <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
                             </div>
                           </div>
-                        ) : (
-                          <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2">
-                            <div className="flex items-center justify-between font-mono">
-                              <div>
-                                <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
-                                  Harga Real-Time
-                                </span>
-                                <span className="font-black text-lg text-foreground">
-                                  Rp {lastP.toLocaleString("id-ID")}
-                                </span>
-                              </div>
 
-                              <div className={cn(
-                                "px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 shrink-0",
-                                isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
-                              )}>
-                                {isPositive ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
-                                <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground font-mono">
-                              <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
-                              <span>·</span>
-                              <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
-                            </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground font-mono">
+                            <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
+                            <span>·</span>
+                            <span>ARB: <b className="text-foreground">Rp {lower.toLocaleString("id-ID")}</b></span>
                           </div>
-                        )}
+                        </div>
 
                         {/* Bottom: Portfolio Info & CTA Button */}
                         <div className="space-y-2 pt-1">
@@ -2060,16 +1981,16 @@ function TradingPageContent() {
                             onClick={() => selectStock(s)}
                             className={cn(
                               "w-full h-11 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] min-h-[44px] flex items-center justify-center gap-2 group-hover:shadow-lg transition-all",
-                              phase === "PRE_MARKET"
-                                ? "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
+                              existingOrder
+                                ? "bg-muted hover:bg-muted/80 text-foreground border border-border/80"
                                 : "bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground shadow-primary/20"
                             )}
                           >
                             <Zap className="size-4 fill-current" />
                             <span>
-                              {phase === "PRE_MARKET" 
-                                ? (isSubmitted ? `Buka Terminal ${safeKode} ›` : `Isi Perkiraan & Trade ${safeKode} ›`)
-                                : `Buka Terminal Transaksi ${safeKode} ›`
+                              {existingOrder 
+                                ? `Lihat Detail Order ${safeKode} ›`
+                                : `Pilih Beli / Jual ${safeKode} ›`
                               }
                             </span>
                           </Button>
@@ -2306,333 +2227,285 @@ function TradingPageContent() {
                         </Card>
                       </div>
 
-                      {/* Right Column (5/12): Order Execution Panel & Portfolio */}
+                      {/* Right Column (5/12): Order Execution Panel or Completed Order Card */}
                       <div className="col-span-12 lg:col-span-5 space-y-4">
-                        {/* PRE_MARKET Prediction Card */}
-                        {phase === "PRE_MARKET" && (() => {
-                          const isSub = predictionsSubmitted[activeStock.id] !== undefined;
-                          const subVal = predictionsSubmitted[activeStock.id];
-                          const curVal = predictionInput[activeStock.id] ?? (isSub ? String(subVal) : "");
-                          const pVal = parseInt(curVal) || 0;
-                          const isInv = pVal > 0 && (!isValidTickSize(pVal, baseP) || pVal > upper || pVal < lower);
-                          const diff = pVal > 0 && baseP > 0 ? ((pVal - baseP) / baseP) * 100 : 0;
-                          const quickChips = [
-                            { label: "-5%", pct: -5 },
-                            { label: "-2%", pct: -2 },
-                            { label: "Sama", pct: 0 },
-                            { label: "+2%", pct: 2 },
-                            { label: "+5%", pct: 5 },
-                          ];
-
+                        {userStockOrders[activeStock.id] ? (() => {
+                          const existingOrder = userStockOrders[activeStock.id];
+                          const remainingUnordered = stocks.filter(s => !userStockOrders[s.id] && s.id !== activeStock.id);
                           return (
-                            <Card className="border border-amber-500/40 dark:border-amber-500/30 bg-card/95 shadow-sm rounded-3xl overflow-hidden">
-                              <CardHeader className="py-3 px-5 border-b border-amber-500/20 bg-amber-500/10 flex flex-row items-center justify-between">
-                                <CardTitle className="text-xs font-bold flex items-center gap-2 text-amber-700 dark:text-amber-300">
-                                  <Sparkles className="size-3.5 text-amber-500" />
-                                  <span>Perkiraan Harga Pembukaan ({safeKode})</span>
+                            <Card className="border border-emerald-500/40 bg-card/95 shadow-sm rounded-3xl overflow-hidden">
+                              <CardHeader className="py-3 px-5 border-b border-emerald-500/20 bg-emerald-500/10 flex flex-row items-center justify-between">
+                                <CardTitle className="text-xs font-bold flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+                                  <CheckCircle2 className="size-4 text-emerald-500" />
+                                  <span>Transaksi Selesai & Terekam ({safeKode})</span>
                                 </CardTitle>
-                                {isSub ? (
-                                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10.5px] flex items-center gap-1">
-                                    <CheckCircle2 className="size-3" />
-                                    <span>Terisi (Rp {subVal.toLocaleString("id-ID")})</span>
-                                  </span>
-                                ) : (
-                                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold text-[10px]">
-                                    Belum Diisi
-                                  </span>
-                                )}
+                                <span className={cn(
+                                  "px-2.5 py-0.5 rounded-full font-mono font-bold text-[10.5px] border",
+                                  existingOrder.tipe === "BID"
+                                    ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                                    : "bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                                )}>
+                                  {existingOrder.tipe === "BID" ? "BELI (BID)" : "JUAL (ASK)"}
+                                </span>
                               </CardHeader>
-                              <CardContent className="p-5 space-y-3">
-                                <div className="flex items-center justify-between text-xs font-bold text-foreground">
-                                  <span className="text-muted-foreground">Harga Acuan: <b className="font-mono text-foreground">Rp {baseP.toLocaleString("id-ID")}</b></span>
-                                  {pVal > 0 && (
+                              <CardContent className="p-5 space-y-4">
+                                <div className="grid grid-cols-3 gap-3 p-3.5 rounded-2xl bg-muted/40 border border-border/70 text-center font-mono">
+                                  <div>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-sans block">Aksi Terpilih</span>
                                     <span className={cn(
-                                      "font-mono text-[10.5px] font-bold px-2 py-0.5 rounded-md",
-                                      pVal >= baseP ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                      "font-black text-sm",
+                                      existingOrder.tipe === "BID" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
                                     )}>
-                                      {pVal >= baseP ? "+" : ""}{diff.toFixed(2)}%
+                                      {existingOrder.tipe === "BID" ? "BELI" : "JUAL"}
                                     </span>
-                                  )}
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-sans block">Harga Tebak/Order</span>
+                                    <span className="font-black text-sm text-foreground">
+                                      Rp {existingOrder.harga.toLocaleString("id-ID")}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-sans block">Jumlah</span>
+                                    <span className="font-black text-sm text-foreground">
+                                      {existingOrder.jumlah} Lot
+                                    </span>
+                                  </div>
                                 </div>
 
-                                <PriceInput
-                                  value={curVal}
-                                  basePrice={baseP}
-                                  onChange={(val) => setPredictionInput(prev => ({ ...prev, [activeStock.id]: val }))}
-                                  min={1}
-                                  max={upper}
-                                  className="h-10 rounded-2xl text-sm"
-                                />
-
-                                {/* Quick Percentage Chips */}
-                                <div className="flex items-center gap-1.5 justify-between">
-                                  {quickChips.map(chip => {
-                                    const targetP = calculateQuickPrice(baseP, chip.pct);
-                                    const isSelected = pVal === targetP;
-                                    return (
-                                      <button
-                                        key={chip.label}
-                                        type="button"
-                                        onClick={() => setPredictionInput(prev => ({ ...prev, [activeStock.id]: String(targetP) }))}
-                                        className={cn(
-                                          "flex-1 py-1 rounded-xl text-[10px] font-mono font-bold border transition-all active:scale-95",
-                                          isSelected
-                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
-                                            : "bg-muted/40 hover:bg-muted/80 text-muted-foreground border-border/60 hover:text-foreground"
-                                        )}
-                                      >
-                                        {chip.label}
-                                      </button>
-                                    );
-                                  })}
+                                <div className="p-3.5 rounded-2xl bg-background/80 border border-border/50 text-xs font-mono space-y-1.5">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-muted-foreground font-sans">Total Nilai Transaksi:</span>
+                                    <b className="text-foreground text-sm">
+                                      Rp {(existingOrder.harga * existingOrder.jumlah * 100).toLocaleString("id-ID")}
+                                    </b>
+                                  </div>
+                                  <div className="flex justify-between items-center pt-1 border-t border-border/40 font-sans">
+                                    <span className="text-muted-foreground text-[11px]">Status Laporan:</span>
+                                    <b className="text-emerald-600 dark:text-emerald-400 text-xs">Tercatat & Terkunci di Sistem</b>
+                                  </div>
                                 </div>
 
-                                <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                                  <TickSizeBadge price={pVal} basePrice={baseP} />
-                                  <span>Batas: Rp {lower.toLocaleString("id-ID")} – {upper.toLocaleString("id-ID")}</span>
-                                </div>
+                                <p className="text-[11px] text-muted-foreground text-center">
+                                  Setiap peserta hanya dapat melakukan 1 transaksi (Jual atau Beli) per saham pada tiap ronde.
+                                </p>
 
-                                {isInv && (
-                                  <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
-                                    {!isValidTickSize(pVal, baseP) ? `Harus kelipatan Rp ${pVal > 0 ? getTickSize(pVal) : 1}` : `Di luar batas (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`}
-                                  </p>
+                                {remainingUnordered.length > 0 ? (
+                                  <Button
+                                    onClick={() => {
+                                      const nextStock = remainingUnordered[0];
+                                      if (nextStock) selectStock(nextStock);
+                                    }}
+                                    className="w-full h-11 rounded-2xl font-bold text-xs bg-primary text-primary-foreground shadow-md hover:bg-primary/90 flex items-center justify-center gap-2 active:scale-[0.98]"
+                                  >
+                                    <SkipForward className="size-4" />
+                                    <span>Lanjut ke Saham Berikutnya ({remainingUnordered.length} tersisa) ›</span>
+                                  </Button>
+                                ) : (
+                                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center font-bold text-xs text-emerald-700 dark:text-emerald-300">
+                                    ✓ Semua {stocks.length} saham telah selesai Anda transaksikan untuk ronde ini.
+                                  </div>
                                 )}
-
-                                <Button
-                                  type="button"
-                                  onClick={() => handleSubmitPrediction(activeStock.id)}
-                                  disabled={isInv || (!curVal && !isSub)}
-                                  className={cn(
-                                    "w-full h-10 rounded-2xl font-bold text-xs shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-1.5",
-                                    isSub
-                                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
-                                      : "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-amber-500/20"
-                                  )}
-                                >
-                                  {isSub ? (
-                                    <>
-                                      <CheckCircle2 className="size-3.5" />
-                                      <span>Simpan Perubahan Perkiraan</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Sparkles className="size-3.5" />
-                                      <span>Simpan Perkiraan Harga</span>
-                                    </>
-                                  )}
-                                </Button>
                               </CardContent>
                             </Card>
                           );
-                        })()}
+                        })() : (
+                          /* Order Execution Card */
+                          <Card className={cn(
+                            "border rounded-3xl bg-card/95 shadow-sm transition-all duration-300",
+                            orderType === "BID" ? "border-emerald-500/30 dark:border-emerald-500/25" : "border-rose-500/30 dark:border-rose-500/25"
+                          )}>
+                            <CardHeader className="py-3 px-5 border-b border-border/50 bg-muted/20">
+                              <CardTitle className="text-xs font-bold flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
+                                  <span>Eksekusi Order & Tebakan Harga ({safeKode})</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-muted-foreground bg-background/80 px-2 py-0.5 rounded-lg border border-border/50">
+                                  Milik: <b className="text-foreground">{userLot} Lot</b>
+                                </span>
+                              </CardTitle>
+                            </CardHeader>
 
-                        {/* Order Execution Card */}
-                        <Card className={cn(
-                          "border rounded-3xl bg-card/95 shadow-sm transition-all duration-300",
-                          orderType === "BID" ? "border-emerald-500/30 dark:border-emerald-500/25" : "border-rose-500/30 dark:border-rose-500/25"
-                        )}>
-                          <CardHeader className="py-3 px-5 border-b border-border/50 bg-muted/20">
-                            <CardTitle className="text-xs font-bold flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                {orderType === "BID" ? <ArrowDownToLine className="size-4 text-emerald-500" /> : <ArrowUpFromLine className="size-4 text-rose-500" />}
-                                <span>{phase === "PRE_MARKET" ? "Simulasi Order Latihan" : "Eksekusi Order"} ({safeKode})</span>
-                              </div>
-                              <span className="text-[10px] font-mono text-muted-foreground bg-background/80 px-2 py-0.5 rounded-lg border border-border/50">
-                                Milik: <b className="text-foreground">{userLot} Lot</b>
-                              </span>
-                            </CardTitle>
-                          </CardHeader>
-
-                          <CardContent className="p-5 space-y-4">
-                            {/* Segmented BID / ASK Tabs */}
-                            <div className="grid grid-cols-2 p-1 rounded-2xl border border-border/80 bg-muted/50 text-xs font-bold">
-                              <button
-                                type="button"
-                                onClick={() => setOrderType("BID")}
-                                className={cn(
-                                  "py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all",
-                                  orderType === "BID" 
-                                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/20" 
-                                    : "text-muted-foreground hover:text-foreground"
-                                )}
-                              >
-                                <ArrowDownToLine className="size-3.5" />
-                                <span>Beli (BID)</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setOrderType("ASK")}
-                                className={cn(
-                                  "py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all",
-                                  orderType === "ASK" 
-                                    ? "bg-rose-500 text-white shadow-md shadow-rose-500/20" 
-                                    : "text-muted-foreground hover:text-foreground"
-                                )}
-                              >
-                                <ArrowUpFromLine className="size-3.5" />
-                                <span>Jual (ASK)</span>
-                              </button>
-                            </div>
-
-                            {/* Order Price Section */}
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-foreground">Harga Order (Rp)</span>
-                                <TickSizeBadge price={pNum} basePrice={baseP} />
-                              </div>
-
-                              <PriceInput
-                                value={orderPrice}
-                                onChange={setOrderPrice}
-                                basePrice={baseP}
-                                min={1}
-                                placeholder="0"
-                              />
-
-                              {/* Quick Price Chips */}
-                              <div className="flex items-center gap-1.5 pt-0.5 text-xs font-mono">
+                            <CardContent className="p-5 space-y-4">
+                              {/* Segmented BID / ASK Tabs */}
+                              <div className="grid grid-cols-2 p-1 rounded-2xl border border-border/80 bg-muted/50 text-xs font-bold">
                                 <button
                                   type="button"
-                                  onClick={() => setOrderPrice(String(activeStockPrice))}
-                                  className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-foreground font-medium"
+                                  onClick={() => setOrderType("BID")}
+                                  className={cn(
+                                    "py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all",
+                                    orderType === "BID" 
+                                      ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/20" 
+                                      : "text-muted-foreground hover:text-foreground"
+                                  )}
                                 >
-                                  Pasar ({activeStockPrice.toLocaleString("id-ID")})
+                                  <ArrowDownToLine className="size-3.5" />
+                                  <span>Beli (BID)</span>
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setOrderPrice(String(upper))}
-                                  className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold"
+                                  onClick={() => setOrderType("ASK")}
+                                  className={cn(
+                                    "py-2 rounded-xl flex items-center justify-center gap-1.5 transition-all",
+                                    orderType === "ASK" 
+                                      ? "bg-rose-500 text-white shadow-md shadow-rose-500/20" 
+                                      : "text-muted-foreground hover:text-foreground"
+                                  )}
                                 >
-                                  ARA
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setOrderPrice(String(lower))}
-                                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 font-bold"
-                                >
-                                  ARB
+                                  <ArrowUpFromLine className="size-3.5" />
+                                  <span>Jual (ASK)</span>
                                 </button>
                               </div>
-                            </div>
 
-                            {/* Order Lot Section */}
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-foreground">Jumlah Lot</span>
-                                <span className="text-muted-foreground font-mono text-[11px]">
-                                  {phase === "PRE_MARKET"
-                                    ? "Mode Latihan: Bebas Lot (Simulasi)"
-                                    : orderType === "BID" 
+                              {/* Order Price Section */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-bold text-foreground">Harga Order / Prediksi (Rp)</span>
+                                  <TickSizeBadge price={pNum} basePrice={baseP} />
+                                </div>
+
+                                <PriceInput
+                                  value={orderPrice}
+                                  onChange={setOrderPrice}
+                                  basePrice={baseP}
+                                  min={1}
+                                  placeholder="0"
+                                />
+
+                                {/* Quick Price Chips */}
+                                <div className="flex items-center gap-1.5 pt-0.5 text-xs font-mono">
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderPrice(String(activeStockPrice))}
+                                    className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60 text-foreground font-medium"
+                                  >
+                                    Pasar ({activeStockPrice.toLocaleString("id-ID")})
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderPrice(String(upper))}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold"
+                                  >
+                                    ARA
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderPrice(String(lower))}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 font-bold"
+                                  >
+                                    ARB
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Order Lot Section */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-bold text-foreground">Jumlah Lot</span>
+                                  <span className="text-muted-foreground font-mono text-[11px]">
+                                    {orderType === "BID" 
                                       ? (pNum > 0 ? `Maks Beli: ${Math.floor(balance / (pNum * 100))} Lot` : "") 
                                       : `Maks Jual: ${userLot} Lot`
-                                  }
-                                </span>
-                              </div>
-
-                              <div className="flex items-center rounded-2xl border border-border/80 bg-background overflow-hidden h-10 px-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setOrderLot(String(Math.max(1, (parseInt(orderLot) || 2) - 1)))}
-                                  className="size-8 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 text-base font-bold"
-                                >
-                                  -
-                                </button>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  placeholder="0"
-                                  value={orderLot}
-                                  onChange={e => setOrderLot(e.target.value)}
-                                  className="h-full border-0 text-center font-mono font-bold text-sm p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setOrderLot(String((parseInt(orderLot) || 0) + 1))}
-                                  className="size-8 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 text-base font-bold"
-                                >
-                                  +
-                                </button>
-                              </div>
-
-                              {/* Quick Lot Chips */}
-                              <div className="flex items-center gap-1.5 pt-0.5 text-xs font-mono">
-                                <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 1))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+1</button>
-                                <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 5))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+5</button>
-                                <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 10))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+10</button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (phase === "PRE_MARKET") {
-                                      setOrderLot("10");
-                                    } else if (orderType === "BID") {
-                                      if (pNum > 0) setOrderLot(String(Math.floor(balance / (pNum * 100))));
-                                    } else {
-                                      if (userLot > 0) setOrderLot(String(userLot));
                                     }
-                                  }}
-                                  className="px-3 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary font-bold ml-auto"
-                                >
-                                  Maks
-                                </button>
-                              </div>
-                            </div>
+                                  </span>
+                                </div>
 
-                            {/* Transaction Calculation Box */}
-                            <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/70 space-y-1.5 text-xs font-mono">
-                              <div className="flex items-center justify-between">
-                                <span className="text-muted-foreground font-sans">Total Nilai Order:</span>
-                                <span className="font-extrabold text-foreground text-sm">Rp {totalEst.toLocaleString("id-ID")}</span>
+                                <div className="flex items-center rounded-2xl border border-border/80 bg-background overflow-hidden h-10 px-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderLot(String(Math.max(1, (parseInt(orderLot) || 2) - 1)))}
+                                    className="size-8 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 text-base font-bold"
+                                  >
+                                    -
+                                  </button>
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    placeholder="0"
+                                    value={orderLot}
+                                    onChange={e => setOrderLot(e.target.value)}
+                                    className="h-full border-0 text-center font-mono font-bold text-sm p-0 focus-visible:ring-0 shadow-none bg-transparent placeholder:text-muted-foreground/35"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderLot(String((parseInt(orderLot) || 0) + 1))}
+                                    className="size-8 rounded-xl flex items-center justify-center hover:bg-muted text-muted-foreground active:scale-95 text-base font-bold"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+
+                                {/* Quick Lot Chips */}
+                                <div className="flex items-center gap-1.5 pt-0.5 text-xs font-mono">
+                                  <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 1))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+1</button>
+                                  <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 5))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+5</button>
+                                  <button type="button" onClick={() => setOrderLot(String((lotNum || 0) + 10))} className="px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted border border-border/60">+10</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (orderType === "BID") {
+                                        if (pNum > 0) setOrderLot(String(Math.floor(balance / (pNum * 100))));
+                                      } else {
+                                        if (userLot > 0) setOrderLot(String(userLot));
+                                      }
+                                    }}
+                                    className="px-3 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary font-bold ml-auto"
+                                  >
+                                    Maks
+                                  </button>
+                                </div>
                               </div>
-                              {orderType === "BID" && (
-                                <div className="flex items-center justify-between pt-1 border-t border-border/50">
-                                  <span className="text-muted-foreground font-sans">Sisa Saldo Kas:</span>
-                                  {phase === "PRE_MARKET" ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                                      Rp {balance.toLocaleString("id-ID")} (Tidak Terpotong)
-                                    </span>
-                                  ) : (
+
+                              {/* Transaction Calculation Box */}
+                              <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/70 space-y-1.5 text-xs font-mono">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-muted-foreground font-sans">Total Nilai Order:</span>
+                                  <span className="font-extrabold text-foreground text-sm">Rp {totalEst.toLocaleString("id-ID")}</span>
+                                </div>
+                                {orderType === "BID" && (
+                                  <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                                    <span className="text-muted-foreground font-sans">Sisa Saldo Kas:</span>
                                     <span className={balance - totalEst >= 0 ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-rose-600 dark:text-rose-400 font-bold"}>
                                       Rp {(balance - totalEst).toLocaleString("id-ID")}
                                     </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                                  </div>
+                                )}
+                              </div>
 
-                            {/* Error Validation Messages */}
-                            {(isPriceInvalid || isLotInvalid) && (
-                              <p className="text-xs text-rose-600 dark:text-rose-400 font-medium px-1">
-                                {isPriceInvalid 
-                                  ? (!isValidTickSize(pNum) ? `Harga harus kelipatan Rp ${getTickSize(pNum)}` : `Harga di luar rentang ARA/ARB (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`)
-                                  : (orderType === "ASK" ? `Jumlah lot melebihi kepemilikan (${userLot} lot)` : "Saldo kas tidak mencukupi untuk order ini")
-                                }
-                              </p>
-                            )}
-
-                            {/* Primary CTA Place Order Button */}
-                            <Button
-                              size="lg"
-                              onClick={handlePlaceOrder}
-                              disabled={isPriceInvalid || isLotInvalid || lotNum <= 0 || pNum <= 0}
-                              className={cn(
-                                "w-full h-12 rounded-2xl text-white font-bold text-sm shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 min-h-[48px]",
-                                orderType === "BID"
-                                  ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 shadow-emerald-500/25"
-                                  : "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-600 shadow-rose-500/25"
+                              {/* Error Validation Messages */}
+                              {(isPriceInvalid || isLotInvalid) && (
+                                <p className="text-xs text-rose-600 dark:text-rose-400 font-medium px-1">
+                                  {isPriceInvalid 
+                                    ? (!isValidTickSize(pNum) ? `Harga harus kelipatan Rp ${getTickSize(pNum)}` : `Harga di luar rentang ARA/ARB (${lower.toLocaleString("id-ID")} – ${upper.toLocaleString("id-ID")})`)
+                                    : (orderType === "ASK" ? `Jumlah lot melebihi kepemilikan (${userLot} lot)` : "Saldo kas tidak mencukupi untuk order ini")
+                                  }
+                                </p>
                               )}
-                            >
-                              <Sparkles className="size-4" />
-                              <span>
-                                {phase === "PRE_MARKET"
-                                  ? `Kirim Order Latihan ${orderType === "BID" ? "Beli" : "Jual"} (${lotNum > 0 ? `${lotNum} Lot` : orderType})`
-                                  : orderType === "BID" 
+
+                              {/* Primary CTA Place Order Button */}
+                              <Button
+                                size="lg"
+                                onClick={handlePlaceOrder}
+                                disabled={isPriceInvalid || isLotInvalid || lotNum <= 0 || pNum <= 0}
+                                className={cn(
+                                  "w-full h-12 rounded-2xl text-white font-bold text-sm shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 min-h-[48px]",
+                                  orderType === "BID"
+                                    ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 shadow-emerald-500/25"
+                                    : "bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-600 shadow-rose-500/25"
+                                )}
+                              >
+                                <Sparkles className="size-4" />
+                                <span>
+                                  {orderType === "BID" 
                                     ? `Kirim Order Beli (${lotNum > 0 ? `${lotNum} Lot` : "BID"})` 
                                     : `Kirim Order Jual (${lotNum > 0 ? `${lotNum} Lot` : "ASK"})`
-                                }
-                              </span>
-                            </Button>
-                          </CardContent>
-                        </Card>
+                                  }
+                                </span>
+                              </Button>
+                            </CardContent>
+                          </Card>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -1,15 +1,15 @@
 // ============================================================
-// EXPERIMENTAL DESIGN MATRIX — Revised Architecture v2
+// EXPERIMENTAL DESIGN MATRIX — Revised Architecture (Direct Trading)
 // ============================================================
 // Structure: 3 Periods → Sessions per Period → Rounds per Session
-// Intervention Rule: Running Text ONLY during PRE_MARKET phase
+// Phase Rule: Direct Trading session per round (Pra-pembukaan dihilangkan)
+// Order Rule: 1 transaksi per saham per user (Beli atau Jual) dengan harga tebakan & lot tercatat
 // Cooldown: 3 minutes between rounds AND between sessions (Period 2 & 3)
-// Period 1: PRE_MARKET (prediction input) ONLY — no live trading
 // ============================================================
 
 // === TYPES ===
 export type InterventionType = "NONE" | "BERITA_BAIK" | "BERITA_BURUK";
-export type PhaseType = "PRE_MARKET" | "TRADING" | "COOLDOWN" | "IDLE" | "CLOSED";
+export type PhaseType = "TRADING" | "COOLDOWN" | "IDLE" | "CLOSED" | "PRE_MARKET";
 
 // Backward-compatibility alias used in existing frontend components
 export type SubSessionPhase = PhaseType;
@@ -21,8 +21,8 @@ export interface RoundDef {
 export interface SessionGroupDef {
   sessionNumber: 1 | 2 | 3 | 4;
   label: string;
-  intervention: InterventionType; // active running text during PRE_MARKET
-  hasTrading: boolean;            // false = PRE_MARKET only (Period 1)
+  intervention: InterventionType; // active running text during TRADING phase
+  hasTrading: boolean;
   rounds: RoundDef[];
 }
 
@@ -34,11 +34,11 @@ export interface PeriodDef {
 
 // === TIMER DURATIONS (seconds) ===
 export const DURATIONS = {
-  PRE_MARKET: 120,       // 2 minute prediction phase
-  TRADING: 120,          // 2 minute live trading phase
+  TRADING: 120,          // 2 minute trading phase per round
   COOLDOWN: 180,         // 3 minute cooldown (between rounds AND between sessions)
   // Legacy aliases
-  PRE_OPENING: 120,
+  PRE_MARKET: 0,
+  PRE_OPENING: 0,
   TRADING_SESSION: 120,
   ROUND_COOLDOWN: 180,
 } as const;
@@ -48,16 +48,16 @@ export const DURATIONS = {
 // ============================================================
 export const PERIOD_MATRIX: PeriodDef[] = [
 
-  // ── PERIOD 1: Prediction Only, S-1 to S-12 ────────────────────
+  // ── PERIOD 1: S-1 to S-12, Live Trading ───────────────────────
   {
     periodNumber: 1,
     label: "Periode I",
     sessions: [
       {
         sessionNumber: 1,
-        label: "Pra-Perdagangan",
+        label: "Sesi Normal",
         intervention: "NONE",
-        hasTrading: false, // NO live trading in Period 1
+        hasTrading: true,
         rounds: [
           { stockCodes: ["S-1",  "S-2",  "S-3"]  },
           { stockCodes: ["S-4",  "S-5",  "S-6"]  },
@@ -194,13 +194,13 @@ export function getInterventionLabel(type: InterventionType): string {
 
 export function getPhaseLabel(phase: PhaseType): string {
   const labels: Record<PhaseType, string> = {
-    PRE_MARKET: "Pra-Perdagangan",
+    PRE_MARKET: "Perdagangan",
     TRADING: "Perdagangan",
     COOLDOWN: "Jeda",
     IDLE: "Menunggu",
     CLOSED: "Selesai",
   };
-  return labels[phase];
+  return labels[phase] || "Perdagangan";
 }
 
 export const INTERVENTION_KEYS: InterventionType[] = ["BERITA_BAIK", "BERITA_BURUK"];

@@ -41,13 +41,17 @@ const adminNav: NavItem[] = [
 ];
 
 
-export default function AppSidebar() {
+type AppSidebarProps = {
+  role?: "admin" | "responden";
+};
+
+export default function AppSidebar({ role }: AppSidebarProps = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = role ? role === "admin" : (pathname?.startsWith("/admin") || user?.role === "admin");
   const navItems = isAdmin ? adminNav : respondentNav;
 
   const handleLogout = () => {
@@ -78,7 +82,7 @@ export default function AppSidebar() {
                 unoptimized
               />
             </div>
-            <span className="text-sm font-semibold text-sidebar-foreground truncate">
+            <span className="text-sm font-semibold text-sidebar-foreground truncate" suppressHydrationWarning>
               {isAdmin ? "Panel Admin" : "Trader"}
             </span>
           </div>

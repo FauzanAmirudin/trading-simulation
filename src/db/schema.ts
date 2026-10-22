@@ -71,13 +71,15 @@ export const users = pgTable("users", {
   roleIdx: index("users_role_idx").on(table.role),
 }));
 
-// === PREDICTIONS — pre-market price predictions (Sesi 1) ===
+// === PREDICTIONS — order & price prediction input per stock in trading session ===
 export const predictions = pgTable("predictions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id).notNull(),
   stockId: integer("stock_id").references(() => stocks.id).notNull(),
   roundId: integer("round_id").references(() => rounds.id).notNull(),
   tebakanHarga: decimal("tebakan_harga", { precision: 15, scale: 2 }).notNull(),
+  tipe: varchar("tipe", { length: 10 }), // 'BELI' or 'JUAL'
+  jumlahLot: integer("jumlah_lot").default(1),
   accuracyScore: decimal("accuracy_score", { precision: 10, scale: 4 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({

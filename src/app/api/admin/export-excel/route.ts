@@ -115,6 +115,39 @@ export async function GET(req: NextRequest) {
     const allPredictionsRaw = await db.select().from(predictions).orderBy(predictions.createdAt);
     const allPredictions = allPredictionsRaw.filter(p => validRoundIds.has(p.roundId));
 
+    // Filter only respondents who actively participated in trading (have predictions or transactions in valid rounds)
+    const activeRespondentsRaw = allRespondents.filter(user => {
+      const hasPreds = allPredictions.some(p => p.userId === user.id);
+      const hasTx = allTransactions.some(tx => {
+        const buyerId = orderUserMap[tx.orderBuyId];
+        const sellerId = orderUserMap[tx.orderSellId];
+        return buyerId === user.id || sellerId === user.id;
+      });
+      return hasPreds || hasTx;
+    });
+
+    // Natural sort: responden1, responden2, ..., responden9, responden10, ..., responden90
+    const activeRespondents = [...activeRespondentsRaw].sort((a, b) => {
+      const nameA = a.nama || `User_${a.id}`;
+      const nameB = b.nama || `User_${b.id}`;
+
+      // Extract numeric suffix if pattern like 'responden12' or 'user12'
+      const matchA = nameA.match(/\d+/);
+      const matchB = nameB.match(/\d+/);
+
+      if (matchA && matchB) {
+        const prefixA = nameA.replace(/\d+.*/, '').toLowerCase();
+        const prefixB = nameB.replace(/\d+.*/, '').toLowerCase();
+        if (prefixA === prefixB) {
+          const numA = parseInt(matchA[0], 10);
+          const numB = parseInt(matchB[0], 10);
+          if (numA !== numB) return numA - numB;
+        }
+      }
+
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
     // Create the Workbook
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "Trading Simulator Admin";
@@ -145,6 +178,8 @@ export async function GET(req: NextRequest) {
     summarySheet.getRow(1).font = { bold: true, size: 14 };
     summarySheet.addRow(["Waktu Ekspor:", formatWibDateTime(new Date())]);
     summarySheet.addRow(["Total Ronde Terpilih:", validRounds.length]);
+    summarySheet.addRow(["Total Responden Terdaftar:", allRespondents.length]);
+    summarySheet.addRow(["Total Responden Aktif:", activeRespondents.length]);
     summarySheet.addRow(["Total Prediksi Terinput:", allPredictions.length]);
     summarySheet.addRow(["Total Transaksi Match:", allTransactions.length]);
     summarySheet.addRow([]);
@@ -191,10 +226,198 @@ export async function GET(req: NextRequest) {
     ];
     summarySheet.views = [{ state: 'frozen', ySplit: 7 }];
 
+    // Helper to calculate prediction accuracy metrics consistently
+    const getPredictionMetrics = (p: typeof allPredictions[0]) => {
+      const round = roundMap[p.roundId];
+      const stock = stockMap[p.stockId];
+      const openingPrice = round?.openingPrices && (round.openingPrices as any)[p.stockId]
+        ? Number((round.openingPrices as any)[p.stockId])
+        : Number(stock?.basePrice || 0);
+        
+      const finalPrice = (finalPrices[p.roundId] && finalPrices[p.roundId][p.stockId]) 
+        ? finalPrices[p.roundId][p.stockId] 
+        : openingPrice;
+
+      const predPrice = Number(p.tebakanHarga);
+      const selisih = Math.abs(predPrice - finalPrice);
+      const calculatedAccuracy = finalPrice > 0 ? Math.max(0, 1 - selisih / finalPrice) : 0;
+      const akurasiVal = (p.accuracyScore !== null && p.accuracyScore !== undefined && p.accuracyScore !== "")
+        ? Number(p.accuracyScore)
+        : calculatedAccuracy;
+
+      return {
+        round,
+        stock,
+        openingPrice,
+        finalPrice,
+        predPrice,
+        selisih,
+        akurasiVal
+      };
+    };
+
     // ==========================================
-    // WORKSHEETS PER RESPONDEN
+    // WORKSHEET 2: RATA-RATA AKURASI USER
     // ==========================================
-    for (const user of allRespondents) {
+    const userSummarySheet = workbook.addWorksheet("Rata-rata Akurasi User");
+
+    userSummarySheet.addRow(["LAPORAN RATA-RATA AKURASI PREDIKSI RESPONDEN AKTIF"]);
+    userSummarySheet.getRow(1).font = { bold: true, size: 14 };
+    userSummarySheet.addRow(["Waktu Ekspor:", formatWibDateTime(new Date())]);
+    userSummarySheet.addRow(["Total Responden Aktif:", activeRespondents.length]);
+    userSummarySheet.addRow([]);
+
+    const userSummaryHeader = userSummarySheet.addRow([
+      "No",
+      "ID User",
+      "Nama Responden",
+      "Total Ronde Diikuti",
+      "Total Prediksi Terinput",
+      "Rata-rata Selisih (Rp)",
+      "Rata-rata Akurasi Keseluruhan"
+    ]);
+
+    userSummaryHeader.eachCell((cell) => {
+      cell.fill = headerFill;
+      cell.font = headerFont;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = borderStyle;
+    });
+
+    let grandTotalPreds = 0;
+    const allUserAverages: number[] = [];
+    const allUserSelisih: number[] = [];
+
+    if (activeRespondents.length === 0) {
+      const emptySummaryRow = userSummarySheet.addRow([
+        "-", "-", "Tidak ada responden yang aktif pada ronde yang dipilih", "-", "-", "-", "-"
+      ]);
+      emptySummaryRow.eachCell(cell => {
+        cell.border = borderStyle;
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+      });
+    } else {
+      activeRespondents.forEach((user, idx) => {
+        const userPreds = allPredictions.filter(p => p.userId === user.id);
+        const roundsSet = new Set<number>();
+        const accuracies: number[] = [];
+        let totalUserSelisih = 0;
+
+        for (const p of userPreds) {
+          roundsSet.add(p.roundId);
+          const { selisih, akurasiVal } = getPredictionMetrics(p);
+          totalUserSelisih += selisih;
+          if (akurasiVal !== null) {
+            accuracies.push(akurasiVal);
+          }
+        }
+
+        grandTotalPreds += userPreds.length;
+        const userAvgAkurasi = accuracies.length > 0
+          ? accuracies.reduce((a, b) => a + b, 0) / accuracies.length
+          : null;
+        const userAvgSelisih = userPreds.length > 0 ? totalUserSelisih / userPreds.length : null;
+
+        if (userAvgAkurasi !== null) allUserAverages.push(userAvgAkurasi);
+        if (userAvgSelisih !== null) allUserSelisih.push(userAvgSelisih);
+
+        const row = userSummarySheet.addRow([
+          idx + 1,
+          user.id,
+          user.nama || `User #${user.id}`,
+          roundsSet.size,
+          userPreds.length,
+          userAvgSelisih !== null ? userAvgSelisih : "-",
+          userAvgAkurasi !== null ? userAvgAkurasi : "-"
+        ]);
+
+        row.eachCell((cell, colNumber) => {
+          cell.border = borderStyle;
+          cell.alignment = { vertical: 'middle' };
+
+          if ([1, 2, 4, 5].includes(colNumber)) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          }
+          if (colNumber === 6 && typeof cell.value === 'number') {
+            cell.numFmt = 'Rp #,##0.00';
+          }
+          if (colNumber === 7 && typeof cell.value === 'number') {
+            cell.numFmt = '0.00%';
+            cell.font = { bold: true };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE0E7FF' } // Soft indigo highlight
+            };
+          }
+        });
+      });
+    }
+
+    // Add Grand Average summary row
+    const grandAvgAkurasi = allUserAverages.length > 0
+      ? allUserAverages.reduce((a, b) => a + b, 0) / allUserAverages.length
+      : null;
+    const grandAvgSelisih = allUserSelisih.length > 0
+      ? allUserSelisih.reduce((a, b) => a + b, 0) / allUserSelisih.length
+      : null;
+
+    const grandAvgRow = userSummarySheet.addRow([
+      "RATA-RATA SELURUH RESPONDEN",
+      "",
+      "",
+      "",
+      grandTotalPreds,
+      grandAvgSelisih !== null ? grandAvgSelisih : "-",
+      grandAvgAkurasi !== null ? grandAvgAkurasi : "-"
+    ]);
+
+    userSummarySheet.mergeCells(grandAvgRow.number, 1, grandAvgRow.number, 4);
+
+    grandAvgRow.eachCell((cell, colNumber) => {
+      cell.font = { bold: true };
+      cell.border = borderStyle;
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF3F4F6' } // Light gray fill
+      };
+      if (colNumber === 1) {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      if (colNumber === 5) {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      if (colNumber === 6 && typeof cell.value === 'number') {
+        cell.numFmt = 'Rp #,##0.00';
+      }
+      if (colNumber === 7 && typeof cell.value === 'number') {
+        cell.numFmt = '0.00%';
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFC7D2FE' } // Distinct indigo highlight
+        };
+      }
+    });
+
+    userSummarySheet.columns = [
+      { width: 8 },  // 1. No
+      { width: 12 }, // 2. ID User
+      { width: 28 }, // 3. Nama Responden
+      { width: 22 }, // 4. Total Ronde Diikuti
+      { width: 24 }, // 5. Total Prediksi Terinput
+      { width: 24 }, // 6. Rata-rata Selisih (Rp)
+      { width: 30 }, // 7. Rata-rata Akurasi Keseluruhan
+    ];
+    userSummarySheet.views = [{ state: 'frozen', ySplit: 5 }];
+
+    // ==========================================
+    // WORKSHEETS PER RESPONDEN AKTIF (URUT NATURAL 1 s.d. 90)
+    // ==========================================
+    for (const user of activeRespondents) {
       const userPredictions = allPredictions.filter(p => p.userId === user.id);
       const userTransactions = allTransactions.filter(tx => {
         const buyerId = orderUserMap[tx.orderBuyId];
@@ -202,13 +425,46 @@ export async function GET(req: NextRequest) {
         return buyerId === user.id || sellerId === user.id;
       });
 
+      // Sort user predictions chronologically by period, session, round, and creation time
+      userPredictions.sort((a, b) => {
+        const rA = roundMap[a.roundId];
+        const rB = roundMap[b.roundId];
+        if (rA && rB) {
+          if (rA.period !== rB.period) return rA.period - rB.period;
+          if (rA.sessionGroup !== rB.sessionGroup) return rA.sessionGroup - rB.sessionGroup;
+          if (rA.roundIndex !== rB.roundIndex) return rA.roundIndex - rB.roundIndex;
+        }
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      });
+
+      // Pre-calculate round-level average accuracy for this user
+      const userRoundAccuracies: Record<number, number[]> = {};
+      for (const p of userPredictions) {
+        if (!userRoundAccuracies[p.roundId]) {
+          userRoundAccuracies[p.roundId] = [];
+        }
+        const { akurasiVal } = getPredictionMetrics(p);
+        if (akurasiVal !== null) {
+          userRoundAccuracies[p.roundId].push(akurasiVal);
+        }
+      }
+
+      const userRoundAvgMap: Record<number, number | null> = {};
+      for (const roundIdStr in userRoundAccuracies) {
+        const roundId = Number(roundIdStr);
+        const accs = userRoundAccuracies[roundId];
+        userRoundAvgMap[roundId] = accs.length > 0
+          ? accs.reduce((a, b) => a + b, 0) / accs.length
+          : null;
+      }
+
       // If user has no predictions and no transactions, and there are rounds, we can still include sheet or skip if empty
       const safeSheetName = (user.nama || `User_${user.id}`).replace(/[\\/?*\[\]]/g, '').substring(0, 31);
       const sheet = workbook.addWorksheet(safeSheetName);
 
-      // --- SECTION 1: PREDICTIONS ---
+      // --- SECTION 1: PREDIKSI & ORDER TRANSAKSI RESPONDEN ---
       const predHeaderRow = sheet.addRow([
-        'Waktu Input', 'Periode', 'Sesi', 'Ronde', 'Kode Saham', 'Harga Buka', 'Harga Prediksi', 'Harga Akhir', 'Selisih', 'Akurasi'
+        'Waktu Input', 'Periode', 'Sesi', 'Ronde', 'Kode Saham', 'Pilihan Transaksi', 'Jumlah (Lot)', 'Harga Tebak / Order', 'Harga Acuan / Buka', 'Harga Akhir', 'Selisih', 'Akurasi', 'Rata-rata Akurasi Ronde'
       ]);
       
       predHeaderRow.eachCell((cell) => {
@@ -219,55 +475,147 @@ export async function GET(req: NextRequest) {
       });
 
       if (userPredictions.length === 0) {
-        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada prediksi pada ronde yang dipilih', '-', '-', '-', '-', '-']);
+        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada prediksi/order pada ronde yang dipilih', '-', '-', '-', '-', '-', '-', '-', '-']);
         emptyRow.eachCell((cell) => {
           cell.border = borderStyle;
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         });
       } else {
+        // Group contiguous predictions by roundId so we can merge cells per round
+        type RoundGroup = {
+          roundId: number;
+          predictions: typeof userPredictions;
+        };
+
+        const roundGroups: RoundGroup[] = [];
         for (const p of userPredictions) {
-          const round = roundMap[p.roundId];
-          const stock = stockMap[p.stockId];
-          const openingPrice = round?.openingPrices && (round.openingPrices as any)[p.stockId]
-            ? Number((round.openingPrices as any)[p.stockId])
-            : Number(stock?.basePrice || 0);
-            
-          const finalPrice = (finalPrices[p.roundId] && finalPrices[p.roundId][p.stockId]) 
-            ? finalPrices[p.roundId][p.stockId] 
-            : openingPrice;
-
-          const predPrice = Number(p.tebakanHarga);
-          const selisih = Math.abs(predPrice - openingPrice);
-
-          const timeStr = formatWibDateTime(p.createdAt);
-          const akurasiRaw = p.accuracyScore ? Number(p.accuracyScore) : null;
-          const akurasiVal = akurasiRaw !== null ? akurasiRaw : null;
-
-          const row = sheet.addRow([
-            timeStr,
-            `Periode ${round?.period || "-"}`,
-            `Sesi ${round?.sessionGroup || "-"}`,
-            `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
-            stock?.kodeSaham || "-",
-            openingPrice,
-            predPrice,
-            finalPrice,
-            selisih,
-            akurasiVal
-          ]);
-
-          row.eachCell((cell, colNumber) => {
-            cell.border = borderStyle;
-            cell.alignment = { vertical: 'middle' };
-            
-            if ([6, 7, 8, 9].includes(colNumber)) {
-              cell.numFmt = 'Rp #,##0.00';
-            }
-            if (colNumber === 10 && cell.value !== null) {
-              cell.numFmt = '0.00%';
-            }
-          });
+          const lastGroup = roundGroups[roundGroups.length - 1];
+          if (lastGroup && lastGroup.roundId === p.roundId) {
+            lastGroup.predictions.push(p);
+          } else {
+            roundGroups.push({ roundId: p.roundId, predictions: [p] });
+          }
         }
+
+        for (const group of roundGroups) {
+          const roundAvg = userRoundAvgMap[group.roundId] ?? null;
+          const startRow = sheet.rowCount + 1;
+
+          for (let i = 0; i < group.predictions.length; i++) {
+            const p = group.predictions[i];
+            const { round, stock, openingPrice, finalPrice, predPrice, selisih, akurasiVal } = getPredictionMetrics(p);
+
+            const timeStr = formatWibDateTime(p.createdAt);
+            const pilihan = p.tipe || "-";
+            const lot = p.jumlahLot || 1;
+
+            const row = sheet.addRow([
+              timeStr,
+              `Periode ${round?.period || "-"}`,
+              `Sesi ${round?.sessionGroup || "-"}`,
+              `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
+              stock?.kodeSaham || "-",
+              pilihan,
+              lot,
+              predPrice,
+              openingPrice,
+              finalPrice,
+              selisih,
+              akurasiVal,
+              i === 0 ? (roundAvg !== null ? roundAvg : "-") : ""
+            ]);
+
+            row.eachCell((cell, colNumber) => {
+              cell.border = borderStyle;
+              cell.alignment = { vertical: 'middle' };
+
+              if ([2, 3, 4, 5].includes(colNumber)) {
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              }
+              if (colNumber === 6) {
+                const isBeli = pilihan.toUpperCase() === "BELI" || pilihan.toUpperCase() === "BID";
+                const isJual = pilihan.toUpperCase() === "JUAL" || pilihan.toUpperCase() === "ASK";
+                cell.font = { bold: true, color: { argb: isBeli ? 'FF00B050' : isJual ? 'FFFF0000' : 'FF000000' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              }
+              if (colNumber === 7) {
+                cell.numFmt = '#,##0';
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              }
+              if ([8, 9, 10, 11].includes(colNumber)) {
+                cell.numFmt = 'Rp #,##0.00';
+              }
+              if (colNumber === 12 && cell.value !== null && typeof cell.value === 'number') {
+                cell.numFmt = '0.00%';
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              }
+            });
+          }
+
+          const endRow = sheet.rowCount;
+
+          // Merge Column 13 ("Rata-rata Akurasi Ronde") for this round
+          for (let r = startRow; r <= endRow; r++) {
+            const cell = sheet.getCell(r, 13);
+            cell.border = borderStyle;
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFE0E7FF' } // Soft indigo highlight
+            };
+          }
+
+          if (endRow > startRow) {
+            sheet.mergeCells(startRow, 13, endRow, 13);
+          }
+
+          const masterCell = sheet.getCell(startRow, 13);
+          masterCell.value = roundAvg !== null ? roundAvg : "-";
+          if (typeof roundAvg === 'number') {
+            masterCell.numFmt = '0.00%';
+          }
+          masterCell.font = { bold: true };
+          masterCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        // Summary row for user overall average accuracy
+        const allUserAccs = userPredictions
+          .map(p => getPredictionMetrics(p).akurasiVal)
+          .filter((v): v is number => v !== null);
+
+        const overallUserAvg = allUserAccs.length > 0
+          ? allUserAccs.reduce((a, b) => a + b, 0) / allUserAccs.length
+          : null;
+
+        const totalUserAvgRow = sheet.addRow([
+          "RATA-RATA KESELURUHAN AKURASI:",
+          "", "", "", "", "", "", "", "", "", "", "",
+          overallUserAvg !== null ? overallUserAvg : "-"
+        ]);
+
+        sheet.mergeCells(totalUserAvgRow.number, 1, totalUserAvgRow.number, 12);
+
+        totalUserAvgRow.eachCell((cell, colNumber) => {
+          cell.border = borderStyle;
+          cell.font = { bold: true };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF3F4F6' }
+          };
+          if (colNumber === 1) {
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+          }
+          if (colNumber === 13 && typeof cell.value === 'number') {
+            cell.numFmt = '0.00%';
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFC7D2FE' }
+            };
+          }
+        });
       }
 
       // Spacer rows
@@ -341,17 +689,19 @@ export async function GET(req: NextRequest) {
       }
 
       sheet.columns = [
-        { width: 24 }, // Waktu
-        { width: 12 }, // Periode
-        { width: 10 }, // Sesi
-        { width: 10 }, // Ronde
-        { width: 14 }, // Saham
-        { width: 12 }, // Tipe / Harga Buka
-        { width: 20 }, // Harga Prediksi / Harga
-        { width: 20 }, // Harga Akhir / Lot
-        { width: 24 }, // Selisih / Total
-        { width: 20 }, // Akurasi / Intervensi
-        { width: 26 }, // Lawan (only in TX)
+        { width: 24 }, // 1. Waktu Input / Transaksi
+        { width: 12 }, // 2. Periode
+        { width: 10 }, // 3. Sesi
+        { width: 10 }, // 4. Ronde
+        { width: 14 }, // 5. Kode Saham
+        { width: 18 }, // 6. Pilihan Transaksi / Tipe
+        { width: 14 }, // 7. Jumlah (Lot) / Harga
+        { width: 22 }, // 8. Harga Tebak / Order / Jumlah Lot TX
+        { width: 22 }, // 9. Harga Acuan / Buka / Total Value TX
+        { width: 20 }, // 10. Harga Akhir / Intervensi
+        { width: 24 }, // 11. Selisih / Lawan Transaksi
+        { width: 16 }, // 12. Akurasi
+        { width: 26 }, // 13. Rata-rata Akurasi Ronde
       ];
 
       sheet.views = [{ state: 'frozen', ySplit: 1 }];

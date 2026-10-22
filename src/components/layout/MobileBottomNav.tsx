@@ -19,7 +19,11 @@ import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
 import { getSocket } from "@/lib/socket";
 
-export default function MobileBottomNav() {
+type MobileBottomNavProps = {
+  role?: "admin" | "responden";
+};
+
+export default function MobileBottomNav({ role }: MobileBottomNavProps = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -27,7 +31,7 @@ export default function MobileBottomNav() {
   const [showProfileSheet, setShowProfileSheet] = useState(false);
   const [isSessionActive, setIsSessionActive] = useState(false);
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = role ? role === "admin" : (pathname?.startsWith("/admin") || user?.role === "admin");
 
   useEffect(() => {
     const socket = getSocket();

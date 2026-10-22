@@ -544,41 +544,17 @@ async function executeTrade(
 // OPENING PRICES
 // ============================================================
 
-async function calculateOpeningPrices(roundId: number, stockRows: StockRow[]) {
-  const openingPrices: Record<number, number> = {};
+async function calculatePredictionAccuracies(roundId: number, stockRows: StockRow[]) {
   for (const stock of stockRows) {
-    const preds = activePredictions[stock.id] || [];
-    if (preds.length === 0) {
-      openingPrices[stock.id] = Number(stock.basePrice);
-    } else {
-      const sorted = preds.map(p => p.predictedPrice).sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      openingPrices[stock.id] = sorted.length % 2 !== 0
-        ? sorted[mid]
-        : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-    }
-  }
-  activeOpeningPrices = openingPrices;
-
-  await db.update(rounds)
-    .set({ openingPrices: JSON.parse(JSON.stringify(openingPrices)) })
-    .where(eq(rounds.id, roundId));
-
-  for (const stock of stockRows) {
-    const eqPrice = openingPrices[stock.id];
-    if (!eqPrice) continue;
+    const finalPrice = lastTradedPrices[stock.id] || activeOpeningPrices[stock.id] || Number(stock.basePrice);
+    if (!finalPrice || finalPrice <= 0) continue;
     const preds = await db.select().from(predictions)
       .where(and(eq(predictions.roundId, roundId), eq(predictions.stockId, stock.id)));
     for (const pred of preds) {
-      const accuracy = Math.max(0, 1 - Math.abs(Number(pred.tebakanHarga) - eqPrice) / eqPrice);
+      const accuracy = Math.max(0, 1 - Math.abs(Number(pred.tebakanHarga) - finalPrice) / finalPrice);
       await db.update(predictions).set({ accuracyScore: String(accuracy.toFixed(4)) }).where(eq(predictions.id, pred.id));
     }
   }
-
-  io.emit("opening-prices-calculated", {
-    prices: stockRows.map(s => ({ stockId: s.id, kode: s.kodeSaham, price: openingPrices[s.id] })),
-  });
-  console.log("[Scheduler] Opening prices:", openingPrices);
 }
 
 // ============================================================
@@ -615,15 +591,22 @@ async function runRound(
     return;
   }
 
+  const initialOpeningPrices: Record<number, number> = {};
+  orderedStocks.forEach(s => {
+    initialOpeningPrices[s.id] = Number(s.basePrice);
+  });
+  activeOpeningPrices = initialOpeningPrices;
+
   if (initialPhase === null) {
     const [roundRow] = await db.insert(rounds).values({
       period: periodNumber,
       sessionGroup: session.sessionNumber,
       roundIndex: roundIdx,
       status: "active",
-      subSessionStatus: "PRE_MARKET",
+      subSessionStatus: "TRADING",
       activeSubSession: 1,
       activeIntervention: session.intervention,
+      openingPrices: JSON.parse(JSON.stringify(initialOpeningPrices)),
       startTime: new Date(),
     }).returning();
     
@@ -631,13 +614,15 @@ async function runRound(
     activeStocks = orderedStocks;
     activeOrderBooks = Object.fromEntries(orderedStocks.map(s => [s.id, { bids: [], asks: [] }]));
     activePredictions = Object.fromEntries(orderedStocks.map(s => [s.id, []]));
-    activeOpeningPrices = {};
     currentIntervention = session.intervention;
 
     for (let i = 0; i < orderedStocks.length; i++) {
       await db.insert(roundStocks).values({ roundId: roundRow.id, stockId: orderedStocks[i].id, slot: i + 1 });
     }
     await seedInitialPortfolios();
+  } else {
+    activeStocks = orderedStocks;
+    currentIntervention = session.intervention;
   }
 
   const roundLabel = `P${periodNumber}-S${session.sessionNumber}-R${roundIdx + 1}`;
@@ -655,16 +640,21 @@ async function runRound(
     })),
   });
 
-  if (initialPhase === null || initialPhase === "PRE_MARKET") {
-    currentPhase = "PRE_MARKET";
-    io.emit("sub-session-started", {
-      roundNumber: roundIdx + 1,
-      sessionNumber: 1,
-      phase: "PRE_MARKET",
-      duration: initialPhase === "PRE_MARKET" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.PRE_MARKET,
-      intervention: session.intervention,
-      label: "Pra-Perdagangan",
-    });
+  io.emit("opening-prices-calculated", {
+    prices: orderedStocks.map(s => ({ stockId: s.id, kode: s.kodeSaham, price: activeOpeningPrices[s.id] })),
+  });
+
+  // LANGSUNG MASUK KE FASE TRADING (PRA-PEMBUKAAN DIHAPUSKAN)
+  currentPhase = "TRADING";
+
+  io.emit("sub-session-started", {
+    roundNumber: roundIdx + 1,
+    sessionNumber: 1,
+    phase: "TRADING",
+    duration: initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING,
+    intervention: session.intervention,
+    label: "Perdagangan",
+  });
 
   if (session.intervention !== "NONE") {
     const DUMMY_GOOD_NEWS = [
@@ -717,69 +707,29 @@ async function runRound(
     });
   }
 
-    await runCountdown(initialPhase === "PRE_MARKET" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.PRE_MARKET);
-    if (periodAborted) { await cleanupActiveRound(); return; }
+  startMatchingEngine();
+  await runCountdown(initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING);
+  stopMatchingEngine();
 
-    await calculateOpeningPrices(activeRoundDbId!, orderedStocks);
-    io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 1, phase: "PRE_MARKET" });
-  }
+  if (periodAborted) { await cleanupActiveRound(); return; }
 
-  if (!session.hasTrading) {
-    await db.update(rounds)
-      .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
-      .where(eq(rounds.id, activeRoundDbId!));
-    io.emit("round-ended", {
-      roundNumber: roundIdx + 1, periodNumber,
-      sessionNumber: session.sessionNumber,
-      openingPrices: activeOpeningPrices,
-    });
-    activeRoundDbId = null; activeStocks = []; activeOrderBooks = {};
-    return;
-  }
+  // Hitung akurasi harga tebak/prediksi terhadap harga transaksi terakhir (atau harga acuan)
+  await calculatePredictionAccuracies(activeRoundDbId!, orderedStocks);
 
-  if (initialPhase === null || initialPhase === "PRE_MARKET" || initialPhase === "TRADING") {
-    currentPhase = "TRADING";
+  await db.update(rounds)
+    .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
+    .where(eq(rounds.id, activeRoundDbId!));
+  await db.update(orderBook)
+    .set({ status: "cancelled" })
+    .where(and(eq(orderBook.roundId, activeRoundDbId!), eq(orderBook.status, "open")));
 
-    // Reset order latihan pra-pembukaan agar fase TRADING riil dimulai bersih
-    activeOrderBooks = Object.fromEntries(activeStocks.map(s => [s.id, { bids: [], asks: [] }]));
-    for (const stock of activeStocks) {
-      emitOrderBookUpdate(stock.id);
-    }
-
-    await db.update(rounds)
-      .set({ subSessionStatus: "TRADING", activeSubSession: 2, activeIntervention: session.intervention })
-      .where(eq(rounds.id, activeRoundDbId!));
-
-    io.emit("sub-session-started", {
-      roundNumber: roundIdx + 1,
-      sessionNumber: 2,
-      phase: "TRADING",
-      duration: initialPhase === "TRADING" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING,
-      intervention: session.intervention,
-      label: "Perdagangan",
-    });
-
-    startMatchingEngine();
-    await runCountdown(initialPhase === "TRADING" && initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING);
-    stopMatchingEngine();
-
-    if (periodAborted) { await cleanupActiveRound(); return; }
-
-    await db.update(rounds)
-      .set({ status: "closed", subSessionStatus: "CLOSED", endTime: new Date() })
-      .where(eq(rounds.id, activeRoundDbId!));
-    await db.update(orderBook)
-      .set({ status: "cancelled" })
-      .where(and(eq(orderBook.roundId, activeRoundDbId!), eq(orderBook.status, "open")));
-
-    io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 2, phase: "TRADING" });
-    io.emit("intervention-ended", { roundNumber: roundIdx + 1 });
-    io.emit("round-ended", {
-      roundNumber: roundIdx + 1, periodNumber,
-      sessionNumber: session.sessionNumber,
-      openingPrices: activeOpeningPrices,
-    });
-  }
+  io.emit("sub-session-ended", { roundNumber: roundIdx + 1, sessionNumber: 1, phase: "TRADING" });
+  io.emit("intervention-ended", { roundNumber: roundIdx + 1 });
+  io.emit("round-ended", {
+    roundNumber: roundIdx + 1, periodNumber,
+    sessionNumber: session.sessionNumber,
+    openingPrices: activeOpeningPrices,
+  });
 
   activeRoundDbId = null; activeStocks = []; activeOrderBooks = {}; currentIntervention = "NONE";
   console.log(`[Scheduler] ${roundLabel} DONE`);
@@ -898,7 +848,7 @@ app.prepare().then(async () => {
       const pc = getPeriodConfig(periodNumber);
       const sessionIdx = pc.sessions.findIndex(s => s.sessionNumber === activeRound.sessionGroup);
       const roundIdx = activeRound.roundIndex;
-      const phase = activeRound.subSessionStatus as PhaseType;
+      const phase: PhaseType = "TRADING";
 
       activeRoundDbId = activeRound.id;
 
@@ -924,13 +874,10 @@ app.prepare().then(async () => {
         }
       }
       
-      activeOpeningPrices = {};
-      if (phase === "TRADING") {
-         await calculateOpeningPrices(activeRoundDbId, activeStocks);
-      }
+      activeOpeningPrices = Object.fromEntries(activeStocks.map(s => [s.id, Number(s.basePrice)]));
 
       isPaused = true;
-      const timeLeft = phase === "PRE_MARKET" ? DURATIONS.PRE_MARKET : phase === "TRADING" ? DURATIONS.TRADING : DURATIONS.COOLDOWN;
+      const timeLeft = DURATIONS.TRADING;
 
       startSingleSession(periodNumber, sessionIdx, roundIdx, phase, timeLeft).catch(err => {
         console.error("[Scheduler] Error resuming session:", err);
@@ -1317,35 +1264,58 @@ app.prepare().then(async () => {
           and(eq(predictions.userId, data.userId), eq(predictions.roundId, activeRoundDbId))
         );
         const predMap: Record<number, number> = {};
+        const ordersMap: Record<number, { tipe: "BID" | "ASK"; harga: number; jumlah: number; status: string }> = {};
+
         userPreds.forEach(p => {
           predMap[p.stockId] = Number(p.tebakanHarga);
+          ordersMap[p.stockId] = {
+            tipe: (p.tipe === "JUAL" ? "ASK" : "BID"),
+            harga: Number(p.tebakanHarga),
+            jumlah: p.jumlahLot || 1,
+            status: "submitted",
+          };
         });
-        socket.emit("user-predictions-loaded", { predictions: predMap });
+
+        const userOrders = await db.select().from(orderBook).where(
+          and(eq(orderBook.userId, data.userId), eq(orderBook.roundId, activeRoundDbId))
+        );
+        userOrders.forEach(o => {
+          ordersMap[o.stockId] = {
+            tipe: o.tipe as "BID" | "ASK",
+            harga: Number(o.harga),
+            jumlah: o.jumlah,
+            status: o.status,
+          };
+          predMap[o.stockId] = Number(o.harga);
+        });
+
+        socket.emit("user-predictions-loaded", { predictions: predMap, orders: ordersMap });
       } catch (err) {
         console.error("[Scheduler] Error loading user predictions:", err);
       }
     });
 
-    // ── Submit Prediction ────────────────────────────────────
-    socket.on("submit-prediction", async (data: { stockId: number; predictedPrice: number; userId: number }) => {
-      const { stockId, predictedPrice, userId } = data;
-      if (!activeRoundDbId || currentPhase !== "PRE_MARKET") {
-        socket.emit("prediction-error", { message: "Sesi pra-pembukaan belum dibuka atau telah berakhir" }); return;
+    // ── Submit Prediction (Fallback Alias) ───────────────────
+    socket.on("submit-prediction", async (data: { stockId: number; predictedPrice: number; userId: number; tipe?: "BID" | "ASK"; jumlah?: number }) => {
+      const { stockId, predictedPrice, userId, tipe = "BID", jumlah = 1 } = data;
+      if (!activeRoundDbId || currentPhase !== "TRADING") {
+        socket.emit("prediction-error", { message: "Sesi perdagangan tidak aktif atau telah berakhir" });
+        return;
       }
       const stock = activeStocks.find(s => s.id === stockId);
       if (!stock) { socket.emit("prediction-error", { message: "Saham tidak valid" }); return; }
 
-      const basePrice = Number(stock.basePrice);
+      const refPrice = activeOpeningPrices[stockId] || Number(stock.basePrice);
 
       // ── Validasi Fraksi Harga ─────────────────────────────
-      if (!isValidTickSize(predictedPrice, basePrice)) {
+      if (!isValidTickSize(predictedPrice, refPrice)) {
         const tick = getTickSize(predictedPrice);
         socket.emit("prediction-error", { message: `Harga order harus kelipatan Rp ${tick}. Contoh: Rp ${Math.round(predictedPrice / tick) * tick}` });
         return;
       }
 
-      // ── Validasi Auto Rejection vs basePrice ──────────────
-      const { upper, lower } = getAutoRejectionLimits(basePrice);
+      // ── Validasi Auto Rejection vs refPrice ──────────────
+      const { upper, lower } = getAutoRejectionLimits(refPrice);
       if (predictedPrice > upper || predictedPrice < lower) {
         socket.emit("prediction-error", { message: `Harga order di luar batas Auto-Rejection. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
         return;
@@ -1359,6 +1329,8 @@ app.prepare().then(async () => {
         activePredictions[stockId].push({ userId, predictedPrice });
       }
 
+      const tipeLabel = tipe === "ASK" || (tipe as any) === "JUAL" ? "JUAL" : "BELI";
+
       // Upsert: update jika sudah ada, insert jika belum
       const existingDb = await db.select().from(predictions).where(
         and(
@@ -1371,18 +1343,25 @@ app.prepare().then(async () => {
       if (existingDb.length > 0) {
         await db.update(predictions).set({
           tebakanHarga: String(predictedPrice),
+          tipe: tipeLabel,
+          jumlahLot: jumlah,
           createdAt: new Date(),
         }).where(eq(predictions.id, existingDb[0].id));
       } else {
         await db.insert(predictions).values({
-          userId, stockId, roundId: activeRoundDbId, tebakanHarga: String(predictedPrice),
+          userId,
+          stockId,
+          roundId: activeRoundDbId,
+          tebakanHarga: String(predictedPrice),
+          tipe: tipeLabel,
+          jumlahLot: jumlah,
         });
       }
 
       socket.emit("prediction-saved", { stockId, predictedPrice, count: activePredictions[stockId].length });
     });
 
-    // ── Place Order ──────────────────────────────────────────
+    // ── Place Order (1 Transaksi per Saham per User: Jual atau Beli) ─────────
     socket.on("place-order", async (data: { stockId: number; tipe: "BID" | "ASK"; harga: number; jumlah: number; userId: number }) => {
       const { stockId, tipe, harga, jumlah, userId } = data;
 
@@ -1395,62 +1374,29 @@ app.prepare().then(async () => {
         return;
       }
 
-      if (!activeRoundDbId) { socket.emit("order-error", { message: "Tidak ada ronde aktif" }); return; }
+      if (!activeRoundDbId || currentPhase !== "TRADING") {
+        socket.emit("order-error", { message: "Sesi perdagangan tidak aktif atau telah berakhir" });
+        return;
+      }
       
       const stock = activeStocks.find(s => s.id === stockId);
       if (!stock) { socket.emit("order-error", { message: "Saham tidak valid untuk ronde ini" }); return; }
 
-      // ── Tangani Order Saat Fase PRE_MARKET (Tercatat sebagai input harga pembukaan, tanpa potongan saldo/lot) ──
-      if (currentPhase === "PRE_MARKET") {
-        const basePrice = Number(stock.basePrice);
-        if (!isValidTickSize(harga, basePrice)) {
-          const tick = getTickSize(harga);
-          socket.emit("order-error", { message: `Harga order harus kelipatan Rp ${tick}.` });
-          return;
-        }
-        const { upper, lower } = getAutoRejectionLimits(basePrice);
-        if (harga > upper || harga < lower) {
-          socket.emit("order-error", { message: `Harga order di luar batas Auto-Rejection (Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}).` });
-          return;
-        }
+      // ── ATURAN 2: Setiap user hanya bisa melakukan Jual atau Beli 1 kali tiap saham yang tersedia ──
+      const existingUserOrder = await db.select().from(orderBook).where(
+        and(
+          eq(orderBook.userId, userId),
+          eq(orderBook.roundId, activeRoundDbId),
+          eq(orderBook.stockId, stockId)
+        )
+      ).limit(1);
 
-        // Sesi Latihan Pra-Pembukaan: Order masuk ke Order Book live tanpa memotong kas & lot,
-        // dan TANPA menimpa data tebakan harga awal di tabel predictions.
-        if (!activeOrderBooks[stockId]) activeOrderBooks[stockId] = { bids: [], asks: [] };
-        const book = activeOrderBooks[stockId];
-        // Replace previous pre-market practice order by this user on this stock of the same type
-        if (tipe === "BID") {
-          book.bids = book.bids.filter(o => o.userId !== userId);
-        } else {
-          book.asks = book.asks.filter(o => o.userId !== userId);
-        }
-
-        const preOrderObj: OrderType = {
-          id: Date.now(),
-          userId,
-          stockId,
-          tipe,
-          harga,
-          jumlah,
-        };
-        if (tipe === "BID") book.bids.push(preOrderObj);
-        else book.asks.push(preOrderObj);
-
-        socket.emit("order-placed", {
-          id: preOrderObj.id,
-          stockId,
-          tipe,
-          harga,
-          jumlah,
-          isPreMarket: true,
-          message: `Order latihan ${tipe === "BID" ? "Beli" : "Jual"} ${stock.kodeSaham} (${jumlah} lot @ Rp ${harga.toLocaleString("id-ID")}) berhasil masuk ke Order Book! Saldo kas & lot aman (tidak terpotong).`
+      if (existingUserOrder.length > 0) {
+        const prevTipe = existingUserOrder[0].tipe === "BID" ? "Beli" : "Jual";
+        socket.emit("order-error", {
+          message: `Anda sudah melakukan transaksi (${prevTipe}) untuk saham ${stock.kodeSaham}. Sesuai aturan, Anda hanya bisa memilih Jual atau Beli satu kali per saham.`
         });
-        emitOrderBookUpdate(stockId);
         return;
-      }
-
-      if (currentPhase !== "TRADING") {
-        socket.emit("order-error", { message: "Perdagangan belum dibuka. Tunggu fase Perdagangan." }); return;
       }
 
       const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
@@ -1464,7 +1410,7 @@ app.prepare().then(async () => {
           .where(and(eq(orderBook.userId, userId), eq(orderBook.roundId, activeRoundDbId), eq(orderBook.status, "open"), eq(orderBook.tipe, "BID")));
         const locked = openBids.reduce((s, o) => s + Number(o.harga) * o.jumlah * 100, 0);
         if (saldo - locked < totalCost) {
-          socket.emit("order-error", { message: `Saldo tidak mencukupi. Tersedia: Rp ${(saldo - locked).toLocaleString("id-ID")}, dibutuhkan: Rp ${totalCost.toLocaleString("id-ID")}` });
+          socket.emit("order-error", { message: `Saldo kas tidak mencukupi. Tersedia: Rp ${(saldo - locked).toLocaleString("id-ID")}, dibutuhkan: Rp ${totalCost.toLocaleString("id-ID")}` });
           return;
         }
       }
@@ -1477,35 +1423,75 @@ app.prepare().then(async () => {
           .where(and(eq(orderBook.userId, userId), eq(orderBook.roundId, activeRoundDbId), eq(orderBook.stockId, stockId), eq(orderBook.status, "open"), eq(orderBook.tipe, "ASK")));
         const lockedLots = openAsks.reduce((s, o) => s + o.jumlah, 0);
         if (owned - lockedLots < jumlah) {
-          socket.emit("order-error", { message: `Lot tidak mencukupi. Tersedia: ${owned - lockedLots} lot, dibutuhkan: ${jumlah} lot` });
+          socket.emit("order-error", { message: `Jumlah lot tidak mencukupi. Tersedia: ${owned - lockedLots} lot, dibutuhkan: ${jumlah} lot` });
           return;
         }
       }
 
-      const basePrice = Number(stock.basePrice);
+      const refPrice = activeOpeningPrices[stockId] || Number(stock.basePrice);
 
       // ── Validasi Fraksi Harga ─────────────────────────────
-      if (!isValidTickSize(harga, basePrice)) {
+      if (!isValidTickSize(harga, refPrice)) {
         const tick = getTickSize(harga);
         const nearest = Math.round(harga / tick) * tick;
         socket.emit("order-error", { message: `Harga tidak valid. Harga harus kelipatan Rp ${tick}. Contoh harga valid: Rp ${nearest.toLocaleString("id-ID")}` });
         return;
       }
 
-      // ── Validasi Auto Rejection vs Opening Price ──────────
-      const openingPrice = activeOpeningPrices[stockId];
-      if (openingPrice) {
-        const { upper, lower } = getAutoRejectionLimits(openingPrice);
-        if (harga > upper || harga < lower) {
-          socket.emit("order-error", { message: `Harga di luar batas Auto Rejection. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
-          return;
-        }
+      // ── Validasi Auto Rejection vs Base / Reference Price ──
+      const { upper, lower } = getAutoRejectionLimits(refPrice);
+      if (harga > upper || harga < lower) {
+        socket.emit("order-error", { message: `Harga di luar batas Auto Rejection. Rentang valid: Rp ${lower.toLocaleString("id-ID")} – Rp ${upper.toLocaleString("id-ID")}` });
+        return;
       }
 
+      // ── ATURAN 3, 4, 5: Rekam ke predictions (harga tebak & lot tercatat) & orderBook ──
+      const tipeLabel = tipe === "BID" ? "BELI" : "JUAL";
+      
+      const existingPred = await db.select().from(predictions).where(
+        and(
+          eq(predictions.userId, userId),
+          eq(predictions.stockId, stockId),
+          eq(predictions.roundId, activeRoundDbId)
+        )
+      ).limit(1);
+
+      if (existingPred.length > 0) {
+        await db.update(predictions).set({
+          tebakanHarga: String(harga),
+          tipe: tipeLabel,
+          jumlahLot: jumlah,
+          createdAt: new Date(),
+        }).where(eq(predictions.id, existingPred[0].id));
+      } else {
+        await db.insert(predictions).values({
+          userId,
+          stockId,
+          roundId: activeRoundDbId,
+          tebakanHarga: String(harga),
+          tipe: tipeLabel,
+          jumlahLot: jumlah,
+        });
+      }
+
+      if (!activePredictions[stockId]) activePredictions[stockId] = [];
+      const predIndex = activePredictions[stockId].findIndex(p => p.userId === userId);
+      if (predIndex !== -1) {
+        activePredictions[stockId][predIndex].predictedPrice = harga;
+      } else {
+        activePredictions[stockId].push({ userId, predictedPrice: harga });
+      }
+
+      // Simpan ke orderBook
       const [order] = await db.insert(orderBook).values({
-        userId, stockId, roundId: activeRoundDbId,
-        subSession: currentPhase === "TRADING" ? 2 : 1,
-        tipe, harga: String(harga), jumlah, status: "open",
+        userId,
+        stockId,
+        roundId: activeRoundDbId,
+        subSession: 1,
+        tipe,
+        harga: String(harga),
+        jumlah,
+        status: "open",
         activeIntervention: currentIntervention,
       }).returning();
 
@@ -1514,7 +1500,15 @@ app.prepare().then(async () => {
       if (tipe === "BID") activeOrderBooks[stockId].bids.push(orderObj);
       else activeOrderBooks[stockId].asks.push(orderObj);
 
-      socket.emit("order-placed", { orderId: order.id, stockId, tipe, harga, jumlah });
+      socket.emit("order-placed", {
+        orderId: order.id,
+        stockId,
+        tipe,
+        harga,
+        jumlah,
+        message: `Order ${tipe === "BID" ? "Beli" : "Jual"} ${stock.kodeSaham} (${jumlah} lot @ Rp ${harga.toLocaleString("id-ID")}) berhasil tercatat sebagai order & harga tebakan!`,
+      });
+
       emitOrderBookUpdate(stockId);
       const matched = await matchOrders(stockId);
       if (matched) {

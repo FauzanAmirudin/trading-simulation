@@ -53,7 +53,7 @@ function formatTime(s: number) {
 
 const PHASE_CONFIG: Record<PhaseType, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   IDLE:       { label: "Menunggu",       color: "text-muted-foreground",   bg: "bg-zinc-700/40",         icon: <Circle className="size-3.5" /> },
-  PRE_MARKET: { label: "Pra-Perdagangan", color: "text-amber-400",  bg: "bg-amber-500/10",        icon: <BookOpen className="size-3.5" /> },
+  PRE_MARKET: { label: "Perdagangan", color: "text-emerald-400", bg: "bg-emerald-500/10", icon: <Activity className="size-3.5" /> },
   TRADING:    { label: "Perdagangan",    color: "text-emerald-400", bg: "bg-emerald-500/10",      icon: <Activity className="size-3.5" /> },
   COOLDOWN:   { label: "Jeda",           color: "text-sky-400",    bg: "bg-sky-500/10",          icon: <Timer className="size-3.5" /> },
   CLOSED:     { label: "Selesai",        color: "text-muted-foreground",   bg: "bg-zinc-800/40",         icon: <CheckCircle2 className="size-3.5" /> },
@@ -178,6 +178,9 @@ function PeriodSummaryCard({
   const isPaused = periodState === "paused";
   const totalRounds = period.sessions.reduce((a, s) => a + s.rounds.length, 0);
   const hasIntervention = period.sessions.some((s) => s.intervention !== "NONE");
+  const safeCompletedSessions = Array.isArray(completedSessions)
+    ? completedSessions.filter((x): x is number => typeof x === "number")
+    : [];
 
   return (
     <div
@@ -231,7 +234,7 @@ function PeriodSummaryCard({
       {/* Sessions List (Fluid Cards) */}
       <div className="space-y-2">
         {period.sessions.map((s, idx) => {
-          const isCompleted = completedSessions.includes(idx);
+          const isCompleted = safeCompletedSessions.includes(idx);
           return (
             <div
               key={s.sessionNumber}
@@ -669,6 +672,7 @@ export default function AdminSchedulerBoard() {
 
   const [loading, setLoading] = useState(true);
   const [startingPeriod, setStartingPeriod] = useState<number | null>(null);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
 
   // ── Socket setup ────────────────────────────────────────────
   useEffect(() => {
@@ -676,10 +680,24 @@ export default function AdminSchedulerBoard() {
     const socket = getSocket();
     socketRef.current = socket;
 
-    if (!socket.connected) socket.connect();
+    const onConnect = () => {
+      setIsSocketConnected(true);
+      socket.emit("authenticate", { userId: user.id });
+      socket.emit("get-scheduler-state");
+    };
 
-    socket.emit("authenticate", { userId: user.id });
-    socket.emit("get-scheduler-state");
+    const onDisconnect = () => {
+      setIsSocketConnected(false);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+
+    if (socket.connected) {
+      onConnect();
+    } else {
+      socket.connect();
+    }
 
     // State sync
     socket.on("scheduler-state", (data: any) => {
@@ -872,6 +890,8 @@ export default function AdminSchedulerBoard() {
 
     setLoading(false);
     return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
       socket.off("scheduler-state"); socket.off("period-started"); socket.off("period-ended");
       socket.off("period-aborted"); socket.off("experiment-reset"); socket.off("session-group-started");
       socket.off("round-started"); socket.off("sub-session-started"); socket.off("cooldown-started");
@@ -883,9 +903,19 @@ export default function AdminSchedulerBoard() {
 
   // ── Actions ─────────────────────────────────────────────────
   const handleStartSession = useCallback((periodNumber: 1 | 2 | 3, sessionIndex: number) => {
-    if (!user || !socketRef.current) return;
+    if (!user) {
+      toast.error("User admin tidak teridentifikasi.");
+      return;
+    }
+    if (!socketRef.current || !socketRef.current.connected) {
+      toast.error("Gagal memulai: Server WebSocket terputus! Pastikan server.ts dijalankan di terminal.", {
+        id: "admin-socket-disconnected",
+        duration: 5000,
+      });
+      return;
+    }
     socketRef.current.emit("admin-start-session", { periodNumber, sessionIndex, userId: user.id });
-    toast.info(`Memulai Sesi...`, { id: "admin-session-starting" });
+    toast.info(`Memulai Periode ${periodNumber} Sesi ${sessionIndex + 1}...`, { id: "admin-session-starting" });
   }, [user]);
 
   const handlePause = useCallback(() => {
@@ -959,13 +989,43 @@ export default function AdminSchedulerBoard() {
         )}
       </AnimatePresence>
 
+      {/* ── CONNECTION ALERT BANNER (If Disconnected) ────────── */}
+      {!isSocketConnected && (
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-rose-700 dark:text-rose-300 flex items-start gap-3 shadow-xs">
+          <AlertCircle className="size-5 shrink-0 text-rose-500 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <div className="font-bold text-sm">Server WebSocket Belum Terhubung</div>
+            <div>
+              Sistem simulasi perdagangan memerlukan server WebSocket (Socket.IO) agar sesi dapat berjalan.
+              Saat ini server Next.js berjalan tanpa <code>server.ts</code>.
+            </div>
+            <div className="mt-2 font-mono bg-rose-500/20 px-2.5 py-1 rounded-lg inline-block text-[11px] font-bold text-rose-800 dark:text-rose-200">
+              Jalankan di terminal: npm run dev:server (atau npm run dev)
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── PERIOD SELECTOR ───────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Zap className="size-3.5 text-primary" />
-            Mulai Periode Eksperimen
-          </h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Zap className="size-3.5 text-primary" />
+              Mulai Periode Eksperimen
+            </h3>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-colors",
+                isSocketConnected
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", isSocketConnected ? "bg-emerald-500" : "bg-rose-500 animate-ping")} />
+              {isSocketConnected ? "WebSocket Terhubung" : "WebSocket Terputus"}
+            </span>
+          </div>
           {activePeriod === null && (
             <Button
               size="sm" variant="ghost"

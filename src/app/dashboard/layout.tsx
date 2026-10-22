@@ -12,7 +12,7 @@ export default function DashboardLayout({
     <QuestionnaireGuard>
       <div className="min-h-screen min-h-[100dvh] flex flex-col md:flex-row bg-background">
         {/* Sidebar Desktop (Full Height dari atas sampai bawah di sisi kiri) */}
-        <AppSidebar />
+        <AppSidebar role="responden" />
 
         {/* Kolom Kanan: Header (sejajar di samping sidebar) & Content Area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-screen min-h-[100dvh]">
@@ -22,7 +22,7 @@ export default function DashboardLayout({
           </main>
         </div>
 
-        <MobileBottomNav />
+        <MobileBottomNav role="responden" />
       </div>
     </QuestionnaireGuard>
   );

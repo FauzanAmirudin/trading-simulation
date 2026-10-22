@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "tsx watch server.ts",
+    "dev:next": "next dev",
     "dev:server": "tsx watch server.ts",
     "build": "next build",
     "start": "next start",

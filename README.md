@@ -1,3 +1,5 @@
+kategori di 
+
 <div align="center">
   <h1>📈 Trading Simulation & Experimental Platform</h1>
   <p>A full-stack real-time stock trading simulation and behavioral economics experimental research platform.</p>
@@ -6,6 +8,7 @@
 ---
 
 ## 📖 Overview
+
 **Trading Simulation** is an interactive web platform designed for economic, financial, and behavioral experiments. It features a custom **Socket.io** matching engine that executes real-time buy/sell (Bid/Ask) orders, an administrative experimental control dashboard (matrix period scheduling, interventions, countdown timers, market phases, live monitoring), and a mobile-first responsive participant dashboard for executing simulated trades and completing psychological profiling questionnaires.
 
 ---
@@ -13,6 +16,7 @@
 ## 🚀 Tech Stack
 
 ### Frontend
+
 - **Framework:** [Next.js 16 (App Router)](https://nextjs.org/) & [React 19](https://react.dev/)
 - **Styling:** [Tailwind CSS v4](https://tailwindcss.com/)
 - **Animations:** [Framer Motion](https://www.framer.com/motion/) & [tw-animate-css](https://github.com/your-username/tw-animate-css)
@@ -20,6 +24,7 @@
 - **Notifications & Feedback:** [Sonner](https://sonner.emilkowal.ski/)
 
 ### Backend & Database
+
 - **Custom Real-Time Server:** Node.js + [Socket.io](https://socket.io/) (`server.ts`)
 - **Database:** PostgreSQL (15+)
 - **ORM:** [Drizzle ORM](https://orm.drizzle.team/) & Drizzle Kit
@@ -93,32 +98,41 @@ trading-simulasi/
 ## 🛠️ Installation & Setup (Local Development)
 
 ### 1. Prerequisites
+
 - [Node.js](https://nodejs.org/) (v20+)
 - [PostgreSQL](https://www.postgresql.org/) database (Local or Cloud)
 
 ### 2. Clone Repository
+
 ```bash
 git clone https://github.com/FauzanAmirudin/trading-simulation.git
 cd trading-simulation
 ```
 
 ### 3. Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### 4. Environment Variables
+
 Copy the template `.env.example` to `.env`:
+
 ```bash
 cp .env.example .env
 ```
+
 Adjust the `DATABASE_URL` in `.env` to match your local PostgreSQL credentials:
+
 ```env
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/trading_simulasi
 ```
 
 ### 5. Database Setup & Seeding
+
 Push the schema and seed all initial data (36 stocks, Admin, 34 respondents, 30 questionnaires, and portfolios):
+
 ```bash
 # Push schema to database
 npm run db:push
@@ -128,10 +142,13 @@ npm run db:init
 ```
 
 ### 6. Run the Application
+
 Because the app relies on the custom WebSockets server for real-time order matching:
+
 ```bash
 npm run dev:server
 ```
+
 *The app will be available at `http://localhost:3000`.*
 
 ---
@@ -139,7 +156,9 @@ npm run dev:server
 ## 🐳 Docker Deployment (Production Server)
 
 ### 1. Configure `.env` on Server
+
 Create `.env` in the project root:
+
 ```env
 PORT=3000
 NODE_ENV=production
@@ -152,6 +171,7 @@ PGADMIN_PASSWORD=admin
 ```
 
 ### 2. Build & Launch Containers
+
 ```bash
 # Build & start all containers in background
 docker compose up -d --build
@@ -166,13 +186,14 @@ The app container automatically applies Drizzle schema migrations, executes `src
 
 ## 👤 Default Accounts
 
-| Role | Username | Password | Keterangan |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `Admin` | `admin` | Akses penuh ke panel kontrol eksperimen, scheduler, dan laporan hasil |
-| **Responden Massal** | `responden1` s/d `responden30` | `password123` | Akun peserta eksperimen (Saldo: Rp 100.000.000 + 10 lot per saham) |
-| **Responden Personal** | `Andi`, `Budi`, `Citra`, `Doni` | `password` | Akun peserta personal (Saldo: Rp 100.000.000 + 10 lot per saham) |
+| Role                         | Username                                | Password        | Keterangan                                                            |
+| :--------------------------- | :-------------------------------------- | :-------------- | :-------------------------------------------------------------------- |
+| **Admin**              | `Admin`                               | `admin`       | Akses penuh ke panel kontrol eksperimen, scheduler, dan laporan hasil |
+| **Responden Massal**   | `responden1` s/d `responden30`      | `password123` | Akun peserta eksperimen (Saldo: Rp 100.000.000 + 10 lot per saham)    |
+| **Responden Personal** | `Andi`, `Budi`, `Citra`, `Doni` | `password`    | Akun peserta personal (Saldo: Rp 100.000.000 + 10 lot per saham)      |
 
 ---
 
 ## 📝 License
+
 This project is proprietary and built for academic and behavioral economic research. Please contact the repository owner regarding distribution and usage rights.
