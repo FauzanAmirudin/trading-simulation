@@ -41,9 +41,11 @@ type RespondentProfile = {
   isCompleted: boolean;
   laRawScore: number | null;
   laAvgScore: number | null;
+  laRank?: number | null;
   laCategory: "T" | "S" | "R" | null;
   eiRawScore: number | null;
   eiAvgScore: number | null;
+  eiRank?: number | null;
   eiCategory: "T" | "S" | "R" | null;
   profileCode: string | null;
   profileLabel: string | null;
@@ -62,6 +64,8 @@ type SummaryStats = {
   groupDistribution: Record<string, number>;
   laCatDistribution: Record<string, number>;
   eiCatDistribution: Record<string, number>;
+  laTercileCutoff?: any;
+  eiTercileCutoff?: any;
 };
 
 export default function AdminRespondentProfilesPage() {
@@ -206,14 +210,23 @@ export default function AdminRespondentProfilesPage() {
       list = list.filter((r) => !r.isCompleted);
     }
 
-    if (sortBy === "laScore") {
+    if (sortBy === "laScore" || sortBy === "laRank") {
       list.sort((a, b) => (b.laRawScore || 0) - (a.laRawScore || 0));
-    } else if (sortBy === "eiScore") {
+    } else if (sortBy === "eiScore" || sortBy === "eiRank") {
       list.sort((a, b) => (b.eiRawScore || 0) - (a.eiRawScore || 0));
+    } else if (sortBy === "group") {
+      list.sort((a, b) => (a.profileGroup || "Z").localeCompare(b.profileGroup || "Z"));
     } else if (sortBy === "completedAt") {
       list.sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""));
     } else {
-      list.sort((a, b) => a.userId - b.userId);
+      list.sort((a, b) => {
+        const numA = parseInt(a.nama.replace(/\D/g, ""), 10);
+        const numB = parseInt(b.nama.replace(/\D/g, ""), 10);
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return numA - numB;
+        }
+        return a.userId - b.userId;
+      });
     }
 
     return list;
@@ -224,6 +237,28 @@ export default function AdminRespondentProfilesPage() {
 
   return (
     <div className="w-full max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-2.5 sm:py-6 space-y-3.5 sm:space-y-5 pb-28 md:pb-8">
+      {/* ── Sub-Navigation Pill Header (Switch between Profiles & Biodata) ── */}
+      <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-muted/60 border border-border/60 max-w-fit">
+        <button
+          type="button"
+          className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-background text-foreground shadow-xs ring-1 ring-border/50 transition-all cursor-default"
+        >
+          <Brain className="size-3.5 text-primary" />
+          <span>Profil Psikologis (LA & EI)</span>
+          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold">
+            {stats?.completedCount || 0}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/admin/biodata")}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+        >
+          <UserCheck className="size-3.5" />
+          <span>Biodata & Demografi</span>
+        </button>
+      </div>
+
       {/* ── 1. Fluid Header Bar ── */}
       <div className="rounded-2xl sm:rounded-3xl bg-card/85 border border-border/80 p-3 sm:p-5 backdrop-blur-md shadow-xs flex flex-col gap-3">
         <div className="flex items-start sm:items-center justify-between gap-2.5">
@@ -552,9 +587,10 @@ export default function AdminRespondentProfilesPage() {
               className="w-full appearance-none rounded-xl sm:rounded-2xl border border-border/80 bg-card/90 pl-3 pr-7 py-2 text-[11px] sm:text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary h-11 sm:h-9 shadow-2xs truncate transition-colors cursor-pointer active:scale-[0.98]"
             >
               <option value="name">Urut: ID/Nama</option>
-              <option value="laScore">Urut: Skor LA</option>
-              <option value="eiScore">Urut: Skor EI</option>
-              <option value="completedAt">Urut: Waktu</option>
+              <option value="laScore">Urut: Skor LA (Peringkat 1 s/d N)</option>
+              <option value="eiScore">Urut: Skor EI (Peringkat 1 s/d N)</option>
+              <option value="group">Urut: Kelompok (A - I)</option>
+              <option value="completedAt">Urut: Waktu Selesai</option>
             </select>
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
           </div>
@@ -643,9 +679,10 @@ export default function AdminRespondentProfilesPage() {
                                 {r.laCategory === "T" ? "Tinggi" : r.laCategory === "S" ? "Sedang" : "Rendah"}
                               </span>
                             </div>
-                            <span className="text-[9px] text-muted-foreground block truncate">
-                              Rerata: {r.laAvgScore?.toFixed(2)} / 5.0
-                            </span>
+                            <div className="flex items-center justify-between text-[9px] text-muted-foreground pt-0.5">
+                              <span>Rerata: {r.laAvgScore?.toFixed(2)} / 5.0</span>
+                              {r.laRank && <span className="font-bold text-teal-700 dark:text-teal-300">Rank #{r.laRank}</span>}
+                            </div>
                           </div>
 
                           {/* Emotional Intel Card */}
@@ -670,9 +707,10 @@ export default function AdminRespondentProfilesPage() {
                                 {r.eiCategory === "T" ? "Tinggi" : r.eiCategory === "S" ? "Sedang" : "Rendah"}
                               </span>
                             </div>
-                            <span className="text-[9px] text-muted-foreground block truncate">
-                              Rerata: {r.eiAvgScore?.toFixed(2)} / 5.0
-                            </span>
+                            <div className="flex items-center justify-between text-[9px] text-muted-foreground pt-0.5">
+                              <span>Rerata: {r.eiAvgScore?.toFixed(2)} / 5.0</span>
+                              {r.eiRank && <span className="font-bold text-indigo-700 dark:text-indigo-300">Rank #{r.eiRank}</span>}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -743,8 +781,8 @@ export default function AdminRespondentProfilesPage() {
                       <TableHead className="w-14 text-center text-xs font-bold text-muted-foreground">No</TableHead>
                       <TableHead className="w-36 text-xs font-bold text-muted-foreground">Responden</TableHead>
                       <TableHead className="w-24 text-center text-xs font-bold text-muted-foreground">Status</TableHead>
-                      <TableHead className="w-32 text-center text-xs font-bold text-muted-foreground">Loss Aversion (LA)</TableHead>
-                      <TableHead className="w-32 text-center text-xs font-bold text-muted-foreground">Emotional Intel (EI)</TableHead>
+                      <TableHead className="w-36 text-center text-xs font-bold text-muted-foreground">Loss Aversion (LA)</TableHead>
+                      <TableHead className="w-36 text-center text-xs font-bold text-muted-foreground">Emotional Intel (EI)</TableHead>
                       <TableHead className="w-32 text-center text-xs font-bold text-muted-foreground">String Profil</TableHead>
                       <TableHead className="w-24 text-center text-xs font-bold text-muted-foreground">Kelompok</TableHead>
                       <TableHead className="text-xs font-bold text-muted-foreground">Karakteristik Perilaku</TableHead>
@@ -779,18 +817,32 @@ export default function AdminRespondentProfilesPage() {
                         </TableCell>
                         <TableCell className="text-center font-mono">
                           {r.isCompleted ? (
-                            <span className="text-xs font-bold text-teal-600 dark:text-teal-400">
-                              {r.laRawScore} pts ({r.laAvgScore?.toFixed(2)}) · <span className="font-sans font-black underline">{r.laCategory}</span>
-                            </span>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-xs font-bold text-teal-600 dark:text-teal-400">
+                                {r.laRawScore} pts ({r.laAvgScore?.toFixed(2)}) · <span className="font-sans font-black underline">{r.laCategory}</span>
+                              </span>
+                              {r.laRank && (
+                                <span className="text-[10px] text-muted-foreground font-semibold">
+                                  Peringkat #{r.laRank}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </TableCell>
                         <TableCell className="text-center font-mono">
                           {r.isCompleted ? (
-                            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                              {r.eiRawScore} pts ({r.eiAvgScore?.toFixed(2)}) · <span className="font-sans font-black underline">{r.eiCategory}</span>
-                            </span>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                {r.eiRawScore} pts ({r.eiAvgScore?.toFixed(2)}) · <span className="font-sans font-black underline">{r.eiCategory}</span>
+                              </span>
+                              {r.eiRank && (
+                                <span className="text-[10px] text-muted-foreground font-semibold">
+                                  Peringkat #{r.eiRank}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}

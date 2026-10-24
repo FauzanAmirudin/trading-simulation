@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { respondentProfiles, users } from "@/db/schema";
+import { respondentProfiles, respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth-server";
 
@@ -32,11 +32,22 @@ export async function GET(req: NextRequest) {
       .select({
         userId: users.id,
         role: users.role,
-        isCompleted: respondentProfiles.isCompleted,
+        isProfileCompleted: respondentProfiles.isCompleted,
         completedAt: respondentProfiles.completedAt,
+        biodataId: respondentBiodata.id,
+        jenisKelamin: respondentBiodata.jenisKelamin,
+        usia: respondentBiodata.usia,
+        programStudi: respondentBiodata.programStudi,
+        semester: respondentBiodata.semester,
+        pernahInvestasiSaham: respondentBiodata.pernahInvestasiSaham,
+        pernahPelatihanInvestasi: respondentBiodata.pernahPelatihanInvestasi,
+        sumberPenghasilan: respondentBiodata.sumberPenghasilan,
+        sumberPenghasilanLainnya: respondentBiodata.sumberPenghasilanLainnya,
+        jurusanSma: respondentBiodata.jurusanSma,
       })
       .from(users)
       .leftJoin(respondentProfiles, eq(users.id, respondentProfiles.userId))
+      .leftJoin(respondentBiodata, eq(users.id, respondentBiodata.userId))
       .where(eq(users.id, userId))
       .limit(1);
 
@@ -62,11 +73,31 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const isCompleted = Boolean(row.isCompleted);
+    const hasBiodata = Boolean(row.biodataId);
+    const hasProfile = Boolean(row.isProfileCompleted);
+    const isCompleted = hasBiodata && hasProfile;
+
+    const biodata = hasBiodata
+      ? {
+          jenisKelamin: row.jenisKelamin,
+          usia: row.usia,
+          programStudi: row.programStudi,
+          semester: row.semester,
+          pernahInvestasiSaham: row.pernahInvestasiSaham,
+          pernahPelatihanInvestasi: row.pernahPelatihanInvestasi,
+          sumberPenghasilan: row.sumberPenghasilan,
+          sumberPenghasilanLainnya: row.sumberPenghasilanLainnya,
+          jurusanSma: row.jurusanSma,
+        }
+      : null;
+
     return NextResponse.json(
       {
         success: true,
         isCompleted,
+        hasBiodata,
+        hasProfile,
+        biodata,
         completedAt: isCompleted ? row.completedAt : null,
       },
       {

@@ -131,30 +131,65 @@ export interface CategorizedProfileResult {
   userId: number;
   laRawScore: number;
   laAvgScore: number;
+  laRank: number; // 1 = skor tertinggi (dari atas ke bawah)
   laCategory: CategoryType;
   eiRawScore: number;
   eiAvgScore: number;
+  eiRank: number; // 1 = skor tertinggi (dari atas ke bawah)
   eiCategory: CategoryType;
   profileCode: string;
   profileLabel: string;
   profileGroup: ProfileGroup;
 }
 
+export interface InstrumentTercileCutoff {
+  instrument: "LA" | "EI";
+  totalRespondents: number;
+  countTinggi: number;
+  countSedang: number;
+  countRendah: number;
+  tinggiMinScore: number | null;
+  tinggiMaxScore: number | null;
+  sedangMinScore: number | null;
+  sedangMaxScore: number | null;
+  rendahMinScore: number | null;
+  rendahMaxScore: number | null;
+  tinggiMinAvg: number | null;
+  tinggiMaxAvg: number | null;
+  sedangMinAvg: number | null;
+  sedangMaxAvg: number | null;
+  rendahMinAvg: number | null;
+  rendahMaxAvg: number | null;
+}
+
 /**
- * Algoritma Tercile: Mengurutkan seluruh responden dan membagi populasi menjadi 3 kelompok sama rata:
- * - Sepertiga terbawah (Bottom 33.3%) = Rendah (R)
- * - Sepertiga tengah (Middle 33.3%) = Sedang (S)
- * - Sepertiga teratas (Top 33.3%) = Tinggi (T)
- *
- * Dijalankan secara independen untuk instrumen LA dan EI.
+ * Algoritma Population Terciles (Seimbang Berdasarkan Jumlah User):
+ * 1. Seluruh responden diurutkan berdasarkan nilai skor dari atas ke bawah (descending).
+ * 2. Dibagi menjadi 3 kelompok seimbang:
+ *    - Sepertiga teratas (Top 33.3%, peringkat 1 s.d N/3) = Tinggi (T)
+ *    - Sepertiga tengah (Middle 33.3%)                   = Sedang (S)
+ *    - Sepertiga terbawah (Bottom 33.3%)                 = Rendah (R)
+ * 3. Dijalankan secara independen untuk instrumen Loss Aversion (LA) dan Emotional Intelligence (EI).
+ *    Contoh: Jika N = 90 responden, maka otomatis terbagi 30 Tinggi, 30 Sedang, dan 30 Rendah.
+ *    Jika N bukan kelipatan 3 (misal N = 91 atau 92), sisa dialokasikan proporsional ke kuantil teratas.
  */
 export function computePopulationTerciles(
   respondents: RespondentScoreInput[]
 ): CategorizedProfileResult[] {
   if (respondents.length === 0) return [];
 
-  // Jika jumlah responden sedikit (< 3), gunakan klasifikasi standard cutoff
-  if (respondents.length < 3) {
+  const n = respondents.length;
+
+  // Jika responden < 3, gunakan standard cutoff sebagai fallback
+  if (n < 3) {
+    // Tetap urutkan untuk peringkat
+    const sortedLA = [...respondents].sort((a, b) => b.laRawScore - a.laRawScore || a.userId - b.userId);
+    const sortedEI = [...respondents].sort((a, b) => b.eiRawScore - a.eiRawScore || a.userId - b.userId);
+    const laRankMap = new Map<number, number>();
+    const eiRankMap = new Map<number, number>();
+    sortedLA.forEach((r, idx) => laRankMap.set(r.userId, idx + 1));
+    sortedEI.forEach((r, idx) => eiRankMap.set(r.userId, idx + 1));
+
     return respondents.map((r) => {
       const laItemCount = r.laItemCount || 15;
       const eiItemCount = r.eiItemCount || 15;
@@ -166,9 +201,11 @@ export function computePopulationTerciles(
         userId: r.userId,
         laRawScore: r.laRawScore,
         laAvgScore: Number((r.laRawScore / laItemCount).toFixed(2)),
+        laRank: laRankMap.get(r.userId) || 1,
         laCategory: laCat,
         eiRawScore: r.eiRawScore,
         eiAvgScore: Number((r.eiRawScore / eiItemCount).toFixed(2)),
+        eiRank: eiRankMap.get(r.userId) || 1,
         eiCategory: eiCat,
         profileCode: profile.code,
         profileLabel: profile.label,
@@ -177,33 +214,48 @@ export function computePopulationTerciles(
     });
   }
 
-  const n = respondents.length;
-  const t1Index = Math.floor(n / 3);
-  const t2Index = Math.floor((2 * n) / 3);
+  // Hitung ukuran kelompok seimbang untuk N responden
+  const remainder = n % 3;
+  const baseSize = Math.floor(n / 3);
+  const countT = baseSize + (remainder >= 1 ? 1 : 0);
+  const countS = baseSize + (remainder === 2 ? 1 : 0);
+  // Sisa kuota kelompok R (Rendah) adalah baseSize
 
-  // 1. Kategorisasi LA secara independen
-  const sortedByLA = [...respondents].sort((a, b) => a.laRawScore - b.laRawScore);
+  // 1. Kategorisasi LA secara independen (Diurutkan dari atas ke bawah / Nilai Tertinggi ke Terendah)
+  const sortedByLA = [...respondents].sort((a, b) => {
+    if (b.laRawScore !== a.laRawScore) return b.laRawScore - a.laRawScore;
+    return a.userId - b.userId; // deterministic tie-breaker
+  });
   const laCategoryMap = new Map<number, CategoryType>();
+  const laRankMap = new Map<number, number>();
+
   sortedByLA.forEach((r, idx) => {
-    if (idx < t1Index) {
-      laCategoryMap.set(r.userId, "R");
-    } else if (idx < t2Index) {
-      laCategoryMap.set(r.userId, "S");
+    laRankMap.set(r.userId, idx + 1);
+    if (idx < countT) {
+      laCategoryMap.set(r.userId, "T"); // Sepertiga teratas -> Tinggi
+    } else if (idx < countT + countS) {
+      laCategoryMap.set(r.userId, "S"); // Sepertiga tengah -> Sedang
     } else {
-      laCategoryMap.set(r.userId, "T");
+      laCategoryMap.set(r.userId, "R"); // Sepertiga terbawah -> Rendah
     }
   });
 
-  // 2. Kategorisasi EI secara independen
-  const sortedByEI = [...respondents].sort((a, b) => a.eiRawScore - b.eiRawScore);
+  // 2. Kategorisasi EI secara independen (Diurutkan dari atas ke bawah / Nilai Tertinggi ke Terendah)
+  const sortedByEI = [...respondents].sort((a, b) => {
+    if (b.eiRawScore !== a.eiRawScore) return b.eiRawScore - a.eiRawScore;
+    return a.userId - b.userId; // deterministic tie-breaker
+  });
   const eiCategoryMap = new Map<number, CategoryType>();
+  const eiRankMap = new Map<number, number>();
+
   sortedByEI.forEach((r, idx) => {
-    if (idx < t1Index) {
-      eiCategoryMap.set(r.userId, "R");
-    } else if (idx < t2Index) {
-      eiCategoryMap.set(r.userId, "S");
+    eiRankMap.set(r.userId, idx + 1);
+    if (idx < countT) {
+      eiCategoryMap.set(r.userId, "T"); // Sepertiga teratas -> Tinggi
+    } else if (idx < countT + countS) {
+      eiCategoryMap.set(r.userId, "S"); // Sepertiga tengah -> Sedang
     } else {
-      eiCategoryMap.set(r.userId, "T");
+      eiCategoryMap.set(r.userId, "R"); // Sepertiga terbawah -> Rendah
     }
   });
 
@@ -219,9 +271,11 @@ export function computePopulationTerciles(
       userId: r.userId,
       laRawScore: r.laRawScore,
       laAvgScore: Number((r.laRawScore / laItemCount).toFixed(2)),
+      laRank: laRankMap.get(r.userId) || 1,
       laCategory: laCat,
       eiRawScore: r.eiRawScore,
       eiAvgScore: Number((r.eiRawScore / eiItemCount).toFixed(2)),
+      eiRank: eiRankMap.get(r.userId) || 1,
       eiCategory: eiCat,
       profileCode: profile.code,
       profileLabel: profile.label,
@@ -229,3 +283,52 @@ export function computePopulationTerciles(
     };
   });
 }
+
+/**
+ * Menghitung batas skor empiris (min-max) tiap kategori Tercile untuk keperluan laporan & ekspor Excel.
+ */
+export function computeTercileCutoffs(
+  results: CategorizedProfileResult[],
+  instrument: "LA" | "EI"
+): InstrumentTercileCutoff {
+  const isLA = instrument === "LA";
+  const total = results.length;
+
+  const tinggi = results.filter((r) => (isLA ? r.laCategory : r.eiCategory) === "T");
+  const sedang = results.filter((r) => (isLA ? r.laCategory : r.eiCategory) === "S");
+  const rendah = results.filter((r) => (isLA ? r.laCategory : r.eiCategory) === "R");
+
+  const getScores = (list: CategorizedProfileResult[]) =>
+    list.map((r) => (isLA ? r.laRawScore : r.eiRawScore));
+  const getAvgs = (list: CategorizedProfileResult[]) =>
+    list.map((r) => (isLA ? r.laAvgScore : r.eiAvgScore));
+
+  const tScores = getScores(tinggi);
+  const sScores = getScores(sedang);
+  const rScores = getScores(rendah);
+
+  const tAvgs = getAvgs(tinggi);
+  const sAvgs = getAvgs(sedang);
+  const rAvgs = getAvgs(rendah);
+
+  return {
+    instrument,
+    totalRespondents: total,
+    countTinggi: tinggi.length,
+    countSedang: sedang.length,
+    countRendah: rendah.length,
+    tinggiMinScore: tScores.length > 0 ? Math.min(...tScores) : null,
+    tinggiMaxScore: tScores.length > 0 ? Math.max(...tScores) : null,
+    sedangMinScore: sScores.length > 0 ? Math.min(...sScores) : null,
+    sedangMaxScore: sScores.length > 0 ? Math.max(...sScores) : null,
+    rendahMinScore: rScores.length > 0 ? Math.min(...rScores) : null,
+    rendahMaxScore: rScores.length > 0 ? Math.max(...rScores) : null,
+    tinggiMinAvg: tAvgs.length > 0 ? Math.min(...tAvgs) : null,
+    tinggiMaxAvg: tAvgs.length > 0 ? Math.max(...tAvgs) : null,
+    sedangMinAvg: sAvgs.length > 0 ? Math.min(...sAvgs) : null,
+    sedangMaxAvg: sAvgs.length > 0 ? Math.max(...sAvgs) : null,
+    rendahMinAvg: rAvgs.length > 0 ? Math.min(...rAvgs) : null,
+    rendahMaxAvg: rAvgs.length > 0 ? Math.max(...rAvgs) : null,
+  };
+}
+

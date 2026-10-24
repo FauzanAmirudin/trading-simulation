@@ -16,7 +16,9 @@ import {
   Activity,
   Trophy,
   ClipboardList,
+  ClipboardCheck,
   Brain,
+  UserCheck,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -35,7 +37,9 @@ const adminNav: NavItem[] = [
   { label: "Dashboard", href: "/admin", icon: <Activity className="size-4" /> },
   { label: "Trading", href: "/admin/trading", icon: <TrendingUp className="size-4" /> },
   { label: "Kuesioner", href: "/admin/kuesioner", icon: <ClipboardList className="size-4" /> },
+  { label: "Biodata", href: "/admin/biodata", icon: <UserCheck className="size-4" /> },
   { label: "Profil Responden", href: "/admin/profil-responden", icon: <Brain className="size-4" /> },
+  { label: "Evaluasi", href: "/admin/evaluasi", icon: <ClipboardCheck className="size-4" /> },
   { label: "Resume", href: "/admin/resume", icon: <ScrollText className="size-4" /> },
   { label: "Hasil", href: "/admin/hasil", icon: <Trophy className="size-4" /> },
 ];

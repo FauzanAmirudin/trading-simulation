@@ -434,6 +434,19 @@ function TradingPageContent() {
       toast.success("Periode selesai!");
     };
     const onExperimentEnded = () => { toast.success("Eksperimen selesai! Terima kasih."); };
+    const onSimulationFinished = () => {
+      toast.info("Seluruh sesi perdagangan telah selesai! Mengalihkan ke evaluasi akhir...", {
+        duration: 4000,
+      });
+      setTimeout(() => {
+        router.push("/questionnaire/evaluation");
+      }, 800);
+    };
+    const onSessionCompleted = (data: { periodNumber: number; sessionIdx?: number; sessionNumber?: number }) => {
+      if (data.periodNumber === 3 && (data.sessionIdx === 3 || data.sessionNumber === 4)) {
+        onSimulationFinished();
+      }
+    };
     const onInterventionTriggered = (data: {
       roundNumber?: number;
       sessionNumber?: number;
@@ -573,6 +586,8 @@ function TradingPageContent() {
     socket.on("intervention-ended", onInterventionEnded);
     socket.on("period-ended", onPeriodEnded);
     socket.on("experiment-ended", onExperimentEnded);
+    socket.on("simulation-finished", onSimulationFinished);
+    socket.on("session-completed", onSessionCompleted);
     socket.on("intervention-triggered", onInterventionTriggered);
     socket.on("scheduler-state", onSchedulerState);
     socket.on("portfolio-data", onPortfolioInitial);
@@ -598,6 +613,8 @@ function TradingPageContent() {
       socket.off("intervention-ended", onInterventionEnded);
       socket.off("period-ended", onPeriodEnded);
       socket.off("experiment-ended", onExperimentEnded);
+      socket.off("simulation-finished", onSimulationFinished);
+      socket.off("session-completed", onSessionCompleted);
       socket.off("intervention-triggered", onInterventionTriggered);
       socket.off("scheduler-state", onSchedulerState);
       socket.off("portfolio-data", onPortfolioInitial);

@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { questions, questionnaireResponses, respondentProfiles, users } from "@/db/schema";
+import { questions, questionnaireResponses, respondentProfiles, respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { classifyByStandardCutoff, getProfileByCategories } from "@/lib/questionnaire-logic";
+import { classifyByStandardCutoff, getProfileByCategories, computePopulationTerciles } from "@/lib/questionnaire-logic";
 import { getSession } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
   try {
     const session = getSession(req);
     const body = await req.json();
-    const { userId, responses } = body;
+    const { userId, responses, biodata } = body;
 
     if (!userId || !Array.isArray(responses)) {
       return NextResponse.json(
@@ -35,6 +35,86 @@ export async function POST(req: NextRequest) {
     const userList = await db.select().from(users).where(eq(users.id, uid)).limit(1);
     if (userList.length === 0) {
       return NextResponse.json({ error: "User tidak ditemukan." }, { status: 404 });
+    }
+
+    // Validate Biodata (8 butir dari instrumen penelitian)
+    let validatedBiodata: any = null;
+    if (biodata && typeof biodata === "object") {
+      const {
+        jenisKelamin,
+        usia,
+        programStudi,
+        semester,
+        pernahInvestasiSaham,
+        pernahPelatihanInvestasi,
+        sumberPenghasilan,
+        sumberPenghasilanLainnya,
+        jurusanSma,
+      } = biodata;
+
+      if (!jenisKelamin || !["Laki-laki", "Perempuan"].includes(jenisKelamin)) {
+        return NextResponse.json({ error: "Pilihan Jenis Kelamin wajib diisi (Laki-laki atau Perempuan)." }, { status: 400 });
+      }
+
+      const parsedUsia = parseInt(usia, 10);
+      if (isNaN(parsedUsia) || parsedUsia < 10 || parsedUsia > 100) {
+        return NextResponse.json({ error: "Usia harus berupa angka usia yang valid (tahun)." }, { status: 400 });
+      }
+
+      if (!programStudi || typeof programStudi !== "string" || !programStudi.trim()) {
+        return NextResponse.json({ error: "Program Studi / Jurusan kuliah wajib diisi." }, { status: 400 });
+      }
+
+      const parsedSemester = parseInt(semester, 10);
+      if (isNaN(parsedSemester) || parsedSemester < 1 || parsedSemester > 20) {
+        return NextResponse.json({ error: "Semester saat ini harus berupa angka yang valid." }, { status: 400 });
+      }
+
+      if (!pernahInvestasiSaham || !["Ya", "Tidak"].includes(pernahInvestasiSaham)) {
+        return NextResponse.json({ error: "Pertanyaan riwayat investasi di pasar saham wajib dijawab." }, { status: 400 });
+      }
+
+      if (!pernahPelatihanInvestasi || !["Ya", "Tidak"].includes(pernahPelatihanInvestasi)) {
+        return NextResponse.json({ error: "Pertanyaan mata kuliah/pelatihan investasi wajib dijawab." }, { status: 400 });
+      }
+
+      if (!sumberPenghasilan || !["Orang tua", "Beasiswa", "Pekerjaan sampingan", "Lainnya"].includes(sumberPenghasilan)) {
+        return NextResponse.json({ error: "Sumber penghasilan utama wajib dipilih." }, { status: 400 });
+      }
+
+      if (sumberPenghasilan === "Lainnya" && (!sumberPenghasilanLainnya || !sumberPenghasilanLainnya.trim())) {
+        return NextResponse.json({ error: "Harap sebutkan rincian sumber penghasilan lainnya." }, { status: 400 });
+      }
+
+      if (!jurusanSma || !["IPA", "IPS", "Bahasa/lain-lain"].includes(jurusanSma)) {
+        return NextResponse.json({ error: "Jurusan sewaktu SMA wajib dipilih." }, { status: 400 });
+      }
+
+      validatedBiodata = {
+        jenisKelamin,
+        usia: parsedUsia,
+        programStudi: programStudi.trim(),
+        semester: parsedSemester,
+        pernahInvestasiSaham,
+        pernahPelatihanInvestasi,
+        sumberPenghasilan,
+        sumberPenghasilanLainnya: sumberPenghasilan === "Lainnya" ? sumberPenghasilanLainnya.trim() : null,
+        jurusanSma,
+      };
+    } else {
+      // If biodata not in payload, check if already saved in DB
+      const existingBiodata = await db
+        .select()
+        .from(respondentBiodata)
+        .where(eq(respondentBiodata.userId, uid))
+        .limit(1);
+
+      if (existingBiodata.length === 0) {
+        return NextResponse.json(
+          { error: "Biodata responden wajib diisi terlebih dahulu sebelum mengirimkan jawaban." },
+          { status: 400 }
+        );
+      }
     }
 
     // Check if questionnaire already completed (Prevent Re-submission)
@@ -133,6 +213,32 @@ export async function POST(req: NextRequest) {
     // Save responses and profile atomically inside database transaction
     const now = new Date();
     await db.transaction(async (tx) => {
+      // 0. Upsert Biodata Responden jika disertakan
+      if (validatedBiodata) {
+        const existingBio = await tx
+          .select()
+          .from(respondentBiodata)
+          .where(eq(respondentBiodata.userId, uid))
+          .limit(1);
+
+        if (existingBio.length === 0) {
+          await tx.insert(respondentBiodata).values({
+            userId: uid,
+            ...validatedBiodata,
+            createdAt: now,
+            updatedAt: now,
+          });
+        } else {
+          await tx
+            .update(respondentBiodata)
+            .set({
+              ...validatedBiodata,
+              updatedAt: now,
+            })
+            .where(eq(respondentBiodata.userId, uid));
+        }
+      }
+
       // 1. Delete previous responses if any
       await tx.delete(questionnaireResponses).where(eq(questionnaireResponses.userId, uid));
 
@@ -145,7 +251,7 @@ export async function POST(req: NextRequest) {
       }));
       await tx.insert(questionnaireResponses).values(rawInserts);
 
-      // 3. Upsert into respondent_profiles
+      // 3. Upsert into respondent_profiles for this user
       if (existingProfile.length === 0) {
         await tx.insert(respondentProfiles).values({
           userId: uid,
@@ -179,6 +285,39 @@ export async function POST(req: NextRequest) {
             updatedAt: now,
           })
           .where(eq(respondentProfiles.userId, uid));
+      }
+
+      // 4. Kalkulasi Ulang Population Terciles Otomatis untuk seluruh responden yang selesai
+      // Mengurutkan dari atas ke bawah dan membagi secara seimbang (33.3% per kelompok)
+      const allCompletedProfiles = await tx
+        .select()
+        .from(respondentProfiles)
+        .where(eq(respondentProfiles.isCompleted, true));
+
+      const inputs = allCompletedProfiles.map((p) => ({
+        userId: p.userId,
+        laRawScore: p.userId === uid ? laRaw : p.laRawScore,
+        eiRawScore: p.userId === uid ? eiRaw : p.eiRawScore,
+        laItemCount: 15,
+        eiItemCount: 15,
+      }));
+
+      const tercileResults = computePopulationTerciles(inputs);
+
+      for (const res of tercileResults) {
+        await tx
+          .update(respondentProfiles)
+          .set({
+            laCategory: res.laCategory,
+            laAvgScore: res.laAvgScore.toString(),
+            eiCategory: res.eiCategory,
+            eiAvgScore: res.eiAvgScore.toString(),
+            profileCode: res.profileCode,
+            profileLabel: res.profileLabel,
+            profileGroup: res.profileGroup,
+            updatedAt: now,
+          })
+          .where(eq(respondentProfiles.userId, res.userId));
       }
     });
 

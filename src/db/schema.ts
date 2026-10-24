@@ -206,3 +206,47 @@ export const respondentProfiles = pgTable("respondent_profiles", {
   userProfileIdx: index("respondent_profiles_user_idx").on(table.userId),
   profileGroupIdx: index("respondent_profiles_group_idx").on(table.profileGroup),
 }));
+
+// === RESPONDENT BIODATA — Demographics data collected upon first login ===
+export const respondentBiodata = pgTable("respondent_biodata", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull().unique(),
+  jenisKelamin: varchar("jenis_kelamin", { length: 20 }).notNull(), // 'Laki-laki' | 'Perempuan'
+  usia: integer("usia").notNull(),
+  programStudi: varchar("program_studi", { length: 255 }).notNull(),
+  semester: integer("semester").notNull(),
+  pernahInvestasiSaham: varchar("pernah_investasi_saham", { length: 10 }).notNull(), // 'Ya' | 'Tidak'
+  pernahPelatihanInvestasi: varchar("pernah_pelatihan_investasi", { length: 10 }).notNull(), // 'Ya' | 'Tidak'
+  sumberPenghasilan: varchar("sumber_penghasilan", { length: 50 }).notNull(), // 'Orang tua' | 'Beasiswa' | 'Pekerjaan sampingan' | 'Lainnya'
+  sumberPenghasilanLainnya: varchar("sumber_penghasilan_lainnya", { length: 255 }),
+  jurusanSma: varchar("jurusan_sma", { length: 50 }).notNull(), // 'IPA' | 'IPS' | 'Bahasa/lain-lain'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  userBiodataIdx: uniqueIndex("respondent_biodata_user_idx").on(table.userId),
+}));
+
+// === SIMULATION EVALUATION — 10 questions at the very end of trading simulation (Period 3 Session 4) ===
+export const simulationEvaluations = pgTable("simulation_evaluations", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull().unique(),
+  q1: integer("q1").notNull(),
+  q2: integer("q2").notNull(),
+  q3: integer("q3").notNull(),
+  q4: integer("q4").notNull(),
+  q5: integer("q5").notNull(),
+  q6: integer("q6").notNull(),
+  q7: integer("q7").notNull(),
+  q8: integer("q8").notNull(),
+  q9: integer("q9").notNull(),
+  q10: integer("q10").notNull(),
+  answers: jsonb("answers").notNull(), // detailed array/map: { [orderNumber]: { questionText, score, label } }
+  isCompleted: boolean("is_completed").default(true).notNull(),
+  completedAt: timestamp("completed_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  userEvaluationIdx: uniqueIndex("simulation_evaluations_user_idx").on(table.userId),
+}));
+
+

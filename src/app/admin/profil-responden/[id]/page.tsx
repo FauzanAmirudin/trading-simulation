@@ -32,9 +32,15 @@ import {
   Award,
   ChevronUp,
   X,
+  DownloadCloud,
+  ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  EVALUATION_QUESTIONS,
+  getEvaluationOptionLabel,
+} from "@/lib/evaluation-questions";
 
 type QuestionResponse = {
   id: number | null;
@@ -50,11 +56,42 @@ type QuestionResponse = {
   createdAt: string | null;
 };
 
+type RespondentBiodata = {
+  jenisKelamin: string;
+  usia: number;
+  programStudi: string;
+  semester: number;
+  pernahInvestasiSaham: string;
+  pernahPelatihanInvestasi: string;
+  sumberPenghasilan: string;
+  sumberPenghasilanLainnya: string | null;
+  jurusanSma: string;
+  createdAt: string | null;
+};
+
+type RespondentEvaluation = {
+  isCompleted: boolean;
+  completedAt: string | null;
+  answers: any;
+  q1: number;
+  q2: number;
+  q3: number;
+  q4: number;
+  q5: number;
+  q6: number;
+  q7: number;
+  q8: number;
+  q9: number;
+  q10: number;
+};
+
 type RespondentDetail = {
   userId: number;
   nama: string;
   role: string;
   isCompleted: boolean;
+  biodata?: RespondentBiodata | null;
+  evaluation?: RespondentEvaluation | null;
   laRawScore: number | null;
   laAvgScore: number | null;
   laCategory: "T" | "S" | "R" | null;
@@ -68,6 +105,9 @@ type RespondentDetail = {
   profileDescription: string | null;
   investmentImplications: string | null;
   completedAt: string | null;
+  laRank?: number | null;
+  eiRank?: number | null;
+  totalCompletedUsers?: number | null;
 };
 
 type ScoreStats = {
@@ -112,6 +152,64 @@ export default function RespondentProfileDetailPage({
   const [activeTab, setActiveTab] = useState<"ALL" | "LA" | "EI">("ALL");
   const [scoreFilter, setScoreFilter] = useState<number | "ALL">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportingEval, setExportingEval] = useState(false);
+
+  const handleExportEvaluation = async () => {
+    if (!respondent) return;
+    setExportingEval(true);
+    toast.info(`Menyiapkan berkas evaluasi untuk ${respondent.nama}...`, { id: "export-user-eval" });
+    try {
+      const res = await fetch(`/api/admin/export-evaluation?userId=${respondent.userId}`);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Gagal mengekspor data");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = respondent.nama.replace(/[^a-zA-Z0-9_-]/g, "_");
+      a.download = `Evaluasi_Responden_${respondent.userId}_${safeName}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Berhasil mengunduh berkas evaluasi!", { id: "export-user-eval" });
+    } catch (err: any) {
+      toast.error(err.message || "Gagal mengekspor data", { id: "export-user-eval" });
+    } finally {
+      setExportingEval(false);
+    }
+  };
+
+  const handleExportSingle = async () => {
+    if (!respondent) return;
+    setExporting(true);
+    toast.info(`Menyiapkan berkas Excel untuk ${respondent.nama}...`, { id: "export-user-toast" });
+    try {
+      const res = await fetch(`/api/admin/export-profiles?userId=${respondent.userId}`);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || "Gagal mengekspor data");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = respondent.nama.replace(/[^a-zA-Z0-9_-]/g, "_");
+      a.download = `Profil_Responden_${respondent.userId}_${safeName}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Berhasil mengunduh berkas Excel responden!", { id: "export-user-toast" });
+    } catch (err: any) {
+      toast.error(err.message || "Gagal mengekspor data", { id: "export-user-toast" });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -283,8 +381,24 @@ export default function RespondentProfileDetailPage({
           <Button
             variant="outline"
             size="sm"
+            onClick={handleExportSingle}
+            disabled={exporting}
+            className="h-9 px-2.5 sm:px-3 text-xs font-bold rounded-xl gap-1.5 border-border hover:bg-muted active:scale-95 touch-manipulation print:hidden cursor-pointer"
+            title="Unduh Excel Responden Ini"
+          >
+            {exporting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <DownloadCloud className="size-3.5 text-primary" />
+            )}
+            <span className="hidden md:inline">Ekspor Excel</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => window.print()}
-            className="h-9 px-2.5 sm:px-3 text-xs font-bold rounded-xl gap-1.5 border-border hover:bg-muted active:scale-95 touch-manipulation print:hidden"
+            className="h-9 px-2.5 sm:px-3 text-xs font-bold rounded-xl gap-1.5 border-border hover:bg-muted active:scale-95 touch-manipulation print:hidden cursor-pointer"
             title="Cetak Lembar Jawaban"
           >
             <Printer className="size-3.5" />
@@ -384,6 +498,11 @@ export default function RespondentProfileDetailPage({
                 style={{ width: `${Math.min(100, ((respondent.laRawScore || 0) / 75) * 100)}%` }}
               />
             </div>
+            {respondent.laRank && (
+              <div className="text-[9px] sm:text-[10px] text-teal-700 dark:text-teal-300 font-semibold pt-0.5">
+                Peringkat #{respondent.laRank} {respondent.totalCompletedUsers ? `dari ${respondent.totalCompletedUsers} responden` : ""}
+              </div>
+            )}
           </div>
 
           {/* Card 2: Emotional Intelligence (EI) */}
@@ -418,6 +537,11 @@ export default function RespondentProfileDetailPage({
                 style={{ width: `${Math.min(100, ((respondent.eiRawScore || 0) / 75) * 100)}%` }}
               />
             </div>
+            {respondent.eiRank && (
+              <div className="text-[9px] sm:text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold pt-0.5">
+                Peringkat #{respondent.eiRank} {respondent.totalCompletedUsers ? `dari ${respondent.totalCompletedUsers} responden` : ""}
+              </div>
+            )}
           </div>
         </div>
 
@@ -431,6 +555,240 @@ export default function RespondentProfileDetailPage({
             {respondent.profileDescription || "Responden belum menyelesaikan pengisian kuesioner secara lengkap."}
           </p>
         </div>
+      </div>
+
+      {/* ── 2.5 Data Demografi & Biodata Responden (8 Pertanyaan) ── */}
+      <div className="rounded-2xl sm:rounded-3xl border border-border/80 bg-card p-3 sm:p-5 shadow-xs space-y-3">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <User className="size-4" />
+            </div>
+            <div>
+              <h2 className="text-xs sm:text-sm font-bold text-foreground">
+                Data Demografi & Biodata Responden
+              </h2>
+              <p className="text-[10px] text-muted-foreground">
+                8 Butir Instrumen Profil Awal Responden
+              </p>
+            </div>
+          </div>
+          {respondent.biodata ? (
+            <span className="inline-flex items-center gap-1 text-[9.5px] sm:text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full shrink-0">
+              <CheckCircle2 className="size-3" /> Biodata Lengkap
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[9.5px] sm:text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full shrink-0">
+              <Clock className="size-3" /> Belum Mengisi Biodata
+            </span>
+          )}
+        </div>
+
+        {respondent.biodata ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                1. Jenis Kelamin
+              </span>
+              <span className="text-xs sm:text-sm font-bold text-foreground block">
+                {respondent.biodata.jenisKelamin}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                2. Usia
+              </span>
+              <span className="text-xs sm:text-sm font-bold text-foreground block">
+                {respondent.biodata.usia} Tahun
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                3. Program Studi / Jurusan
+              </span>
+              <span
+                className="text-xs sm:text-sm font-bold text-foreground block truncate"
+                title={respondent.biodata.programStudi}
+              >
+                {respondent.biodata.programStudi}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                4. Semester
+              </span>
+              <span className="text-xs sm:text-sm font-bold text-foreground block">
+                Semester {respondent.biodata.semester}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                5. Pernah Investasi Saham
+              </span>
+              <span
+                className={cn(
+                  "text-[11px] sm:text-xs font-bold inline-flex items-center px-2 py-0.5 rounded-md mt-0.5",
+                  respondent.biodata.pernahInvestasiSaham === "Ya"
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border border-zinc-500/20"
+                )}
+              >
+                {respondent.biodata.pernahInvestasiSaham}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                6. Pelatihan Keuangan
+              </span>
+              <span
+                className={cn(
+                  "text-[11px] sm:text-xs font-bold inline-flex items-center px-2 py-0.5 rounded-md mt-0.5",
+                  respondent.biodata.pernahPelatihanInvestasi === "Ya"
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border border-zinc-500/20"
+                )}
+              >
+                {respondent.biodata.pernahPelatihanInvestasi}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                7. Sumber Penghasilan
+              </span>
+              <span
+                className="text-xs sm:text-sm font-bold text-foreground block truncate"
+                title={
+                  respondent.biodata.sumberPenghasilan === "Lainnya"
+                    ? `Lainnya: ${respondent.biodata.sumberPenghasilanLainnya || ""}`
+                    : respondent.biodata.sumberPenghasilan
+                }
+              >
+                {respondent.biodata.sumberPenghasilan === "Lainnya" &&
+                respondent.biodata.sumberPenghasilanLainnya
+                  ? `Lainnya (${respondent.biodata.sumberPenghasilanLainnya})`
+                  : respondent.biodata.sumberPenghasilan}
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-0.5">
+              <span className="text-[9.5px] sm:text-[10px] font-semibold text-muted-foreground uppercase block">
+                8. Jurusan SMA
+              </span>
+              <span className="text-xs sm:text-sm font-bold text-foreground block">
+                {respondent.biodata.jurusanSma}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic py-1">
+            Responden belum melengkapi 8 pertanyaan biodata pada tahap awal kuesioner.
+          </p>
+        )}
+      </div>
+
+      {/* ── 2.6 Evaluasi Akhir Simulasi Perdagangan (10 Pertanyaan Pasca Sesi 4) ── */}
+      <div className="rounded-2xl sm:rounded-3xl border border-border/80 bg-card p-3 sm:p-5 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
+              <ClipboardCheck className="size-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs sm:text-sm font-bold text-foreground">
+                  Evaluasi Akhir Simulasi Perdagangan
+                </h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
+                  Periode 3 Sesi 4
+                </span>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                10 butir pertanyaan evaluasi pasca simulasi perdagangan saham
+              </p>
+            </div>
+          </div>
+
+          {respondent.evaluation?.isCompleted && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportEvaluation}
+              disabled={exportingEval}
+              className="h-7 px-2.5 rounded-xl text-[11px] font-bold text-teal-600 dark:text-teal-400 border-teal-500/20 hover:bg-teal-500/10 gap-1 self-start sm:self-center"
+            >
+              {exportingEval ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <DownloadCloud className="size-3" />
+              )}
+              <span>Ekspor Evaluasi (Excel)</span>
+            </Button>
+          )}
+        </div>
+
+        {respondent.evaluation?.isCompleted ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="size-3.5" />
+                <span>Evaluasi Lengkap (10/10)</span>
+              </span>
+              {respondent.evaluation.completedAt && (
+                <span className="font-mono text-[11px]">
+                  Submit: {new Date(respondent.evaluation.completedAt).toLocaleString("id-ID")} WIB
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {EVALUATION_QUESTIONS.map((q) => {
+                const score = (respondent.evaluation as any)?.[`q${q.orderNumber}`] || 0;
+                const label = getEvaluationOptionLabel(score);
+
+                return (
+                  <div
+                    key={q.id}
+                    className="p-2.5 rounded-xl sm:rounded-2xl bg-muted/40 border border-border/60 space-y-1 text-xs"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="size-4.5 rounded-md bg-card border border-border flex items-center justify-center font-mono font-bold text-[9.5px] text-foreground shrink-0 mt-0.5">
+                        {q.orderNumber}
+                      </span>
+                      <p className="text-[11px] font-medium text-foreground line-clamp-2">
+                        {q.questionText}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between pt-0.5 text-[10px]">
+                      <span className="text-muted-foreground">Tanggapan:</span>
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded-md font-bold border",
+                          score >= 4
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                            : score <= 2
+                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                            : "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                        )}
+                      >
+                        {label} ({score}/5)
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic py-1">
+            Responden belum menyelesaikan 10 pertanyaan evaluasi akhir simulasi perdagangan.
+          </p>
+        )}
       </div>
 
       {/* ── 3. Filters, Search & Likert Score Frequency Bar ── */}

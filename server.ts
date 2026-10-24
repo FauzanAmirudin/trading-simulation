@@ -804,6 +804,10 @@ async function startSingleSession(
       await setPeriodState(periodNumber, "idle");
       io.emit("session-completed", { periodNumber, sessionIdx });
       io.emit("period-ended", { periodNumber });
+      if (periodNumber === 3 && sessionIdx === 3) {
+        console.log(`[Scheduler] SIMULATION FULLY FINISHED! Emitting simulation-finished...`);
+        io.emit("simulation-finished", { periodNumber: 3, sessionNumber: 4 });
+      }
     } else {
       console.log(`[Scheduler] ===== PERIOD ${periodNumber} SESSION ${sessionIdx} ABORTED =====`);
       await cleanupActiveRound();

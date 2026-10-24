@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getSocket } from "@/lib/socket";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
@@ -225,6 +226,21 @@ export default function DashboardPage() {
         updateBalance?.(b);
       }
     };
+    const onSimulationFinished = () => {
+      toast.info("Seluruh sesi perdagangan telah selesai! Mengalihkan ke evaluasi akhir...", {
+        duration: 4000,
+      });
+      setTimeout(() => {
+        router.push("/questionnaire/evaluation");
+      }, 800);
+    };
+
+    const onSessionCompleted = (data: { periodNumber: number; sessionIdx?: number; sessionNumber?: number }) => {
+      if (data.periodNumber === 3 && (data.sessionIdx === 3 || data.sessionNumber === 4)) {
+        onSimulationFinished();
+      }
+    };
+
     const onSessionHistoryData = (data: any[]) => {
       setSessionHistory(data);
     };
@@ -333,6 +349,8 @@ export default function DashboardPage() {
     socket.on("portfolio-update", onPortfolioUpdate);
     socket.on("session-history-data", onSessionHistoryData);
     socket.on("trade-executed", onTradeExecuted);
+    socket.on("simulation-finished", onSimulationFinished);
+    socket.on("session-completed", onSessionCompleted);
     socket.on("experiment-reset", onExperimentReset);
     socket.on("period-aborted", onPeriodAborted);
     socket.on("portfolio-data", onPortfolioData);
@@ -356,6 +374,8 @@ export default function DashboardPage() {
       socket.off("portfolio-update", onPortfolioUpdate);
       socket.off("session-history-data", onSessionHistoryData);
       socket.off("trade-executed", onTradeExecuted);
+      socket.off("simulation-finished", onSimulationFinished);
+      socket.off("session-completed", onSessionCompleted);
       socket.off("experiment-reset", onExperimentReset);
       socket.off("period-aborted", onPeriodAborted);
       socket.off("portfolio-data", onPortfolioData);

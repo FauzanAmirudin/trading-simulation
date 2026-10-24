@@ -13,7 +13,9 @@ import {
   Moon,
   Sun,
   ClipboardList,
+  ClipboardCheck,
   Brain,
+  UserCheck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
@@ -162,6 +164,34 @@ export default function MobileBottomNav({ role }: MobileBottomNavProps = {}) {
                     <div className="flex items-center gap-3">
                       <Brain className="size-4" />
                       <span>Hasil Profil Responden</span>
+                    </div>
+                    <span className="text-xs font-mono font-bold">›</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowProfileSheet(false);
+                      router.push("/admin/biodata");
+                    }}
+                    className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 text-sm font-semibold transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <UserCheck className="size-4" />
+                      <span>Biodata & Demografi Responden</span>
+                    </div>
+                    <span className="text-xs font-mono font-bold">›</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowProfileSheet(false);
+                      router.push("/admin/evaluasi");
+                    }}
+                    className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 text-sm font-semibold transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <ClipboardCheck className="size-4" />
+                      <span>Evaluasi Akhir Simulasi</span>
                     </div>
                     <span className="text-xs font-mono font-bold">›</span>
                   </button>

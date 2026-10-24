@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { getSocket } from "@/lib/socket";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function QuestionnaireGuard({
   children,
@@ -14,7 +16,6 @@ export default function QuestionnaireGuard({
   const router = useRouter();
   const pathname = usePathname();
 
-  // Optimistic initial evaluation to eliminate delay when returning to dashboard
   const [checking, setChecking] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     try {
@@ -22,8 +23,6 @@ export default function QuestionnaireGuard({
       if (stored) {
         const u = JSON.parse(stored);
         if (u?.role === "admin") return false;
-        const cachedQs = sessionStorage.getItem(`simulasi_qs_done_${u?.id}`);
-        if (cachedQs === "true") return false;
       }
     } catch {
       // ignore
@@ -38,8 +37,6 @@ export default function QuestionnaireGuard({
       if (stored) {
         const u = JSON.parse(stored);
         if (u?.role === "admin") return true;
-        const cachedQs = sessionStorage.getItem(`simulasi_qs_done_${u?.id}`);
-        if (cachedQs === "true") return true;
       }
     } catch {
       // ignore
@@ -62,37 +59,15 @@ export default function QuestionnaireGuard({
       return;
     }
 
-    // Check fast session cache first
-    try {
-      const cached = sessionStorage.getItem(`simulasi_qs_done_${user.id}`);
-      if (cached === "true") {
-        setIsAllowed(true);
-        setChecking(false);
-        return;
-      }
-    } catch {
-      // ignore
-    }
-
     let isMounted = true;
 
     async function checkStatus() {
       try {
+        // 1. Check initial questionnaire (biodata + LA + EI)
         const res = await fetch(`/api/questionnaire/status?userId=${user?.id}`);
         const data = await res.json();
 
-        if (data.success && data.isCompleted) {
-          try {
-            sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
-          } catch {
-            // ignore
-          }
-          if (isMounted) {
-            setIsAllowed(true);
-            setChecking(false);
-          }
-        } else {
-          // If questionnaire is not completed, redirect to questionnaire page
+        if (!data.success || !data.isCompleted) {
           if (pathname !== "/questionnaire") {
             router.push("/questionnaire");
             return;
@@ -101,10 +76,27 @@ export default function QuestionnaireGuard({
             setIsAllowed(true);
             setChecking(false);
           }
+          return;
+        }
+
+        // 2. Check evaluation questionnaire status (Periode 3 Sesi 4 selesai)
+        const evalRes = await fetch(`/api/evaluation/status?userId=${user?.id}`);
+        const evalData = await evalRes.json();
+
+        if (evalData.success && evalData.isSimulationEnded && !evalData.isCompleted) {
+          // Simulation ended but respondent hasn't filled evaluation: FORCE TO EVALUATION
+          if (pathname !== "/questionnaire/evaluation") {
+            router.push("/questionnaire/evaluation");
+            return;
+          }
+        }
+
+        if (isMounted) {
+          setIsAllowed(true);
+          setChecking(false);
         }
       } catch (err) {
         console.error("Error checking questionnaire guard status:", err);
-        // Fallback: allow to avoid infinite blocking in case of network glitch
         if (isMounted) {
           setIsAllowed(true);
           setChecking(false);
@@ -114,8 +106,40 @@ export default function QuestionnaireGuard({
 
     checkStatus();
 
+    // 3. Listen for real-time simulation completion (Periode 3 Sesi 4 ends)
+    const socket = getSocket();
+
+    const handleKickToEvaluation = () => {
+      toast.info(
+        "Sesi simulasi perdagangan saham telah selesai! Mengalihkan ke evaluasi akhir...",
+        { duration: 4000 }
+      );
+      if (pathname !== "/questionnaire/evaluation") {
+        router.push("/questionnaire/evaluation");
+      }
+    };
+
+    const handleSimulationFinished = () => {
+      handleKickToEvaluation();
+    };
+
+    const handleSessionCompleted = (data: {
+      periodNumber: number;
+      sessionIdx?: number;
+      sessionNumber?: number;
+    }) => {
+      if (data.periodNumber === 3 && (data.sessionIdx === 3 || data.sessionNumber === 4)) {
+        handleKickToEvaluation();
+      }
+    };
+
+    socket.on("simulation-finished", handleSimulationFinished);
+    socket.on("session-completed", handleSessionCompleted);
+
     return () => {
       isMounted = false;
+      socket.off("simulation-finished", handleSimulationFinished);
+      socket.off("session-completed", handleSessionCompleted);
     };
   }, [hydrated, user, pathname, router]);
 
@@ -136,4 +160,3 @@ export default function QuestionnaireGuard({
 
   return <>{children}</>;
 }
-

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { users, respondentProfiles } from "@/db/schema";
+import { users, respondentProfiles, respondentBiodata } from "@/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
-import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
+import { PROFILE_MATRIX, ProfileGroup, computeTercileCutoffs } from "@/lib/questionnaire-logic";
 import { requireAdmin } from "@/lib/auth-server";
 
 export async function GET(req: NextRequest) {
@@ -15,10 +15,10 @@ export async function GET(req: NextRequest) {
     const groupFilter = searchParams.get("group")?.toUpperCase() || ""; // A-I
     const laFilter = searchParams.get("la")?.toUpperCase() || ""; // T/S/R
     const eiFilter = searchParams.get("ei")?.toUpperCase() || ""; // T/S/R
-    const sortBy = searchParams.get("sortBy") || "name"; // name, laScore, eiScore, completedAt
+    const sortBy = searchParams.get("sortBy") || "name"; // name, laScore, eiScore, laRank, eiRank, completedAt, group
 
-    // Fetch all respondents and all profiles in parallel
-    const [allRespondents, allProfiles] = await Promise.all([
+    // Fetch all respondents, profiles, and biodata in parallel
+    const [allRespondents, allProfiles, allBiodata] = await Promise.all([
       db
         .select({
           id: users.id,
@@ -30,13 +30,31 @@ export async function GET(req: NextRequest) {
         .where(eq(users.role, "responden"))
         .orderBy(asc(users.id)),
       db.select().from(respondentProfiles),
+      db.select().from(respondentBiodata),
     ]);
     const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
+    const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));
 
+    // Compute Ranks (1 = skor tertinggi, diurutkan dari atas ke bawah) untuk responden yang selesai
+    const completedProfiles = allProfiles.filter((p) => p.isCompleted);
+    const sortedByLA = [...completedProfiles].sort((a, b) => {
+      if (b.laRawScore !== a.laRawScore) return b.laRawScore - a.laRawScore;
+      return a.userId - b.userId;
+    });
+    const laRankMap = new Map<number, number>();
+    sortedByLA.forEach((p, idx) => laRankMap.set(p.userId, idx + 1));
+
+    const sortedByEI = [...completedProfiles].sort((a, b) => {
+      if (b.eiRawScore !== a.eiRawScore) return b.eiRawScore - a.eiRawScore;
+      return a.userId - b.userId;
+    });
+    const eiRankMap = new Map<number, number>();
+    sortedByEI.forEach((p, idx) => eiRankMap.set(p.userId, idx + 1));
 
     // Combine data
     let combined = allRespondents.map((user) => {
       const p = profileMap.get(user.id);
+      const b = biodataMap.get(user.id);
       const isCompleted = Boolean(p?.isCompleted);
       const groupKey = (p?.profileGroup || "E") as ProfileGroup;
       const groupDef = PROFILE_MATRIX[groupKey] || PROFILE_MATRIX.E;
@@ -45,11 +63,27 @@ export async function GET(req: NextRequest) {
         userId: user.id,
         nama: user.nama,
         isCompleted,
+        hasBiodata: Boolean(b),
+        biodata: b
+          ? {
+              jenisKelamin: b.jenisKelamin,
+              usia: b.usia,
+              programStudi: b.programStudi,
+              semester: b.semester,
+              pernahInvestasiSaham: b.pernahInvestasiSaham,
+              pernahPelatihanInvestasi: b.pernahPelatihanInvestasi,
+              sumberPenghasilan: b.sumberPenghasilan,
+              sumberPenghasilanLainnya: b.sumberPenghasilanLainnya,
+              jurusanSma: b.jurusanSma,
+            }
+          : null,
         laRawScore: p ? p.laRawScore : null,
         laAvgScore: p ? Number(p.laAvgScore) : null,
+        laRank: isCompleted ? laRankMap.get(user.id) || null : null,
         laCategory: p ? p.laCategory : null,
         eiRawScore: p ? p.eiRawScore : null,
         eiAvgScore: p ? Number(p.eiAvgScore) : null,
+        eiRank: isCompleted ? eiRankMap.get(user.id) || null : null,
         eiCategory: p ? p.eiCategory : null,
         profileCode: p ? p.profileCode : null,
         profileLabel: p ? p.profileLabel : null,
@@ -91,6 +125,25 @@ export async function GET(req: NextRequest) {
     const laOverallAvg = completedCount > 0 ? Number((totalLaScore / completedCount).toFixed(2)) : 0;
     const eiOverallAvg = completedCount > 0 ? Number((totalEiScore / completedCount).toFixed(2)) : 0;
 
+    // Hitung ambang batas Tercile
+    const categorizedForStats = completedList.map((r) => ({
+      userId: r.userId,
+      laRawScore: r.laRawScore || 0,
+      laAvgScore: r.laAvgScore || 0,
+      laRank: r.laRank || 1,
+      laCategory: (r.laCategory || "S") as any,
+      eiRawScore: r.eiRawScore || 0,
+      eiAvgScore: r.eiAvgScore || 0,
+      eiRank: r.eiRank || 1,
+      eiCategory: (r.eiCategory || "S") as any,
+      profileCode: r.profileCode || "LASEIS",
+      profileLabel: r.profileLabel || "LA(S)+EI(S)",
+      profileGroup: (r.profileGroup || "E") as ProfileGroup,
+    }));
+
+    const laTercileCutoff = computeTercileCutoffs(categorizedForStats, "LA");
+    const eiTercileCutoff = computeTercileCutoffs(categorizedForStats, "EI");
+
     // Apply Filters
     if (search) {
       combined = combined.filter((r) => r.nama.toLowerCase().includes(search));
@@ -105,16 +158,25 @@ export async function GET(req: NextRequest) {
       combined = combined.filter((r) => r.eiCategory === eiFilter);
     }
 
-    // Apply Sorting
-    if (sortBy === "laScore") {
+    // Apply Sorting (Berdasarkan nilai per user dari atas ke bawah)
+    if (sortBy === "laScore" || sortBy === "laRank") {
       combined.sort((a, b) => (b.laRawScore || 0) - (a.laRawScore || 0));
-    } else if (sortBy === "eiScore") {
+    } else if (sortBy === "eiScore" || sortBy === "eiRank") {
       combined.sort((a, b) => (b.eiRawScore || 0) - (a.eiRawScore || 0));
+    } else if (sortBy === "group") {
+      combined.sort((a, b) => (a.profileGroup || "Z").localeCompare(b.profileGroup || "Z"));
     } else if (sortBy === "completedAt") {
       combined.sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""));
     } else {
-      // Default natural order by ID/Name
-      combined.sort((a, b) => a.userId - b.userId);
+      // Default natural order by respondent name (e.g. responden1 to responden90)
+      combined.sort((a, b) => {
+        const numA = parseInt(a.nama.replace(/\D/g, ""), 10);
+        const numB = parseInt(b.nama.replace(/\D/g, ""), 10);
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return numA - numB;
+        }
+        return a.userId - b.userId;
+      });
     }
 
     return NextResponse.json(
@@ -129,6 +191,8 @@ export async function GET(req: NextRequest) {
           groupDistribution,
           laCatDistribution,
           eiCatDistribution,
+          laTercileCutoff,
+          eiTercileCutoff,
         },
         respondents: combined,
       },
