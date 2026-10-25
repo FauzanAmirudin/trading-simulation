@@ -21,6 +21,7 @@ import {
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getSocket } from "@/lib/socket";
 import {
   EVALUATION_QUESTIONS,
   EVALUATION_LIKERT_OPTIONS,
@@ -34,6 +35,7 @@ export default function EvaluationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [completedAt, setCompletedAt] = useState<string | null>(null);
+  const [isSimulationEnded, setIsSimulationEnded] = useState(false);
 
   // Map question ID (1..10) to selected Likert value (1..5)
   const [answers, setAnswers] = useState<Record<number, number>>({});
@@ -52,20 +54,37 @@ export default function EvaluationPage() {
 
     async function checkStatus() {
       try {
-        const res = await fetch(`/api/evaluation/status?userId=${user?.id}`);
+        const res = await fetch(`/api/evaluation/status?userId=${user?.id}&_t=${Date.now()}`, {
+          cache: "no-store",
+          headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+        });
         const data = await res.json();
 
-        if (data.success && data.isCompleted) {
-          setIsCompleted(true);
-          setCompletedAt(data.completedAt);
-          if (data.evaluation) {
-            const loadedAnswers: Record<number, number> = {};
-            for (let i = 1; i <= 10; i++) {
-              if (data.evaluation[`q${i}`]) {
-                loadedAnswers[i] = data.evaluation[`q${i}`];
+        if (data.success) {
+          setIsSimulationEnded(Boolean(data.isSimulationEnded));
+
+          const localDone =
+            typeof window !== "undefined" &&
+            sessionStorage.getItem(`simulasi_eval_done_${user?.id}`) === "true";
+
+          if (data.isCompleted || localDone) {
+            setIsCompleted(true);
+            setCompletedAt(data.completedAt || new Date().toISOString());
+            if (data.evaluation) {
+              const loadedAnswers: Record<number, number> = {};
+              for (let i = 1; i <= 10; i++) {
+                if (data.evaluation[`q${i}`]) {
+                  loadedAnswers[i] = data.evaluation[`q${i}`];
+                }
               }
+              setAnswers(loadedAnswers);
             }
-            setAnswers(loadedAnswers);
+            try {
+              sessionStorage.setItem(`simulasi_eval_done_${user?.id}`, "true");
+            } catch {}
           }
         }
       } catch (err) {
@@ -76,6 +95,37 @@ export default function EvaluationPage() {
     }
 
     checkStatus();
+
+    // Realtime unlock listener when simulation ends (Periode 3 Sesi 4 Selesai)
+    const socket = getSocket();
+
+    const handleSimulationFinished = () => {
+      setIsSimulationEnded(true);
+      toast.success("Seluruh sesi perdagangan selesai! Kuesioner evaluasi kini terbuka.", {
+        id: "eval-unlocked",
+      });
+    };
+
+    const handleSessionCompleted = (data: {
+      periodNumber: number;
+      sessionIdx?: number;
+      sessionNumber?: number;
+    }) => {
+      if (data.periodNumber === 3 && (data.sessionIdx === 3 || data.sessionNumber === 4)) {
+        setIsSimulationEnded(true);
+        toast.success("Seluruh sesi perdagangan selesai! Kuesioner evaluasi kini terbuka.", {
+          id: "eval-unlocked",
+        });
+      }
+    };
+
+    socket.on("simulation-finished", handleSimulationFinished);
+    socket.on("session-completed", handleSessionCompleted);
+
+    return () => {
+      socket.off("simulation-finished", handleSimulationFinished);
+      socket.off("session-completed", handleSessionCompleted);
+    };
   }, [hydrated, user, router]);
 
   const handleSelectAnswer = (questionId: number, value: number) => {
@@ -276,12 +326,64 @@ export default function EvaluationPage() {
 
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Button
+                  onClick={() => router.push("/dashboard")}
+                  className="w-full sm:w-auto h-11 px-6 rounded-2xl font-bold text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                >
+                  <span>Kembali ke Dashboard</span>
+                  <ArrowRight className="size-4 ml-2" />
+                </Button>
+                <Button
                   onClick={logout}
                   variant="outline"
                   className="w-full sm:w-auto h-11 px-6 rounded-2xl font-bold text-xs"
                 >
                   <LogOut className="size-4 mr-2" />
                   <span>Selesai & Keluar</span>
+                </Button>
+              </div>
+            </Card>
+          </motion.div>
+        ) : !isSimulationEnded ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="space-y-6"
+          >
+            <Card className="rounded-3xl border border-amber-500/30 bg-amber-500/5 p-6 sm:p-10 text-center space-y-6 shadow-sm">
+              <div className="mx-auto size-16 sm:size-20 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shadow-md shadow-amber-500/10">
+                <Lock className="size-9 sm:size-11" />
+              </div>
+
+              <div className="space-y-2 max-w-md mx-auto">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-black tracking-wide uppercase border border-amber-500/20">
+                  <AlertCircle className="size-3.5" />
+                  <span>Simulasi Masih Berjalan</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-foreground">
+                  Kuesioner Evaluasi Belum Terbuka
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                  Kuesioner evaluasi ini baru dapat diakses setelah seluruh rangkaian perdagangan saham diselesaikan hingga <strong>Periode 3 Sesi 4 Ronde 2</strong>.
+                </p>
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium pt-1">
+                  Halaman ini akan terbuka secara otomatis begitu sesi akhir perdagangan selesai.
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <Button
+                  onClick={() => router.push("/dashboard/trading")}
+                  className="w-full sm:w-auto h-11 px-6 rounded-2xl font-bold text-xs bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                >
+                  <span>Masuk ke Ruang Trading</span>
+                  <ArrowRight className="size-4 ml-2" />
+                </Button>
+                <Button
+                  onClick={() => router.push("/dashboard")}
+                  variant="outline"
+                  className="w-full sm:w-auto h-11 px-6 rounded-2xl font-bold text-xs"
+                >
+                  <span>Ke Dashboard Utama</span>
                 </Button>
               </div>
             </Card>

@@ -10,6 +10,9 @@ import {
   getEvaluationOptionLabel,
 } from "@/lib/evaluation-questions";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
   const auth = requireAdmin(req);
   if (!auth.authorized) return auth.response;

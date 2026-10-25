@@ -227,6 +227,11 @@ export default function DashboardPage() {
       }
     };
     const onSimulationFinished = () => {
+      const alreadyDone =
+        typeof window !== "undefined" &&
+        sessionStorage.getItem(`simulasi_eval_done_${user?.id}`) === "true";
+      if (alreadyDone) return;
+
       toast.info("Seluruh sesi perdagangan telah selesai! Mengalihkan ke evaluasi akhir...", {
         duration: 4000,
       });

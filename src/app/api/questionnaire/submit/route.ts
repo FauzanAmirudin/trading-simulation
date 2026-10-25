@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { classifyByStandardCutoff, getProfileByCategories, computePopulationTerciles } from "@/lib/questionnaire-logic";
 import { getSession } from "@/lib/auth-server";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const session = getSession(req);

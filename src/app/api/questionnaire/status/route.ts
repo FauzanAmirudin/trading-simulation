@@ -4,6 +4,9 @@ import { respondentProfiles, respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth-server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
   try {
     const session = getSession(req);
@@ -67,7 +70,9 @@ export async function GET(req: NextRequest) {
         },
         {
           headers: {
-            "Cache-Control": "private, max-age=300, stale-while-revalidate=60",
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
           },
         }
       );
@@ -102,7 +107,9 @@ export async function GET(req: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "private, max-age=120, stale-while-revalidate=60",
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
         },
       }
     );

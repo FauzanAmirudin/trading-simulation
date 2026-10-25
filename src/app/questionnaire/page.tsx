@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { motion, AnimatePresence } from "framer-motion";
@@ -73,6 +73,7 @@ export default function QuestionnairePage() {
   const [laQuestions, setLaQuestions] = useState<Question[]>([]);
   const [eiQuestions, setEiQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<number, number>>({});
+  const [countdown, setCountdown] = useState<number>(4);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -90,7 +91,13 @@ export default function QuestionnairePage() {
     async function loadData() {
       try {
         const [statusRes, questionsRes] = await Promise.all([
-          fetch(`/api/questionnaire/status?userId=${user?.id}`),
+          fetch(`/api/questionnaire/status?userId=${user?.id}&_t=${Date.now()}`, {
+            cache: "no-store",
+            headers: {
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+          }),
           fetch("/api/questionnaire/questions"),
         ]);
 
@@ -102,7 +109,7 @@ export default function QuestionnairePage() {
           try {
             sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
           } catch {}
-          router.push("/dashboard/trading");
+          router.push("/dashboard");
           return;
         }
 
@@ -276,9 +283,26 @@ export default function QuestionnairePage() {
     }
   };
 
-  const handleEnterExperiment = () => {
-    router.push("/dashboard/trading");
-  };
+  const handleEnterExperiment = useCallback(() => {
+    try {
+      if (user?.id) {
+        sessionStorage.setItem(`simulasi_qs_done_${user.id}`, "true");
+      }
+    } catch {}
+    router.push("/dashboard");
+  }, [user, router]);
+
+  useEffect(() => {
+    if (currentStep !== 4) return;
+    if (countdown <= 0) {
+      handleEnterExperiment();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setCountdown((c) => c - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [currentStep, countdown, handleEnterExperiment]);
 
   if (!hydrated || loading) {
     return (
@@ -418,15 +442,29 @@ export default function QuestionnairePage() {
               </div>
 
               {/* CTA Button */}
-              <div className="pt-2 sm:pt-4 max-w-md mx-auto">
+              <div className="pt-2 sm:pt-4 max-w-md mx-auto space-y-2.5">
                 <Button
                   size="lg"
                   onClick={handleEnterExperiment}
                   className="w-full h-12 sm:h-13 px-6 sm:px-8 text-xs sm:text-sm font-bold bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl shadow-xl shadow-primary/25 gap-2 active:scale-95 transition-all touch-manipulation cursor-pointer"
                 >
-                  <span>Mulai Eksperimen Simulasi Investasi</span>
+                  <span>Masuk ke Dashboard Utama ({countdown}s)</span>
                   <ArrowRight className="size-4" />
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      if (user?.id) {
+                        sessionStorage.setItem(`simulasi_qs_done_${user.id}`, "true");
+                      }
+                    } catch {}
+                    router.push("/dashboard/trading");
+                  }}
+                  className="w-full text-[11px] text-muted-foreground hover:text-foreground text-center py-1 transition-colors underline-offset-2 hover:underline cursor-pointer"
+                >
+                  Atau langsung menuju Ruang Trading Saham &rarr;
+                </button>
               </div>
             </motion.div>
           </div>
