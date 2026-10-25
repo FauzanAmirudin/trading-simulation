@@ -88,7 +88,11 @@ export async function GET(req: NextRequest) {
         userId: u.id,
         nama: u.nama,
         isCompleted: Boolean(ev?.isCompleted),
-        completedAt: ev?.completedAt ? ev.completedAt.toISOString() : null,
+        completedAt: ev?.completedAt
+          ? (ev.completedAt instanceof Date
+              ? ev.completedAt.toISOString()
+              : new Date(ev.completedAt).toISOString())
+          : null,
         answers: ev
           ? {
               q1: { score: ev.q1, label: getEvaluationOptionLabel(ev.q1) },
