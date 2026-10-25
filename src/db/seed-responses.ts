@@ -6,6 +6,7 @@ import {
   questionnaireResponses,
   respondentProfiles,
   respondentBiodata,
+  simulationEvaluations,
 } from "./schema";
 import { eq, asc, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -19,6 +20,10 @@ import {
   PROFILE_MATRIX,
 } from "../lib/questionnaire-logic";
 import { seedQuestionnaires } from "./seed-questionnaire";
+import {
+  EVALUATION_QUESTIONS,
+  getEvaluationOptionLabel,
+} from "../lib/evaluation-questions";
 
 /**
  * Generate 15 Likert scores (1-5) strictly landing within target category:
@@ -495,6 +500,73 @@ export async function seedRespondents1To90() {
         `ON CONFLICT (user_id) DO UPDATE SET la_raw_score = EXCLUDED.la_raw_score, la_avg_score = EXCLUDED.la_avg_score, la_category = EXCLUDED.la_category, ei_raw_score = EXCLUDED.ei_raw_score, ei_avg_score = EXCLUDED.ei_avg_score, ei_category = EXCLUDED.ei_category, profile_code = EXCLUDED.profile_code, profile_label = EXCLUDED.profile_label, profile_group = EXCLUDED.profile_group, is_completed = true, completed_at = EXCLUDED.completed_at, updated_at = NOW();`
     );
 
+    // ── D. KUESIONER EVALUASI AKHIR SIMULASI (10 PERTANYAAN) ──
+    const evalScores: Record<number, number> = {};
+    const evalAnswersObj: Record<string, { orderNumber: number; questionText: string; score: number; label: string }> = {};
+
+    EVALUATION_QUESTIONS.forEach((q) => {
+      let score: number;
+      if (q.orderNumber === 10) {
+        score = [3, 4, 4, 5, 4, 5, 3, 5, 4, 5][(idx + q.orderNumber) % 10];
+      } else {
+        score = [4, 5, 5, 4, 5, 4, 4, 5, 5, 4][(idx + q.orderNumber) % 10];
+      }
+      evalScores[q.orderNumber] = score;
+      evalAnswersObj[String(q.orderNumber)] = {
+        orderNumber: q.orderNumber,
+        questionText: q.questionText,
+        score,
+        label: getEvaluationOptionLabel(score),
+      };
+    });
+
+    const evalCompletedAt = new Date(completedAt.getTime() + 1000 * 60 * 8); // 8 menit setelah simulasi
+
+    await db
+      .insert(simulationEvaluations)
+      .values({
+        userId: user.id,
+        q1: evalScores[1],
+        q2: evalScores[2],
+        q3: evalScores[3],
+        q4: evalScores[4],
+        q5: evalScores[5],
+        q6: evalScores[6],
+        q7: evalScores[7],
+        q8: evalScores[8],
+        q9: evalScores[9],
+        q10: evalScores[10],
+        answers: evalAnswersObj,
+        isCompleted: true,
+        completedAt: evalCompletedAt,
+      })
+      .onConflictDoUpdate({
+        target: simulationEvaluations.userId,
+        set: {
+          q1: evalScores[1],
+          q2: evalScores[2],
+          q3: evalScores[3],
+          q4: evalScores[4],
+          q5: evalScores[5],
+          q6: evalScores[6],
+          q7: evalScores[7],
+          q8: evalScores[8],
+          q9: evalScores[9],
+          q10: evalScores[10],
+          answers: evalAnswersObj,
+          isCompleted: true,
+          completedAt: evalCompletedAt,
+          updatedAt: new Date(),
+        },
+      });
+
+    const answersJsonEscaped = JSON.stringify(evalAnswersObj).replace(/'/g, "''");
+    sqlStatements.push(
+      `INSERT INTO simulation_evaluations (user_id, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, answers, is_completed, completed_at, created_at, updated_at) ` +
+        `VALUES (${user.id}, ${evalScores[1]}, ${evalScores[2]}, ${evalScores[3]}, ${evalScores[4]}, ${evalScores[5]}, ${evalScores[6]}, ${evalScores[7]}, ${evalScores[8]}, ${evalScores[9]}, ${evalScores[10]}, '${answersJsonEscaped}', true, '${evalCompletedAt.toISOString()}', NOW(), NOW()) ` +
+        `ON CONFLICT (user_id) DO UPDATE SET q1 = EXCLUDED.q1, q2 = EXCLUDED.q2, q3 = EXCLUDED.q3, q4 = EXCLUDED.q4, q5 = EXCLUDED.q5, q6 = EXCLUDED.q6, q7 = EXCLUDED.q7, q8 = EXCLUDED.q8, q9 = EXCLUDED.q9, q10 = EXCLUDED.q10, answers = EXCLUDED.answers, is_completed = true, completed_at = EXCLUDED.completed_at, updated_at = NOW();`
+    );
+
     processedCount++;
   }
 
@@ -507,6 +579,7 @@ export async function seedRespondents1To90() {
   console.log(`✓ 90 Data Biodata Responden tersimpan di 'respondent_biodata'`);
   console.log(`✓ 2.700 Jawaban Butir Kuesioner (15 LA + 15 EI x 90) tersimpan di 'questionnaire_responses'`);
   console.log(`✓ 90 Profil & Resume Psikologis (Kelompok A s.d I seimbang) tersimpan di 'respondent_profiles'`);
+  console.log(`✓ 90 Data Evaluasi Akhir Simulasi (10 Pertanyaan) tersimpan di 'simulation_evaluations'`);
   console.log(`✓ File SQL eksekusi langsung tersimpan di: drizzle/seed_respondents_1_to_90.sql`);
   console.log("======================================================================");
 }
