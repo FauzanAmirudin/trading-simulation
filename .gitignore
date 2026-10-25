@@ -120,6 +120,7 @@ logs/
 # 9. DATABASE DUMPS & LOCAL BACKUPS
 # ==============================================================================
 *.sql
+!drizzle/*.sql
 *.dump
 *.backup
 *.bak
