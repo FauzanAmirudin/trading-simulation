@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, respondentProfiles, respondentBiodata } from "@/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup, computeTercileCutoffs } from "@/lib/questionnaire-logic";
 import { requireAdmin } from "@/lib/auth-server";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const auth = requireAdmin(req);
   if (!auth.authorized) return auth.response;
 
   try {
+    await ensureQuestionnaireSchema();
+
     const { searchParams } = new URL(req.url);
     const search = (searchParams.get("search")?.toLowerCase().trim() || "").slice(0, 100);
     const groupFilter = searchParams.get("group")?.toUpperCase() || ""; // A-I
@@ -29,8 +34,8 @@ export async function GET(req: NextRequest) {
         .from(users)
         .where(eq(users.role, "responden"))
         .orderBy(asc(users.id)),
-      db.select().from(respondentProfiles),
-      db.select().from(respondentBiodata),
+      db.select().from(respondentProfiles).catch(() => []),
+      db.select().from(respondentBiodata).catch(() => []),
     ]);
     const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
     const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));
@@ -90,7 +95,7 @@ export async function GET(req: NextRequest) {
         profileGroup: p ? p.profileGroup : null,
         profileGroupName: p ? groupDef.name : null,
         profileDescription: p ? groupDef.description : null,
-        completedAt: p?.completedAt ? p.completedAt.toISOString() : null,
+        completedAt: p?.completedAt ? new Date(p.completedAt).toISOString() : null,
       };
     });
 

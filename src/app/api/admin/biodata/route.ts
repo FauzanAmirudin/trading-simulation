@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, respondentBiodata } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth-server";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   const auth = requireAdmin(req);
   if (!auth.authorized) return auth.response;
 
   try {
+    await ensureQuestionnaireSchema();
+
     // 1. Fetch all respondents and all biodata
     const [allRespondents, allBiodata] = await Promise.all([
       db
@@ -21,7 +26,7 @@ export async function GET(req: NextRequest) {
         .from(users)
         .where(eq(users.role, "responden"))
         .orderBy(asc(users.id)),
-      db.select().from(respondentBiodata),
+      db.select().from(respondentBiodata).catch(() => []),
     ]);
 
     const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));

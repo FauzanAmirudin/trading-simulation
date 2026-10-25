@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, respondentProfiles, questionnaireResponses, questions, respondentBiodata, simulationEvaluations } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
 import { requireAdmin } from "@/lib/auth-server";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(
   req: NextRequest,
@@ -13,6 +16,8 @@ export async function GET(
   if (!auth.authorized) return auth.response;
 
   try {
+    await ensureQuestionnaireSchema();
+
     const { id } = await params;
     const userId = parseInt(id, 10);
 
@@ -45,28 +50,34 @@ export async function GET(
       db
         .select()
         .from(respondentProfiles)
-        .where(eq(respondentProfiles.userId, userId)),
+        .where(eq(respondentProfiles.userId, userId))
+        .catch(() => []),
       db
         .select()
         .from(respondentBiodata)
-        .where(eq(respondentBiodata.userId, userId)),
+        .where(eq(respondentBiodata.userId, userId))
+        .catch(() => []),
       db
         .select()
         .from(questions)
-        .orderBy(asc(questions.instrument), asc(questions.orderNumber)),
+        .orderBy(asc(questions.instrument), asc(questions.orderNumber))
+        .catch(() => []),
       db
         .select()
         .from(questionnaireResponses)
-        .where(eq(questionnaireResponses.userId, userId)),
+        .where(eq(questionnaireResponses.userId, userId))
+        .catch(() => []),
       db
         .select({ id: users.id })
         .from(users)
         .where(eq(users.role, "responden"))
-        .orderBy(asc(users.id)),
+        .orderBy(asc(users.id))
+        .catch(() => []),
       db
         .select()
         .from(simulationEvaluations)
-        .where(eq(simulationEvaluations.userId, userId)),
+        .where(eq(simulationEvaluations.userId, userId))
+        .catch(() => []),
     ]);
     const userEval = evalRows[0] || null;
 

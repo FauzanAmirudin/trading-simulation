@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, simulationEvaluations } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth-server";
@@ -9,11 +9,16 @@ import {
   getEvaluationOptionLabel,
 } from "@/lib/evaluation-questions";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
   const auth = requireAdmin(req);
   if (!auth.authorized) return auth.response;
 
   try {
+    await ensureQuestionnaireSchema();
+
     const [allRespondents, allEvaluations] = await Promise.all([
       db
         .select({
@@ -25,7 +30,7 @@ export async function GET(req: NextRequest) {
         .from(users)
         .where(eq(users.role, "responden"))
         .orderBy(asc(users.id)),
-      db.select().from(simulationEvaluations),
+      db.select().from(simulationEvaluations).catch(() => []),
     ]);
 
     const evalMap = new Map(allEvaluations.map((e) => [e.userId, e]));
