@@ -69,25 +69,60 @@ export default function QuestionnaireGuard({
 
     async function checkStatus() {
       try {
+        if (!user?.id) {
+          if (isMounted) {
+            setIsAllowed(true);
+            setChecking(false);
+          }
+          return;
+        }
+
         // 1. Check initial questionnaire (biodata + LA + EI) with cache-busting
-        const res = await fetch(`/api/questionnaire/status?userId=${user?.id}&_t=${Date.now()}`, {
+        const res = await fetch(`/api/questionnaire/status?userId=${encodeURIComponent(user.id)}&_t=${Date.now()}`, {
           cache: "no-store",
           headers: {
             "Cache-Control": "no-cache",
             Pragma: "no-cache",
+            Accept: "application/json",
           },
         });
+
+        const isJson = res.headers.get("content-type")?.includes("application/json");
+
+        if (!res.ok || !isJson) {
+          console.warn(
+            `[QuestionnaireGuard] Status check returned HTTP ${res.status} (${res.headers.get("content-type") || "unknown"}). Handling gracefully.`
+          );
+
+          // If server returned non-200 or non-JSON (e.g. 404 or temporary error),
+          // verify if local session was already completed
+          const wasCompleted =
+            typeof window !== "undefined" &&
+            sessionStorage.getItem(`simulasi_qs_done_${user.id}`) === "true";
+
+          if (!wasCompleted && pathname !== "/questionnaire") {
+            router.push("/questionnaire");
+            return;
+          }
+
+          if (isMounted) {
+            setIsAllowed(true);
+            setChecking(false);
+          }
+          return;
+        }
+
         const data = await res.json();
 
         if (data.success && data.isCompleted) {
           try {
-            sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
+            sessionStorage.setItem(`simulasi_qs_done_${user.id}`, "true");
           } catch {}
         } else {
           // If server says not completed, verify if local session was just completed
           const wasRecentlyCompleted =
             typeof window !== "undefined" &&
-            sessionStorage.getItem(`simulasi_qs_done_${user?.id}`) === "true";
+            sessionStorage.getItem(`simulasi_qs_done_${user.id}`) === "true";
 
           if (!wasRecentlyCompleted) {
             if (pathname !== "/questionnaire") {
@@ -103,29 +138,35 @@ export default function QuestionnaireGuard({
         }
 
         // 2. Check evaluation questionnaire status (Periode 3 Sesi 4 selesai)
-        const evalRes = await fetch(`/api/evaluation/status?userId=${user?.id}&_t=${Date.now()}`, {
+        const evalRes = await fetch(`/api/evaluation/status?userId=${encodeURIComponent(user.id)}&_t=${Date.now()}`, {
           cache: "no-store",
           headers: {
             "Cache-Control": "no-cache",
             Pragma: "no-cache",
+            Accept: "application/json",
           },
         });
-        const evalData = await evalRes.json();
 
-        if (evalData.success && evalData.isCompleted) {
-          try {
-            sessionStorage.setItem(`simulasi_eval_done_${user?.id}`, "true");
-          } catch {}
-        } else {
-          const evalDoneLocally =
-            typeof window !== "undefined" &&
-            sessionStorage.getItem(`simulasi_eval_done_${user?.id}`) === "true";
+        const isEvalJson = evalRes.headers.get("content-type")?.includes("application/json");
 
-          if (evalData.success && evalData.isSimulationEnded && !evalData.isCompleted && !evalDoneLocally) {
-            // Simulation ended but respondent hasn't filled evaluation: FORCE TO EVALUATION
-            if (pathname !== "/questionnaire/evaluation") {
-              router.push("/questionnaire/evaluation");
-              return;
+        if (evalRes.ok && isEvalJson) {
+          const evalData = await evalRes.json();
+
+          if (evalData.success && evalData.isCompleted) {
+            try {
+              sessionStorage.setItem(`simulasi_eval_done_${user.id}`, "true");
+            } catch {}
+          } else {
+            const evalDoneLocally =
+              typeof window !== "undefined" &&
+              sessionStorage.getItem(`simulasi_eval_done_${user.id}`) === "true";
+
+            if (evalData.success && evalData.isSimulationEnded && !evalData.isCompleted && !evalDoneLocally) {
+              // Simulation ended but respondent hasn't filled evaluation: FORCE TO EVALUATION
+              if (pathname !== "/questionnaire/evaluation") {
+                router.push("/questionnaire/evaluation");
+                return;
+              }
             }
           }
         }

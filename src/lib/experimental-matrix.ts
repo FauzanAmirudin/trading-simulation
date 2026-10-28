@@ -27,7 +27,7 @@ export interface SessionGroupDef {
 }
 
 export interface PeriodDef {
-  periodNumber: 1 | 2 | 3;
+  periodNumber: 0 | 1 | 2 | 3;
   label: string;
   sessions: SessionGroupDef[];
 }
@@ -47,6 +47,32 @@ export const DURATIONS = {
 // FULL EXPERIMENTAL MATRIX
 // ============================================================
 export const PERIOD_MATRIX: PeriodDef[] = [
+
+  // ── PERIOD 0: Sesi Uji Coba (2 Sesi Sebelum Periode I) ────────
+  {
+    periodNumber: 0,
+    label: "Periode Uji Coba",
+    sessions: [
+      {
+        sessionNumber: 1,
+        label: "Sesi Uji Coba 1",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-1", "S-2", "S-3"] },
+        ],
+      },
+      {
+        sessionNumber: 2,
+        label: "Sesi Uji Coba 2",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["S-4", "S-5", "S-6"] },
+        ],
+      },
+    ],
+  },
 
   // ── PERIOD 1: S-1 to S-12, Live Trading ───────────────────────
   {
@@ -177,7 +203,7 @@ export const PERIOD_MATRIX: PeriodDef[] = [
 // HELPER FUNCTIONS
 // ============================================================
 
-export function getPeriodConfig(periodNumber: 1 | 2 | 3): PeriodDef {
+export function getPeriodConfig(periodNumber: 0 | 1 | 2 | 3): PeriodDef {
   const config = PERIOD_MATRIX.find(p => p.periodNumber === periodNumber);
   if (!config) throw new Error(`Period ${periodNumber} not found in matrix`);
   return config;

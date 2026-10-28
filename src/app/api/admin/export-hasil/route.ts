@@ -21,8 +21,9 @@ export async function GET(req: NextRequest) {
     const allStocks = await db.select().from(stocks);
     const stockMap = Object.fromEntries(allStocks.map(s => [s.id, s]));
 
-    // Fetch and filter valid rounds
-    const allRounds = await db.select().from(rounds);
+    // Fetch and filter valid rounds (kecualikan Periode 0 / Sesi Uji Coba dari laporan export Excel)
+    const allRoundsRaw = await db.select().from(rounds);
+    const allRounds = allRoundsRaw.filter(r => r.period >= 1);
     
     let validRounds = allRounds;
     if (roundIdsParam) {

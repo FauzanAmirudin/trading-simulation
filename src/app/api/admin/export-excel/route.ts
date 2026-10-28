@@ -59,8 +59,9 @@ export async function GET(req: NextRequest) {
     const allStocks = await db.select().from(stocks);
     const stockMap = Object.fromEntries(allStocks.map(s => [s.id, s]));
 
-    // Fetch all rounds for mapping
-    const allRounds = await db.select().from(rounds).orderBy(desc(rounds.id));
+    // Fetch all rounds for mapping (kecualikan Periode 0 / Sesi Uji Coba dari laporan export Excel)
+    const allRoundsRaw = await db.select().from(rounds).orderBy(desc(rounds.id));
+    const allRounds = allRoundsRaw.filter(r => r.period >= 1);
     const roundMap = Object.fromEntries(allRounds.map(r => [r.id, r]));
 
     // Determine valid rounds

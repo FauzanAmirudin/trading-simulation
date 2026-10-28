@@ -27,7 +27,7 @@ import { ResetDialog, ResetMode } from "./ResetDialog";
 type Stock = { id: number; kodeSaham: string; namaSaham: string; basePrice?: number };
 
 type ExperimentState = {
-  activePeriod: 1 | 2 | 3 | null;
+  activePeriod: 0 | 1 | 2 | 3 | null;
   activeSessionIdx: number | null;
   activeRoundIdx: number | null;
   currentPhase: PhaseType;
@@ -168,14 +168,15 @@ function PeriodSummaryCard({
   completedSessions,
 }: {
   period: PeriodDef;
-  activePeriod: 1 | 2 | 3 | null;
-  onStartSession: (period: 1 | 2 | 3, sessionIndex: number) => void;
-  onResetPeriod?: (period: 1 | 2 | 3) => void;
+  activePeriod: 0 | 1 | 2 | 3 | null;
+  onStartSession: (period: 0 | 1 | 2 | 3, sessionIndex: number) => void;
+  onResetPeriod?: (period: 0 | 1 | 2 | 3) => void;
   periodState?: string;
   completedSessions: number[];
 }) {
   const isActive = activePeriod === period.periodNumber;
   const isPaused = periodState === "paused";
+  const isTrial = period.periodNumber === 0;
   const totalRounds = period.sessions.reduce((a, s) => a + s.rounds.length, 0);
   const hasIntervention = period.sessions.some((s) => s.intervention !== "NONE");
   const safeCompletedSessions = Array.isArray(completedSessions)
@@ -188,14 +189,23 @@ function PeriodSummaryCard({
         "rounded-3xl border p-3.5 sm:p-5 transition-all space-y-3",
         isActive
           ? "border-primary/50 bg-primary/5 ring-1 ring-primary/20 shadow-md shadow-primary/5"
+          : isTrial
+          ? "border-amber-500/30 bg-amber-500/5 shadow-2xs hover:border-amber-500/50"
           : "border-border/80 bg-card shadow-2xs hover:border-border"
       )}
     >
       {/* Header Row */}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">
-            {period.label}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">
+              {period.label}
+            </span>
+            {isTrial && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                Latihan · Tidak Masuk Export Excel
+              </span>
+            )}
           </div>
           <div className="text-xs sm:text-sm font-black text-foreground mt-0.5">
             {period.sessions.length} Sesi · {totalRounds} Ronde
@@ -207,7 +217,7 @@ function PeriodSummaryCard({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => onResetPeriod(period.periodNumber as 1 | 2 | 3)}
+              onClick={() => onResetPeriod(period.periodNumber as 0 | 1 | 2 | 3)}
               className="h-7 px-2.5 text-[11px] font-semibold text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-xl gap-1 border border-border/60 shadow-2xs transition-colors"
             >
               <RefreshCw className="size-3" />
@@ -280,7 +290,7 @@ function PeriodSummaryCard({
                       ? "opacity-60 cursor-default bg-muted text-muted-foreground"
                       : "bg-primary text-primary-foreground hover:bg-primary/90"
                   )}
-                  onClick={() => !isCompleted && onStartSession(period.periodNumber as 1 | 2 | 3, idx)}
+                  onClick={() => !isCompleted && onStartSession(period.periodNumber as 0 | 1 | 2 | 3, idx)}
                   disabled={activePeriod !== null || isCompleted}
                 >
                   {isCompleted ? (
@@ -441,7 +451,11 @@ function LiveStatusPanel({
             Periode
           </div>
           <div className="text-xs sm:text-sm font-mono font-black text-foreground">
-            {activePeriod} <span className="text-[10px] font-sans text-muted-foreground">/ 3</span>
+            {activePeriod === 0 ? "Uji Coba" : (
+              <>
+                {activePeriod} <span className="text-[10px] font-sans text-muted-foreground">/ 3</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -730,7 +744,7 @@ export default function AdminSchedulerBoard() {
 
     // Period events
     socket.on("period-started", (data: { periodNumber: number; label: string; totalSessions: number }) => {
-      setExpState(prev => ({ ...prev, activePeriod: data.periodNumber as 1|2|3, currentPhase: "IDLE" }));
+      setExpState(prev => ({ ...prev, activePeriod: data.periodNumber as 0 | 1 | 2 | 3, currentPhase: "IDLE" }));
       setStartingPeriod(null);
     });
     socket.on("period-ended", (data: { periodNumber: number }) => {
@@ -776,7 +790,7 @@ export default function AdminSchedulerBoard() {
     });
     socket.on("experiment-reset", (data?: { mode?: string; periodNumber?: number }) => {
       setExpState(prev => {
-        if (data?.periodNumber) {
+        if (data?.periodNumber !== undefined) {
           const pn = data.periodNumber;
           return {
             ...prev,
@@ -793,15 +807,15 @@ export default function AdminSchedulerBoard() {
           stocks: [],
           currentIntervention: "NONE",
           isPaused: false,
-          completedSessions: { 1: [], 2: [], 3: [] },
-          periodStates: { 1: "idle", 2: "idle", 3: "idle" },
+          completedSessions: { 0: [], 1: [], 2: [], 3: [] },
+          periodStates: { 0: "idle", 1: "idle", 2: "idle", 3: "idle" },
         };
       });
       toast.info(
         data?.mode === "full"
           ? "Eksperimen & seluruh data berhasil direset."
-          : data?.periodNumber
-          ? `Periode ${data.periodNumber} berhasil direset.`
+          : data?.periodNumber !== undefined
+          ? `${data.periodNumber === 0 ? "Periode Uji Coba" : `Periode ${data.periodNumber}`} berhasil direset.`
           : "Eksperimen direset.",
         { id: "admin-exp-reset" }
       );
@@ -842,7 +856,7 @@ export default function AdminSchedulerBoard() {
     socket.on("timer-tick", (data: any) => {
       setExpState(prev => ({
         ...prev,
-        activePeriod: data.periodNumber !== undefined ? (data.periodNumber as 1 | 2 | 3 | null) : prev.activePeriod,
+        activePeriod: data.periodNumber !== undefined ? (data.periodNumber as 0 | 1 | 2 | 3 | null) : prev.activePeriod,
         timeLeft: data.timeLeft ?? prev.timeLeft,
         currentPhase: data.phase ?? prev.currentPhase,
         sessionGroup: data.sessionGroup ?? prev.sessionGroup,
@@ -902,7 +916,7 @@ export default function AdminSchedulerBoard() {
   }, [user]);
 
   // ── Actions ─────────────────────────────────────────────────
-  const handleStartSession = useCallback((periodNumber: 1 | 2 | 3, sessionIndex: number) => {
+  const handleStartSession = useCallback((periodNumber: 0 | 1 | 2 | 3, sessionIndex: number) => {
     if (!user) {
       toast.error("User admin tidak teridentifikasi.");
       return;
@@ -915,7 +929,8 @@ export default function AdminSchedulerBoard() {
       return;
     }
     socketRef.current.emit("admin-start-session", { periodNumber, sessionIndex, userId: user.id });
-    toast.info(`Memulai Periode ${periodNumber} Sesi ${sessionIndex + 1}...`, { id: "admin-session-starting" });
+    const pLabel = periodNumber === 0 ? "Periode Uji Coba" : `Periode ${periodNumber}`;
+    toast.info(`Memulai ${pLabel} Sesi ${sessionIndex + 1}...`, { id: "admin-session-starting" });
   }, [user]);
 
   const handlePause = useCallback(() => {
@@ -945,10 +960,11 @@ export default function AdminSchedulerBoard() {
     socketRef.current.emit("admin-reset-experiment", { mode, confirmToken });
   }, [user]);
 
-  const handleResetPeriod = useCallback((periodNumber: 1 | 2 | 3) => {
+  const handleResetPeriod = useCallback((periodNumber: 0 | 1 | 2 | 3) => {
     if (!user || !socketRef.current) return;
     socketRef.current.emit("admin-reset-period", { periodNumber });
-    toast.info(`Mereset Periode ${periodNumber}...`, { id: "admin-reset-period" });
+    const pLabel = periodNumber === 0 ? "Periode Uji Coba" : `Periode ${periodNumber}`;
+    toast.info(`Mereset ${pLabel}...`, { id: "admin-reset-period" });
   }, [user]);
 
   // ── Render ───────────────────────────────────────────────────

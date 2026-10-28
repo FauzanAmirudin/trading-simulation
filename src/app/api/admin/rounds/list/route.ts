@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get("date"); // optional YYYY-MM-DD or "ALL"
 
-    // Fetch all rounds with descending order by ID
-    const allRounds = await db
+    // Fetch all rounds with descending order by ID (exclude trial period 0)
+    const allRoundsRaw = await db
       .select({
         id: rounds.id,
         roundNumber: rounds.roundNumber,
@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       })
       .from(rounds)
       .orderBy(desc(rounds.id));
+    const allRounds = allRoundsRaw.filter((r) => r.period >= 1);
 
     // Get trade counts grouped by roundId
     const tradeCounts = await db

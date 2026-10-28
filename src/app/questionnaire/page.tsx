@@ -96,15 +96,23 @@ export default function QuestionnairePage() {
             headers: {
               "Cache-Control": "no-cache",
               Pragma: "no-cache",
+              Accept: "application/json",
             },
           }),
-          fetch("/api/questionnaire/questions"),
+          fetch("/api/questionnaire/questions", {
+            headers: {
+              Accept: "application/json",
+            },
+          }),
         ]);
 
-        const statusData = await statusRes.json();
-        const questionsData = await questionsRes.json();
+        const statusIsJson = statusRes.headers.get("content-type")?.includes("application/json");
+        const questionsIsJson = questionsRes.headers.get("content-type")?.includes("application/json");
 
-        if (statusData.success && statusData.isCompleted) {
+        const statusData = statusRes.ok && statusIsJson ? await statusRes.json() : null;
+        const questionsData = questionsRes.ok && questionsIsJson ? await questionsRes.json() : null;
+
+        if (statusData?.success && statusData.isCompleted) {
           // Already completed -> cache and redirect straight to dashboard
           try {
             sessionStorage.setItem(`simulasi_qs_done_${user?.id}`, "true");
@@ -114,7 +122,7 @@ export default function QuestionnairePage() {
         }
 
         // Pre-fill existing biodata if previously submitted
-        if (statusData.biodata) {
+        if (statusData?.biodata) {
           setBiodata({
             jenisKelamin: statusData.biodata.jenisKelamin || "",
             usia: statusData.biodata.usia ? String(statusData.biodata.usia) : "",
@@ -131,9 +139,11 @@ export default function QuestionnairePage() {
           }
         }
 
-        if (questionsData.success) {
+        if (questionsData?.success) {
           setLaQuestions(questionsData.la || []);
           setEiQuestions(questionsData.ei || []);
+        } else if (!questionsData) {
+          toast.error("Gagal memuat pertanyaan kuesioner");
         }
       } catch (err) {
         console.error("Error loading questionnaire data:", err);

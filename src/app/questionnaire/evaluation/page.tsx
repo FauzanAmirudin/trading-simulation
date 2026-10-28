@@ -59,11 +59,19 @@ export default function EvaluationPage() {
           headers: {
             "Cache-Control": "no-cache",
             Pragma: "no-cache",
+            Accept: "application/json",
           },
         });
+
+        const isJson = res.headers.get("content-type")?.includes("application/json");
+        if (!res.ok || !isJson) {
+          console.warn(`[Evaluation] Status check returned HTTP ${res.status}`);
+          return;
+        }
+
         const data = await res.json();
 
-        if (data.success) {
+        if (data?.success) {
           setIsSimulationEnded(Boolean(data.isSimulationEnded));
 
           const localDone =

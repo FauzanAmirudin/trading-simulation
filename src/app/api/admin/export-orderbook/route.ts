@@ -49,8 +49,9 @@ export async function GET(req: NextRequest) {
     const periodParam = searchParams.get("period");
     const sessionParam = searchParams.get("session");
 
-    // Fetch all rounds and build round map
-    const allRounds = await db.select().from(rounds).orderBy(desc(rounds.id));
+    // Fetch all rounds and build round map (kecualikan Periode 0 / Sesi Uji Coba dari laporan export Excel)
+    const allRoundsRaw = await db.select().from(rounds).orderBy(desc(rounds.id));
+    const allRounds = allRoundsRaw.filter(r => r.period >= 1);
     const roundMap = Object.fromEntries(allRounds.map(r => [r.id, r]));
 
     // Fetch all users for respondent names

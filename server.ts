@@ -41,7 +41,7 @@ type StockRow = {
 // ============================================================
 
 // ─── Period / Session / Round position ───────────────────────
-let activePeriod: 1 | 2 | 3 | null = null;
+let activePeriod: 0 | 1 | 2 | 3 | null = null;
 let activeSessionIdx: number | null = null;  // index into period.sessions[]
 let activeRoundIdx: number | null = null;    // index into session.rounds[]
 
@@ -79,12 +79,12 @@ let interventionCache: Record<string, { title: string; content: string }> = {};
 
 // ─── Persistent Period States ────────────────────────────────
 export type PeriodStateType = "idle" | "running" | "paused" | "completed";
-let periodStates: Record<number, PeriodStateType> = { 1: "idle", 2: "idle", 3: "idle" };
-let completedSessions: Record<number, number[]> = { 1: [], 2: [], 3: [] };
+let periodStates: Record<number, PeriodStateType> = { 0: "idle", 1: "idle", 2: "idle", 3: "idle" };
+let completedSessions: Record<number, number[]> = { 0: [], 1: [], 2: [], 3: [] };
 
 async function loadPeriodStates() {
   try {
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 0; i <= 3; i++) {
       const key = `period_${i}_status`;
       const [row] = await db.select().from(experimentalConfig).where(eq(experimentalConfig.key, key)).limit(1);
       if (row) {
@@ -303,6 +303,27 @@ async function resetAllBalances() {
   console.log("[Scheduler] All respondent balances reset to 100,000,000");
 }
 
+async function resetAllBalancesAndPortfolios() {
+  await db.update(users).set({ saldo: "100000000.00" }).where(eq(users.role, "responden"));
+  await db.execute(sql`
+    UPDATE portfolios 
+    SET jumlah_lot = 10, average_price = stocks.base_price 
+    FROM stocks, users
+    WHERE portfolios.stock_id = stocks.id 
+      AND portfolios.user_id = users.id 
+      AND users.role = 'responden'
+  `);
+  const allUsers = await db.select().from(users).where(eq(users.role, "responden"));
+  const allStocks = await db.select().from(stocks);
+  for (const user of allUsers) {
+    io.to(`user:${user.id}`).emit("balance-update", { userId: user.id, balance: 100_000_000 });
+    for (const stock of allStocks) {
+      io.to(`user:${user.id}`).emit("portfolio-update", { userId: user.id, stockId: stock.id, jumlahLot: 10 });
+    }
+  }
+  console.log("[Scheduler] All respondent balances (Rp 100,000,000) and portfolios (10 lots) reset to initial state");
+}
+
 async function resetSessionState() {
   await db.update(orderBook).set({ status: "cancelled" }).where(eq(orderBook.status, "open"));
   console.log("[Scheduler] Session state reset: open orders cancelled");
@@ -330,27 +351,46 @@ async function cleanupActiveRound() {
 }
 
 // ============================================================
-// MATCHING ENGINE
+// MATCHING ENGINE (BATCH AUCTION AT END OF SESSION — FIFO)
 // ============================================================
+
+export type BatchStockMatchSummary = {
+  stockId: number;
+  stockCode: string;
+  stockName: string;
+  basePrice: number;
+  userOrder: {
+    tipe: "BID" | "ASK";
+    label: "BELI" | "JUAL";
+    harga: number;
+    initialLot: number;
+  } | null;
+  status: "MATCH" | "PARTIAL_MATCH" | "NO_MATCH" | "NO_ORDER";
+  matchedLot: number;
+  unmatchedLot: number;
+  matchPrice: number | null;
+  totalValue: number;
+};
 
 function stopMatchingEngine() {
   if (matchingInterval) { clearInterval(matchingInterval); matchingInterval = null; }
 }
 
 async function matchOrders(stockId: number): Promise<boolean> {
-  if (currentPhase !== "TRADING" || isPaused || !activeRoundDbId) return false;
+  if (!activeRoundDbId) return false;
   const book = activeOrderBooks[stockId];
   if (!book || book.bids.length === 0 || book.asks.length === 0) return false;
 
-  book.bids.sort((a, b) => b.harga - a.harga);
-  book.asks.sort((a, b) => a.harga - b.harga);
+  // Price-Time Priority (FIFO): Harga terbaik duluan, jika harga sama maka ID terkecil (masuk lebih awal) duluan
+  book.bids.sort((a, b) => (b.harga !== a.harga ? b.harga - a.harga : a.id - b.id));
+  book.asks.sort((a, b) => (a.harga !== b.harga ? a.harga - b.harga : a.id - b.id));
 
   let changed = false;
   let i = 0;
   while (i < book.bids.length) {
     const bid = book.bids[i];
     // Strict price matching: transaksi hanya terjadi jika harga ASK dan BID persis sama
-    const askIdx = book.asks.findIndex(a => Math.round(a.harga) === Math.round(bid.harga));
+    const askIdx = book.asks.findIndex(a => Math.round(a.harga) === Math.round(bid.harga) && a.userId !== bid.userId);
     if (askIdx !== -1) {
       const ask = book.asks[askIdx];
       const execPrice = ask.harga;
@@ -365,14 +405,175 @@ async function matchOrders(stockId: number): Promise<boolean> {
   return changed;
 }
 
-function startMatchingEngine() {
-  if (matchingInterval) clearInterval(matchingInterval);
-  matchingInterval = setInterval(async () => {
-    if (currentPhase !== "TRADING" || isPaused || !activeRoundDbId) return;
-    for (const stock of activeStocks) {
+async function executeBatchMatchingForRound(
+  roundId: number,
+  orderedStocks: StockRow[],
+  periodNumber: number,
+  sessionNumber: number,
+  roundNumber: number,
+  periodLabel: string,
+  sessionLabel: string
+) {
+  try {
+    // 1. Ambil seluruh order open di ronde ini secara berurutan sesuai waktu masuk (orderBook.id ASC = FIFO)
+    const allRoundOrders = await db
+      .select()
+      .from(orderBook)
+      .where(and(eq(orderBook.roundId, roundId), eq(orderBook.status, "open")))
+      .orderBy(orderBook.id);
+
+    const userOrderByStock: Record<string, {
+      orderId: number;
+      userId: number;
+      stockId: number;
+      tipe: "BID" | "ASK";
+      harga: number;
+      initialLot: number;
+    }> = {};
+
+    for (const o of allRoundOrders) {
+      const normalizedTipe: "BID" | "ASK" = (o.tipe === "BID" || o.tipe === "buy") ? "BID" : "ASK";
+      userOrderByStock[`${o.userId}:${o.stockId}`] = {
+        orderId: o.id,
+        userId: o.userId,
+        stockId: o.stockId,
+        tipe: normalizedTipe,
+        harga: Number(o.harga),
+        initialLot: Number(o.jumlah),
+      };
+    }
+
+    // 2. Bangun ulang antrian per saham dari DB (FIFO) dan jalankan batch matching
+    for (const stock of orderedStocks) {
+      const stockOrders = allRoundOrders.filter(o => o.stockId === stock.id);
+      const bids: OrderType[] = [];
+      const asks: OrderType[] = [];
+
+      for (const o of stockOrders) {
+        const item: OrderType = {
+          id: o.id,
+          userId: o.userId,
+          stockId: o.stockId,
+          tipe: (o.tipe === "BID" || o.tipe === "buy") ? "BID" : "ASK",
+          harga: Number(o.harga),
+          jumlah: Number(o.jumlah),
+        };
+        if (item.tipe === "BID") bids.push(item);
+        else asks.push(item);
+      }
+
+      activeOrderBooks[stock.id] = { bids, asks };
       await matchOrders(stock.id);
     }
-  }, 750);
+
+    // 3. Ambil seluruh transaksi yang tereksekusi di ronde ini
+    const executedTxs = await db
+      .select()
+      .from(transactionsHistory)
+      .where(eq(transactionsHistory.roundId, roundId));
+
+    const matchedByOrderId: Record<number, { matchedLot: number; totalValue: number; lastMatchPrice: number }> = {};
+    for (const tx of executedTxs) {
+      const lot = Number(tx.jumlah);
+      const val = Number(tx.total);
+      const prc = Number(tx.harga);
+
+      if (tx.orderBuyId) {
+        if (!matchedByOrderId[tx.orderBuyId]) {
+          matchedByOrderId[tx.orderBuyId] = { matchedLot: 0, totalValue: 0, lastMatchPrice: prc };
+        }
+        matchedByOrderId[tx.orderBuyId].matchedLot += lot;
+        matchedByOrderId[tx.orderBuyId].totalValue += val;
+        matchedByOrderId[tx.orderBuyId].lastMatchPrice = prc;
+      }
+
+      if (tx.orderSellId) {
+        if (!matchedByOrderId[tx.orderSellId]) {
+          matchedByOrderId[tx.orderSellId] = { matchedLot: 0, totalValue: 0, lastMatchPrice: prc };
+        }
+        matchedByOrderId[tx.orderSellId].matchedLot += lot;
+        matchedByOrderId[tx.orderSellId].totalValue += val;
+        matchedByOrderId[tx.orderSellId].lastMatchPrice = prc;
+      }
+    }
+
+    // 4. Susun laporan hasil 3 saham untuk setiap responden yang memasang order
+    const userIdsWithOrders = Array.from(new Set(allRoundOrders.map(o => o.userId)));
+    const byUser: Record<number, BatchStockMatchSummary[]> = {};
+
+    for (const uid of userIdsWithOrders) {
+      byUser[uid] = orderedStocks.map(stock => {
+        const uOrder = userOrderByStock[`${uid}:${stock.id}`];
+        const basePrice = activeOpeningPrices[stock.id] || Number(stock.basePrice);
+        if (!uOrder) {
+          return {
+            stockId: stock.id,
+            stockCode: stock.kodeSaham,
+            stockName: stock.namaSaham,
+            basePrice,
+            userOrder: null,
+            status: "NO_ORDER",
+            matchedLot: 0,
+            unmatchedLot: 0,
+            matchPrice: null,
+            totalValue: 0,
+          };
+        }
+
+        const matchInfo = matchedByOrderId[uOrder.orderId];
+        const matchedLot = matchInfo ? matchInfo.matchedLot : 0;
+        const unmatchedLot = Math.max(0, uOrder.initialLot - matchedLot);
+        const totalValue = matchInfo ? matchInfo.totalValue : 0;
+        const matchPrice = matchInfo ? matchInfo.lastMatchPrice : null;
+
+        let status: "MATCH" | "PARTIAL_MATCH" | "NO_MATCH" = "NO_MATCH";
+        if (matchedLot >= uOrder.initialLot && uOrder.initialLot > 0) {
+          status = "MATCH";
+        } else if (matchedLot > 0) {
+          status = "PARTIAL_MATCH";
+        }
+
+        return {
+          stockId: stock.id,
+          stockCode: stock.kodeSaham,
+          stockName: stock.namaSaham,
+          basePrice,
+          userOrder: {
+            tipe: uOrder.tipe,
+            label: uOrder.tipe === "BID" ? "BELI" : "JUAL",
+            harga: uOrder.harga,
+            initialLot: uOrder.initialLot,
+          },
+          status,
+          matchedLot,
+          unmatchedLot,
+          matchPrice,
+          totalValue,
+        };
+      });
+    }
+
+    // 5. Kirim event hasil batch matching ke semua klien untuk ditampilkan dalam modal
+    io.emit("round-batch-results", {
+      roundId,
+      periodNumber,
+      periodLabel,
+      sessionNumber,
+      sessionLabel,
+      roundNumber,
+      stocks: orderedStocks.map(s => ({
+        stockId: s.id,
+        stockCode: s.kodeSaham,
+        stockName: s.namaSaham,
+        basePrice: activeOpeningPrices[s.id] || Number(s.basePrice),
+      })),
+      byUser,
+    });
+
+    console.log(`[BatchMatcher] Round ${roundId} (${periodLabel} - ${sessionLabel} - R${roundNumber}) batch matching done: ${executedTxs.length} trades.`);
+  } catch (err) {
+    console.error(`[BatchMatcher] Error executing batch matching for round ${roundId}:`, err);
+  }
 }
 
 function emitOrderBookUpdate(rawStockId: number) {
@@ -707,11 +908,22 @@ async function runRound(
     });
   }
 
-  startMatchingEngine();
+  // Selama sesi berjalan (120 detik), order hanya dikumpulkan (tidak langsung di-match).
   await runCountdown(initialTimeLeft !== null ? initialTimeLeft : DURATIONS.TRADING);
   stopMatchingEngine();
 
   if (periodAborted) { await cleanupActiveRound(); return; }
+
+  // Eksekusi Batch Matching di akhir sesi (ketika waktu 2 menit habis) dengan antrean FIFO
+  await executeBatchMatchingForRound(
+    activeRoundDbId!,
+    orderedStocks,
+    periodNumber,
+    session.sessionNumber,
+    roundIdx + 1,
+    periodConfig.label,
+    session.label
+  );
 
   // Hitung akurasi harga tebak/prediksi terhadap harga transaksi terakhir (atau harga acuan)
   await calculatePredictionAccuracies(activeRoundDbId!, orderedStocks);
@@ -736,7 +948,7 @@ async function runRound(
 }
 
 async function startSingleSession(
-  periodNumber: 1 | 2 | 3,
+  periodNumber: 0 | 1 | 2 | 3,
   sessionIdx: number,
   startFromRoundIdx = 0,
   initialPhase: PhaseType | null = null,
@@ -745,6 +957,17 @@ async function startSingleSession(
   if (activePeriod !== null && (activePeriod !== periodNumber || activeSessionIdx !== sessionIdx)) {
     io.emit("admin-error", { message: `Sesi lain masih berjalan. Hentikan dahulu sebelum memulai sesi baru.` });
     return;
+  }
+
+  // Jika memulai Periode 1 Sesi 1 untuk pertama kali setelah Sesi Uji Coba, reset saldo & portofolio responden ke kondisi awal
+  if (
+    periodNumber === 1 &&
+    sessionIdx === 0 &&
+    startFromRoundIdx === 0 &&
+    initialPhase === null &&
+    (completedSessions[1]?.length ?? 0) === 0
+  ) {
+    await resetAllBalancesAndPortfolios();
   }
 
   const periodConfig = getPeriodConfig(periodNumber);
@@ -837,7 +1060,7 @@ app.prepare().then(async () => {
       const [activeRound] = await db.select().from(rounds).where(eq(rounds.status, "active")).orderBy(desc(rounds.startTime)).limit(1);
       if (!activeRound) return;
 
-      const periodNumber = activeRound.period as 1 | 2 | 3;
+      const periodNumber = activeRound.period as 0 | 1 | 2 | 3;
       const periodState = periodStates[periodNumber];
       if (periodState !== "running") {
         await db.update(rounds)
@@ -1013,12 +1236,12 @@ app.prepare().then(async () => {
       if (!isAdmin()) { socket.emit("admin-error", { message: "Unauthorized" }); return; }
 
       const { periodNumber, sessionIndex } = data;
-      if (periodNumber < 1 || periodNumber > 3) {
-        socket.emit("admin-error", { message: "Periode harus 1, 2, atau 3" }); return;
+      if (periodNumber < 0 || periodNumber > 3) {
+        socket.emit("admin-error", { message: "Periode harus 0 (Uji Coba), 1, 2, atau 3" }); return;
       }
       console.log(`[Admin] Period ${periodNumber} Session ${sessionIndex} started by admin ${socket.data.userId}`);
       // Run async — do not await (allows socket to respond immediately)
-      startSingleSession(periodNumber as 1 | 2 | 3, sessionIndex).catch(err => {
+      startSingleSession(periodNumber as 0 | 1 | 2 | 3, sessionIndex).catch(err => {
         console.error("[Admin] startSingleSession error:", err);
         io.emit("admin-error", { message: `Error: ${err.message}` });
       });
@@ -1097,7 +1320,7 @@ app.prepare().then(async () => {
     socket.on("admin-reset-experiment", async (data?: {
       mode?: "state" | "session" | "full";
       confirmToken?: string;
-      periodNumber?: 1 | 2 | 3;
+      periodNumber?: 0 | 1 | 2 | 3;
     }) => {
       if (!isAdmin()) return;
       const mode = data?.mode || "state";
@@ -1144,8 +1367,8 @@ app.prepare().then(async () => {
         `);
 
         // Reset state & completed sessions
-        completedSessions = { 1: [], 2: [], 3: [] };
-        for (let i = 1; i <= 3; i++) {
+        completedSessions = { 0: [], 1: [], 2: [], 3: [] };
+        for (let i = 0; i <= 3; i++) {
           await db.update(experimentalConfig)
             .set({ content: "[]", updatedAt: new Date() })
             .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
@@ -1159,7 +1382,7 @@ app.prepare().then(async () => {
         }
       } else if (mode === "session") {
         const pn = data?.periodNumber;
-        if (pn) {
+        if (pn !== undefined) {
           // Reset only specified period
           completedSessions[pn] = [];
           await db.update(experimentalConfig)
@@ -1173,10 +1396,13 @@ app.prepare().then(async () => {
             await db.update(orderBook).set({ status: "cancelled" }).where(and(inArray(orderBook.roundId, roundIds), eq(orderBook.status, "open")));
             await db.update(rounds).set({ status: "aborted" }).where(and(inArray(rounds.id, roundIds), inArray(rounds.status, ["pending", "active"])));
           }
+          if (pn === 0 && (completedSessions[1]?.length ?? 0) === 0) {
+            await resetAllBalancesAndPortfolios();
+          }
         } else {
           // Reset all periods & cancel all open orders
-          completedSessions = { 1: [], 2: [], 3: [] };
-          for (let i = 1; i <= 3; i++) {
+          completedSessions = { 0: [], 1: [], 2: [], 3: [] };
+          for (let i = 0; i <= 3; i++) {
             await db.update(experimentalConfig)
               .set({ content: "[]", updatedAt: new Date() })
               .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
@@ -1187,8 +1413,8 @@ app.prepare().then(async () => {
         }
       } else {
         // Mode "state" (Level 1: State Only)
-        completedSessions = { 1: [], 2: [], 3: [] };
-        for (let i = 1; i <= 3; i++) {
+        completedSessions = { 0: [], 1: [], 2: [], 3: [] };
+        for (let i = 0; i <= 3; i++) {
           await db.update(experimentalConfig)
             .set({ content: "[]", updatedAt: new Date() })
             .where(eq(experimentalConfig.key, `period_${i}_completed_sessions`));
@@ -1203,7 +1429,7 @@ app.prepare().then(async () => {
     });
 
     // ── Admin: Reset Single Period ───────────────────────────
-    socket.on("admin-reset-period", async (data: { periodNumber: 1 | 2 | 3 }) => {
+    socket.on("admin-reset-period", async (data: { periodNumber: 0 | 1 | 2 | 3 }) => {
       if (!isAdmin()) return;
       const pn = data.periodNumber;
       if (activePeriod === pn) {
@@ -1221,6 +1447,10 @@ app.prepare().then(async () => {
       if (roundIds.length > 0) {
         await db.update(orderBook).set({ status: "cancelled" }).where(and(inArray(orderBook.roundId, roundIds), eq(orderBook.status, "open")));
         await db.update(rounds).set({ status: "aborted" }).where(and(inArray(rounds.id, roundIds), inArray(rounds.status, ["pending", "active"])));
+      }
+
+      if (pn === 0 && (completedSessions[1]?.length ?? 0) === 0) {
+        await resetAllBalancesAndPortfolios();
       }
 
       io.emit("completed-sessions-changed", completedSessions);
@@ -1510,14 +1740,10 @@ app.prepare().then(async () => {
         tipe,
         harga,
         jumlah,
-        message: `Order ${tipe === "BID" ? "Beli" : "Jual"} ${stock.kodeSaham} (${jumlah} lot @ Rp ${harga.toLocaleString("id-ID")}) berhasil tercatat sebagai order & harga tebakan!`,
+        message: `Order ${tipe === "BID" ? "Beli" : "Jual"} ${stock.kodeSaham} (${jumlah} lot @ Rp ${harga.toLocaleString("id-ID")}) berhasil tercatat dalam antrean dan akan dieksekusi di akhir sesi!`,
       });
 
       emitOrderBookUpdate(stockId);
-      const matched = await matchOrders(stockId);
-      if (matched) {
-        emitOrderBookUpdate(stockId);
-      }
     });
 
     // ── Cancel Order ──────────────────────────────────────────

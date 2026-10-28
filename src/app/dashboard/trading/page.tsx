@@ -30,6 +30,34 @@ type Stock = {
 type Order = { id: number; userId: number; harga: number; jumlah: number };
 type PricePoint = { time: string; price: number };
 
+type RoundStockOutcome = {
+  stockId: number;
+  stockCode: string;
+  stockName: string;
+  basePrice: number;
+  userOrder: {
+    tipe: "BID" | "ASK";
+    label: "BELI" | "JUAL";
+    harga: number;
+    initialLot: number;
+  } | null;
+  status: "MATCH" | "PARTIAL_MATCH" | "NO_MATCH" | "NO_ORDER";
+  matchedLot: number;
+  unmatchedLot: number;
+  matchPrice: number | null;
+  totalValue: number;
+};
+
+type RoundBatchResultState = {
+  roundId: number;
+  periodNumber: number;
+  periodLabel: string;
+  sessionNumber: number;
+  sessionLabel: string;
+  roundNumber: number;
+  outcomes: RoundStockOutcome[];
+};
+
 const stockMeta: Record<string, { sektor: string; deskripsi: string }> = {
   BBCA: { sektor: "Perbankan", deskripsi: "Bank swasta terbesar di Indonesia dengan fundamental kuat dan jaringan luas." },
   BBRI: { sektor: "Perbankan", deskripsi: "Bank pelat merah terbesar, fokus utama pada segmen UMKM." },
@@ -266,6 +294,10 @@ function TradingPageContent() {
   const [activeModalStockId, setActiveModalStockId] = useState<number | null>(null);
   const [skippedStockIds, setSkippedStockIds] = useState<number[]>([]);
   const [isPaused, setIsPaused] = useState(false);
+
+  // End-of-Round Batch Matching Notification Modal state
+  const [roundBatchResult, setRoundBatchResult] = useState<RoundBatchResultState | null>(null);
+  const [isRoundResultModalOpen, setIsRoundResultModalOpen] = useState(false);
 
   const [runningText, setRunningText] = useState<{ active: boolean; type: InterventionType; title: string; content: string }>({
     active: false, type: "NONE", title: "", content: "",
@@ -579,6 +611,47 @@ function TradingPageContent() {
       }
     };
 
+    const onRoundBatchResults = (data: {
+      roundId: number;
+      periodNumber: number;
+      periodLabel: string;
+      sessionNumber: number;
+      sessionLabel: string;
+      roundNumber: number;
+      stocks: { stockId: number; stockCode: string; stockName: string; basePrice: number }[];
+      byUser: Record<number, RoundStockOutcome[]>;
+    }) => {
+      if (!data) return;
+      const userOutcomes: RoundStockOutcome[] =
+        (user && data.byUser && data.byUser[user.id]) ||
+        (data.stocks || []).map((s) => ({
+          stockId: s.stockId,
+          stockCode: s.stockCode,
+          stockName: s.stockName,
+          basePrice: s.basePrice,
+          userOrder: null,
+          status: "NO_ORDER",
+          matchedLot: 0,
+          unmatchedLot: 0,
+          matchPrice: null,
+          totalValue: 0,
+        }));
+
+      setRoundBatchResult({
+        roundId: data.roundId,
+        periodNumber: data.periodNumber,
+        periodLabel: data.periodLabel,
+        sessionNumber: data.sessionNumber,
+        sessionLabel: data.sessionLabel,
+        roundNumber: data.roundNumber,
+        outcomes: userOutcomes,
+      });
+      setIsRoundResultModalOpen(true);
+      if (user) {
+        socket.emit("get-portfolio", { userId: user.id });
+      }
+    };
+
     socket.on("auth-success", onAuthSuccess);
     socket.on("balance-update", onBalanceUpdate);
     socket.on("round-started", onRoundStarted);
@@ -587,6 +660,7 @@ function TradingPageContent() {
     socket.on("experiment-paused", onExperimentPaused);
     socket.on("experiment-resumed", onExperimentResumed);
     socket.on("round-ended", onRoundEnded);
+    socket.on("round-batch-results", onRoundBatchResults);
     socket.on("cooldown-started", onCooldownStarted);
     socket.on("intervention-ended", onInterventionEnded);
     socket.on("period-ended", onPeriodEnded);
@@ -614,6 +688,7 @@ function TradingPageContent() {
       socket.off("experiment-paused", onExperimentPaused);
       socket.off("experiment-resumed", onExperimentResumed);
       socket.off("round-ended", onRoundEnded);
+      socket.off("round-batch-results", onRoundBatchResults);
       socket.off("cooldown-started", onCooldownStarted);
       socket.off("intervention-ended", onInterventionEnded);
       socket.off("period-ended", onPeriodEnded);
@@ -966,6 +1041,16 @@ function TradingPageContent() {
         {/* Top meta row: Session Pills & Timer */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-wrap">
+            {period === 0 && (
+              <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-[10.5px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                Periode Uji Coba
+              </span>
+            )}
+            {period !== null && period >= 1 && (
+              <span className="px-2 py-0.5 rounded-lg bg-primary/10 text-[10.5px] font-bold text-primary border border-primary/20">
+                Periode {period}
+              </span>
+            )}
             {roundNumber && (
               <span className="px-2 py-0.5 rounded-lg bg-muted text-[10.5px] font-mono font-semibold text-muted-foreground border border-border/60">
                 R{roundNumber}-S{subSession}
@@ -2303,13 +2388,13 @@ function TradingPageContent() {
                                     </b>
                                   </div>
                                   <div className="flex justify-between items-center pt-1 border-t border-border/40 font-sans">
-                                    <span className="text-muted-foreground text-[11px]">Status Laporan:</span>
-                                    <b className="text-emerald-600 dark:text-emerald-400 text-xs">Tercatat & Terkunci di Sistem</b>
+                                    <span className="text-muted-foreground text-[11px]">Status Antrean:</span>
+                                    <b className="text-emerald-600 dark:text-emerald-400 text-xs">Masuk Antrean (Eksekusi Akhir Sesi)</b>
                                   </div>
                                 </div>
 
                                 <p className="text-[11px] text-muted-foreground text-center">
-                                  Setiap peserta hanya dapat melakukan 1 transaksi (Jual atau Beli) per saham pada tiap ronde.
+                                  Order Anda telah masuk antrean sesuai urutan waktu (FIFO). Hasil pencocokan transaksi (match/tidak match) akan diumumkan saat waktu 2 menit berakhir.
                                 </p>
 
                                 {remainingUnordered.length > 0 ? (
@@ -2536,6 +2621,216 @@ function TradingPageContent() {
             )}
           </div>
         </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          END-OF-ROUND BATCH MATCHING NOTIFICATION MODAL (3 Saham)
+         ══════════════════════════════════════════════════════════════════════ */}
+      {isRoundResultModalOpen && roundBatchResult && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-2.5 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl bg-card border border-border/80 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[calc(100dvh-1.5rem)] sm:max-h-[90vh] flex flex-col my-auto">
+            {/* Modal Header */}
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-border/60 bg-muted/30 flex items-start justify-between gap-3 shrink-0">
+              <div className="space-y-0.5 sm:space-y-1">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10.5px] font-bold border",
+                    roundBatchResult.periodNumber === 0
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                      : "bg-primary/15 text-primary border-primary/30"
+                  )}>
+                    {roundBatchResult.periodLabel}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10.5px] font-mono font-semibold bg-muted text-muted-foreground border border-border/60">
+                    {roundBatchResult.sessionLabel} · Ronde {roundBatchResult.roundNumber}
+                  </span>
+                </div>
+                <h3 className="text-sm sm:text-base font-extrabold text-foreground tracking-tight">
+                  Hasil Pencocokan Transaksi Akhir Sesi
+                </h3>
+                <p className="text-[11px] sm:text-xs text-muted-foreground leading-snug">
+                  Waktu 2 menit telah berakhir. Berikut status eksekusi transaksi untuk ketiga saham pada sesi ini:
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRoundResultModalOpen(false)}
+                className="p-1 sm:p-1.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                title="Tutup"
+              >
+                <X className="size-4 sm:size-4.5" />
+              </button>
+            </div>
+
+            {/* Modal Body: 3 Stocks List (Scrollable with min-h-0 & flex-1) */}
+            <div className="p-3 sm:p-5 space-y-2.5 sm:space-y-3 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+              {roundBatchResult.outcomes.map((item, idx) => {
+                const isFullMatch = item.status === "MATCH";
+                const isPartialMatch = item.status === "PARTIAL_MATCH";
+                const isAnyMatch = isFullMatch || isPartialMatch;
+                const isNoMatch = item.status === "NO_MATCH";
+
+                const displayPrice = isAnyMatch
+                  ? (item.matchPrice ?? item.userOrder?.harga ?? 0)
+                  : (item.userOrder?.harga ?? item.basePrice ?? 0);
+
+                const displayLot = isAnyMatch
+                  ? item.matchedLot
+                  : (item.userOrder?.initialLot ?? 0);
+
+                return (
+                  <div
+                    key={item.stockId || idx}
+                    className={cn(
+                      "rounded-xl sm:rounded-2xl border p-2.5 sm:p-4 transition-all space-y-2 sm:space-y-2.5",
+                      isFullMatch
+                        ? "border-emerald-500/40 bg-emerald-500/[0.04]"
+                        : isPartialMatch
+                          ? "border-amber-500/40 bg-amber-500/[0.04]"
+                          : isNoMatch
+                            ? "border-rose-500/35 bg-rose-500/[0.03]"
+                            : "border-border/70 bg-muted/20"
+                    )}
+                  >
+                    {/* Top Row: Stock Info + Transaction Status Badge */}
+                    <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+                      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+                        <div className="flex size-8 sm:size-9 items-center justify-center rounded-lg sm:rounded-xl bg-primary/15 text-primary font-mono font-black text-[11px] sm:text-xs shrink-0 border border-primary/25">
+                          {item.stockCode}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-extrabold text-xs sm:text-sm text-foreground">
+                              {item.stockCode}
+                            </span>
+                            {item.userOrder && (
+                              <span className={cn(
+                                "px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono font-bold border",
+                                item.userOrder.tipe === "BID"
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                  : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                              )}>
+                                Order {item.userOrder.label} ({item.userOrder.tipe})
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] sm:text-xs text-muted-foreground truncate">
+                            {item.stockName}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Transaction Status Badge */}
+                      <div className="shrink-0">
+                        {isFullMatch && (
+                          <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-xs font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            <CheckCircle2 className="size-3 sm:size-3.5" />
+                            <span className="hidden sm:inline">Terjadi Transaksi (Match)</span>
+                            <span className="sm:hidden">Match</span>
+                          </span>
+                        )}
+                        {isPartialMatch && (
+                          <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                            <CheckCircle2 className="size-3 sm:size-3.5" />
+                            <span className="hidden sm:inline">Terjadi Sebagian ({item.matchedLot}/{item.userOrder?.initialLot} Lot)</span>
+                            <span className="sm:hidden">Sebagian ({item.matchedLot}/{item.userOrder?.initialLot}L)</span>
+                          </span>
+                        )}
+                        {isNoMatch && (
+                          <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-xs font-extrabold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                            <AlertTriangle className="size-3 sm:size-3.5" />
+                            <span className="hidden sm:inline">Tidak Terjadi Transaksi (Tidak Match)</span>
+                            <span className="sm:hidden">Tidak Match</span>
+                          </span>
+                        )}
+                        {item.status === "NO_ORDER" && (
+                          <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-xs font-bold bg-muted text-muted-foreground border border-border/60">
+                            <span className="hidden sm:inline">Tidak Ada Transaksi (Tidak Order)</span>
+                            <span className="sm:hidden">Tidak Order</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bottom Row: Keterangan Transaksi, Harga, dan Jumlah Lot */}
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 p-2 sm:p-2.5 rounded-xl bg-background/80 border border-border/60 text-xs font-mono">
+                      <div>
+                        <span className="text-[8.5px] sm:text-[10px] text-muted-foreground font-sans block truncate">
+                          Keterangan
+                        </span>
+                        <span className={cn(
+                          "font-extrabold text-[10.5px] sm:text-xs truncate block",
+                          isAnyMatch
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : isNoMatch
+                              ? "text-rose-600 dark:text-rose-400"
+                              : "text-muted-foreground"
+                        )}>
+                          {isFullMatch
+                            ? `Match (${item.userOrder?.label})`
+                            : isPartialMatch
+                              ? `Sebagian (${item.userOrder?.label})`
+                              : isNoMatch
+                                ? `Tidak Match (${item.userOrder?.label})`
+                                : "Tidak Order"}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[8.5px] sm:text-[10px] text-muted-foreground font-sans block truncate">
+                          {isAnyMatch ? "Harga Match" : item.userOrder ? "Harga Order" : "Harga Dasar"}
+                        </span>
+                        <span className="font-extrabold text-[10.5px] sm:text-xs text-foreground truncate block">
+                          Rp {displayPrice.toLocaleString("id-ID")}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[8.5px] sm:text-[10px] text-muted-foreground font-sans block truncate">
+                          {isAnyMatch ? "Lot Match" : "Jumlah Lot"}
+                        </span>
+                        <span className="font-extrabold text-[10.5px] sm:text-xs text-foreground truncate block">
+                          {isFullMatch
+                            ? `${item.matchedLot} Lot`
+                            : isPartialMatch
+                              ? `${item.matchedLot}/${item.userOrder?.initialLot} Lot`
+                              : isNoMatch
+                                ? `0 L (${displayLot} L)`
+                                : "0 Lot"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {isAnyMatch && item.totalValue > 0 && (
+                      <div className="flex items-center justify-between px-1 text-[10px] sm:text-[11px] font-mono text-muted-foreground">
+                        <span className="font-sans">Total Nilai Realisasi:</span>
+                        <b className="text-foreground">Rp {item.totalValue.toLocaleString("id-ID")}</b>
+                      </div>
+                    )}
+                    {isNoMatch && (
+                      <p className="text-[10px] sm:text-[11px] text-muted-foreground px-1 leading-snug">
+                        Order {item.userOrder?.label} Rp {item.userOrder?.harga.toLocaleString("id-ID")} ({item.userOrder?.initialLot} lot) belum menemukan lawan transaksi di antrean sesi ini.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-4 py-2.5 sm:px-6 sm:py-3.5 border-t border-border/60 bg-muted/30 sm:bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-4 shrink-0">
+              <p className="text-[10px] sm:text-[11px] text-muted-foreground text-center sm:text-left leading-tight">
+                Antrean dieksekusi dengan sistem <b>Price-Time Priority (FIFO)</b>: order yang masuk lebih awal diprioritaskan.
+              </p>
+              <Button
+                onClick={() => setIsRoundResultModalOpen(false)}
+                className="w-full sm:w-auto px-6 h-9 sm:h-9 rounded-xl font-bold text-xs bg-primary text-primary-foreground hover:bg-primary/90 shrink-0 shadow-md active:scale-95 transition-all"
+              >
+                Mengerti & Lanjutkan
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

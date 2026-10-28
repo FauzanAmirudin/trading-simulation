@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { users, portfolios, stocks, transactionsHistory, orderBook } from "@/db/schema";
+import { users, portfolios, stocks, transactionsHistory, orderBook, rounds } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -8,14 +8,19 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    // 1. Parallelize all 5 DB queries
-    const [allRespondents, allStocks, allPortfolios, allTransactions, allOrders] = await Promise.all([
+    // 1. Parallelize all DB queries
+    const [allRespondents, allStocks, allPortfolios, allTransactionsRaw, allOrders, allRoundsRaw] = await Promise.all([
       db.select().from(users).where(eq(users.role, "responden")),
       db.select().from(stocks),
       db.select().from(portfolios),
       db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt),
       db.select({ id: orderBook.id, userId: orderBook.userId }).from(orderBook),
+      db.select({ id: rounds.id, period: rounds.period }).from(rounds),
     ]);
+
+    // Filter out transactions from trial rounds (period 0)
+    const officialRoundIds = new Set(allRoundsRaw.filter((r) => r.period >= 1).map((r) => r.id));
+    const allTransactions = allTransactionsRaw.filter((tx) => officialRoundIds.has(tx.roundId));
 
     // Stock base price map for instant O(1) lookup
     const stockBasePrices = new Map<number, number>();
