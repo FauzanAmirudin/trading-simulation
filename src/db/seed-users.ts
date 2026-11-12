@@ -5,7 +5,7 @@ import { users } from "./schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
-export async function seedUsers(targetCount: number = 90) {
+export async function seedUsers(targetCount: number = 100) {
   console.log(`=======================================================`);
   console.log(`🚀 MEMERIKSA & MENAMBAH AKUN RESPONDEN HINGGA ${targetCount}`);
   console.log(`=======================================================`);
@@ -70,7 +70,9 @@ export async function seedUsers(targetCount: number = 90) {
 }
 
 if (process.argv[1] && process.argv[1].includes("seed-users")) {
-  seedUsers(90)
+  const argCount = parseInt(process.argv[2] || process.env.TARGET_COUNT || "100", 10);
+  const count = !isNaN(argCount) && argCount > 0 ? argCount : 100;
+  seedUsers(count)
     .then(() => process.exit(0))
     .catch((err) => {
       console.error("Seed failed:", err);

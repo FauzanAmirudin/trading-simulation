@@ -79,10 +79,10 @@ export async function initDatabase() {
     console.log("✓ Admin user already exists.");
   }
 
-  // 3. Seed Mass Respondents (responden1 - responden90)
-  console.log("3. Checking mass respondents (responden1..90)...");
+  // 3. Seed Mass Respondents (responden1 - responden100)
+  console.log("3. Checking mass respondents (responden1..100)...");
   const userHashed = await bcrypt.hash("password123", 12);
-  for (let i = 1; i <= 90; i++) {
+  for (let i = 1; i <= 100; i++) {
     const username = `responden${i}`;
     const existing = await db.select().from(users).where(eq(users.nama, username)).limit(1);
     if (existing.length === 0) {
@@ -94,7 +94,7 @@ export async function initDatabase() {
       });
     }
   }
-  console.log("✓ 90 Mass respondents verified/seeded (responden1..90 / password123).");
+  console.log("✓ 100 Mass respondents verified/seeded (responden1..100 / password123).");
 
   // 4. Seed Personal Named Respondents (Andi, Budi, Citra, Doni)
   console.log("4. Checking personal respondents (Andi, Budi, Citra, Doni)...");
