@@ -6,6 +6,8 @@ services:
     container_name: trading_app
     ports:
       - "3000:3000"
+    volumes:
+      - ./backups:/app/backups
     environment:
       - NODE_ENV=production
       - PORT=3000
