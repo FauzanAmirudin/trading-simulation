@@ -24,7 +24,7 @@ import {
   EVALUATION_QUESTIONS,
   getEvaluationOptionLabel,
 } from "../lib/evaluation-questions";
-
+import { seedInitialPortfolios } from "./seed-portfolios";
 /**
  * Generate 15 Likert scores (1-5) strictly landing within target category:
  * - 'T' (Tinggi): Mean 3.80 - 4.60 (Total: 57 - 69)
@@ -82,9 +82,9 @@ function generate15ScoresForCategory(cat: CategoryType): { scores: number[]; sum
   return { scores, sum };
 }
 
-export async function seedRespondents1To90() {
+export async function seedRespondents1To100() {
   console.log("======================================================================");
-  console.log("🌱 MEMULAI SEED BIODATA, PROFIL PSIKOLOGIS & RESUME (RESPONDEN 1-90)");
+  console.log("🌱 MEMULAI SEED BIODATA, PROFIL PSIKOLOGIS & RESUME (RESPONDEN 1-100)");
   console.log("======================================================================");
 
   // 0. Auto-healing DDL: Pastikan tabel-tabel instrumen sudah ada di database jika belum disinkron
@@ -203,7 +203,7 @@ export async function seedRespondents1To90() {
   const passwordHash = await bcrypt.hash("password123", 12);
   const missingUsers: { nama: string; password: string; role: string; saldo: string }[] = [];
 
-  for (let i = 1; i <= 90; i++) {
+  for (let i = 1; i <= 100; i++) {
     const uname = `responden${i}`;
     if (!userMap.has(uname.toLowerCase())) {
       missingUsers.push({
@@ -223,20 +223,20 @@ export async function seedRespondents1To90() {
     }
   }
 
-  // Reload seluruh akun responden1 s.d responden90
+  // Reload seluruh akun responden1 s.d responden100
   const refreshedUsers = await db.select().from(users).where(eq(users.role, "responden"));
   const targetRespondents = refreshedUsers
-    .filter((u) => /^responden([1-9][0-9]?|90)$/i.test(u.nama))
+    .filter((u) => /^responden([1-9][0-9]?|100)$/i.test(u.nama))
     .sort((a, b) => {
       const numA = parseInt(a.nama.replace(/\D/g, ""), 10);
       const numB = parseInt(b.nama.replace(/\D/g, ""), 10);
       return numA - numB;
     });
 
-  console.log(`✓ Teridentifikasi ${targetRespondents.length} akun responden (responden1 s.d responden90)`);
+  console.log(`✓ Teridentifikasi ${targetRespondents.length} akun responden (responden1 s.d responden100)`);
 
-  if (targetRespondents.length < 90) {
-    throw new Error(`Jumlah responden terdeteksi (${targetRespondents.length}) kurang dari 90!`);
+  if (targetRespondents.length < 100) {
+    throw new Error(`Jumlah responden terdeteksi (${targetRespondents.length}) kurang dari 100!`);
   }
 
   // 3. Distribusi Seimbang 9 Kelompok (10 responden per kelompok A s.d I)
@@ -352,10 +352,10 @@ export async function seedRespondents1To90() {
 
   let processedCount = 0;
 
-  for (let idx = 0; idx < 90; idx++) {
+  for (let idx = 0; idx < 100; idx++) {
     const respondentNum = idx + 1;
     const user = targetRespondents[idx];
-    const groupIdx = Math.floor(idx / 10); // 0..8
+    const groupIdx = idx < 90 ? Math.floor(idx / 10) : (idx - 90) % 9; // 0..8 seimbang
     const groupDef = groupAssignments[groupIdx];
 
     // ── A. BIODATA DEMOGRAFIS ──
@@ -570,22 +570,28 @@ export async function seedRespondents1To90() {
     processedCount++;
   }
 
-  // 4. Simpan file SQL siap pakai untuk eksekusi langsung di VPS
-  const sqlFilePath = path.join(process.cwd(), "drizzle", "seed_respondents_1_to_90.sql");
+  // 4. Pastikan alokasi portofolio awal (10 lot/saham) untuk 100 responden
+  console.log("Memverifikasi portofolio awal 10 lot per saham...");
+  await seedInitialPortfolios(10);
+
+  // 5. Simpan file SQL siap pakai untuk eksekusi langsung di VPS
+  const sqlFilePath = path.join(process.cwd(), "drizzle", "seed_100_respondents.sql");
   fs.writeFileSync(sqlFilePath, sqlStatements.join("\n"), "utf-8");
 
   console.log("======================================================================");
-  console.log(`✅ BERHASIL MENGINPUT DATA UNTUK ${processedCount} RESPONDEN (responden1 - responden90)`);
-  console.log(`✓ 90 Data Biodata Responden tersimpan di 'respondent_biodata'`);
-  console.log(`✓ 2.700 Jawaban Butir Kuesioner (15 LA + 15 EI x 90) tersimpan di 'questionnaire_responses'`);
-  console.log(`✓ 90 Profil & Resume Psikologis (Kelompok A s.d I seimbang) tersimpan di 'respondent_profiles'`);
-  console.log(`✓ 90 Data Evaluasi Akhir Simulasi (10 Pertanyaan) tersimpan di 'simulation_evaluations'`);
-  console.log(`✓ File SQL eksekusi langsung tersimpan di: drizzle/seed_respondents_1_to_90.sql`);
+  console.log(`✅ BERHASIL MENGINPUT DATA UNTUK ${processedCount} RESPONDEN (responden1 - responden100)`);
+  console.log(`✓ 100 Data Biodata Responden tersimpan di 'respondent_biodata'`);
+  console.log(`✓ 3.000 Jawaban Butir Kuesioner (15 LA + 15 EI x 100) tersimpan di 'questionnaire_responses'`);
+  console.log(`✓ 100 Profil & Resume Psikologis (Kelompok A s.d I) tersimpan di 'respondent_profiles'`);
+  console.log(`✓ 100 Data Evaluasi Akhir Simulasi (10 Pertanyaan) tersimpan di 'simulation_evaluations'`);
+  console.log(`✓ File SQL eksekusi langsung tersimpan di: drizzle/seed_100_respondents.sql`);
   console.log("======================================================================");
 }
 
+export const seedRespondents1To90 = seedRespondents1To100;
+
 if (process.argv[1] && process.argv[1].includes("seed-responses")) {
-  seedRespondents1To90()
+  seedRespondents1To100()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error("Error seeding respondent responses:", err);
