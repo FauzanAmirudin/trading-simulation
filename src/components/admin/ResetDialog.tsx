@@ -13,6 +13,7 @@ import {
   X,
   CheckCircle2,
   Lock,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,28 @@ export function ResetDialog({
   const [selectedMode, setSelectedMode] = useState<ResetMode>("state");
   const [step, setStep] = useState<1 | 2>(1);
   const [confirmInput, setConfirmInput] = useState("");
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
+
+  const handleDownloadBackup = async () => {
+    setIsDownloadingBackup(true);
+    try {
+      const res = await fetch("/api/admin/backup?format=zip");
+      if (!res.ok) throw new Error("Gagal mengunduh cadangan data.");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `backup_full_${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      console.error("Backup download error:", err);
+    } finally {
+      setIsDownloadingBackup(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -233,9 +256,7 @@ export function ResetDialog({
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      Menghapus <strong>seluruh data transaksi, order book, dan prediksi</strong>.
-                      Mengembalikan saldo semua responden ke Rp 100.000.000 dan portofolio
-                      ke kondisi awal.
+                      Menghapus <strong>seluruh data riset</strong> (transaksi pasar, antrean order book, prediksi, biodata demografi, kuesioner LA &amp; EI, dan evaluasi). Mengembalikan saldo responden ke Rp 100.000.000 dan simulasi <strong>dimulai murni dari nol</strong> (responden wajib mengisi ulang biodata &amp; kuesioner).
                     </p>
                   </div>
                   <div
@@ -260,15 +281,36 @@ export function ResetDialog({
                     <AlertTriangle className="size-4" /> Peringatan Kehilangan Data:
                   </div>
                   <p>
-                    Tindakan ini akan <strong>menghapus permanen seluruh riwayat transaksi</strong>,
-                    prediksi harga, antrean lelang, serta mengembalikan seluruh saldo responden
-                    menjadi Rp 100.000.000.
+                    Tindakan ini akan <strong>menghapus permanen seluruh data riset</strong> (transaksi, antrean lelang lelang, biodata demografi, profil psikologis LA/EI, dan evaluasi akhir). Seluruh responden akan <strong>memulai simulasi murni dari nol</strong> (wajib mengisi ulang biodata dan kuesioner).
                   </p>
                   <p className="text-muted-foreground">
-                    Pastikan Anda telah mengekspor file laporan Excel terlebih dahulu jika data riset ini masih dibutuhkan.
+                    Semua data akan otomatis dicadangkan sebelum dihapus, atau Anda dapat mengunduh berkasnya sekarang di bawah ini.
                   </p>
                 </div>
 
+                {/* Auto-backup Banner & Download Button */}
+                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <ShieldCheck className="size-4 text-emerald-400 shrink-0" />
+                      Cadangan Otomatis Aktif
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadBackup}
+                      disabled={isDownloadingBackup}
+                      className="h-7 text-[11px] gap-1.5 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20"
+                    >
+                      <Download className="size-3" />
+                      {isDownloadingBackup ? "Menyiapkan..." : "Unduh Cadangan (.zip)"}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Semua data (kuesioner, biodata, profil, evaluasi, resume, hasil) dicadangkan ke berkas ZIP berisi masing-masing file Excel resmi di folder <code className="text-emerald-400 font-mono">backups/</code> sebelum penghapusan data.
+                  </p>
+                </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                     <Lock className="size-3 text-rose-400" />

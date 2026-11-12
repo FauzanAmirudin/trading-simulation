@@ -6,6 +6,7 @@ import { db } from "./src/db/connect";
 import {
   users, stocks, rounds, roundStocks, predictions,
   orderBook, transactionsHistory, portfolios, experimentalConfig,
+  simulationEvaluations, respondentProfiles, questionnaireResponses, respondentBiodata,
 } from "./src/db/schema";
 import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -14,6 +15,8 @@ import {
   InterventionType, PhaseType, PeriodDef, getInterventionLabel,
 } from "./src/lib/experimental-matrix";
 import { isValidTickSize, getTickSize, getAutoRejectionLimits } from "./src/lib/market-rules";
+import { createFullBackup } from "./src/lib/backup-service";
+import type { BackupResult } from "./src/lib/backup-service";
 
 // ============================================================
 // SERVER SETUP
@@ -1324,30 +1327,53 @@ app.prepare().then(async () => {
     }) => {
       if (!isAdmin()) return;
       const mode = data?.mode || "state";
-      
-      // Stop ongoing timer & matching engine
+      let backupResult: BackupResult | null = null;
+
+      if (mode === "full" && data?.confirmToken !== "RESET") {
+        socket.emit("admin-error", { message: "Token konfirmasi reset penuh tidak valid. Ketik RESET." });
+        return;
+      }
+
+      // Stop ongoing timer & matching engine in memory
       periodAborted = true;
       isPaused = false;
       if (currentTimerInterval) { clearInterval(currentTimerInterval); currentTimerInterval = null; }
       if (resolveCountdown) { resolveCountdown(); resolveCountdown = null; }
       stopMatchingEngine();
+
+      // Jika Reset Penuh (Level 3): Lakukan Auto-Backup TERLEBIH DAHULU sebelum mengubah status ronde atau menghapus data apapun
+      if (mode === "full") {
+        console.log("[Scheduler] Full Data Wipe RESET initiated by admin — capturing exact state backup...");
+        try {
+          backupResult = await createFullBackup("hard-reset-prevention");
+          console.log(`[Backup] Automated full ZIP backup created: ${backupResult.zipFilename}`);
+        } catch (backupErr) {
+          console.error("[Backup] Warning: Gagal membuat auto-backup:", backupErr);
+        }
+      }
+
+      // Safely abort any active or pending round in database before resetting state
+      const roundToAbort = activeRoundDbId;
+      if (roundToAbort) {
+        await db.update(rounds)
+          .set({ status: "aborted", subSessionStatus: "ABORTED", endTime: new Date() })
+          .where(eq(rounds.id, roundToAbort));
+      }
+      await db.update(rounds)
+        .set({ status: "aborted", subSessionStatus: "ABORTED", endTime: new Date() })
+        .where(inArray(rounds.status, ["pending", "active"]));
+
       activePeriod = null; activeSessionIdx = null; activeRoundIdx = null;
       currentPhase = "IDLE"; currentIntervention = "NONE";
+      currentTimeLeft = 0;
       activeRoundDbId = null; activeStocks = []; activeOrderBooks = {};
-      
+      activePredictions = {}; activeOpeningPrices = {};
       // Clear carry-over prices
       lastTradedPrices = {};
       lastTradedPeriodForStock = {};
       await db.delete(experimentalConfig).where(sql`key LIKE 'last_price_%'`);
 
       if (mode === "full") {
-        if (data?.confirmToken !== "RESET") {
-          socket.emit("admin-error", { message: "Token konfirmasi reset penuh tidak valid. Ketik RESET." });
-          return;
-        }
-
-        console.log("[Scheduler] Full Data Wipe RESET initiated by admin");
-
         // Delete all experiment transactional & round data
         await db.delete(transactionsHistory);
         await db.delete(orderBook);
@@ -1355,6 +1381,11 @@ app.prepare().then(async () => {
         await db.delete(roundStocks);
         await db.delete(rounds);
 
+        // Delete all questionnaire, biodata, profile, and evaluation data (mulai murni dari nol)
+        await db.delete(simulationEvaluations);
+        await db.delete(respondentProfiles);
+        await db.delete(questionnaireResponses);
+        await db.delete(respondentBiodata);
         // Reset respondent balances & portfolios (10 lots per stock)
         await db.update(users).set({ saldo: "100000000.00" }).where(eq(users.role, "responden"));
         await db.execute(sql`
@@ -1375,10 +1406,15 @@ app.prepare().then(async () => {
           await setPeriodState(i, "idle");
         }
 
-        // Notify respondents of balance reset
+        // Notify respondents of balance & portfolio reset
         const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
+        const allStocks = await db.select().from(stocks);
         for (const resp of allRespondents) {
           io.to(`user:${resp.id}`).emit("balance-update", { userId: resp.id, balance: 100_000_000 });
+          for (const stock of allStocks) {
+            io.to(`user:${resp.id}`).emit("portfolio-update", { userId: resp.id, stockId: stock.id, jumlahLot: 10 });
+          }
+          io.to(`user:${resp.id}`).emit("force-questionnaire", { reason: "hard-reset-full-wipe" });
         }
       } else if (mode === "session") {
         const pn = data?.periodNumber;
@@ -1424,7 +1460,13 @@ app.prepare().then(async () => {
 
       io.emit("completed-sessions-changed", completedSessions);
       io.emit("period-state-changed", periodStates);
-      io.emit("experiment-reset", { mode, periodNumber: data?.periodNumber });
+      io.emit("experiment-reset", {
+        mode,
+        periodNumber: data?.periodNumber,
+        backupFilename: backupResult?.zipFilename,
+      });
+      emitTimerTick();
+      broadcastSchedulerState();
       console.log(`[Scheduler] Experiment RESET (mode: ${mode}) completed by admin`);
     });
 
@@ -1456,6 +1498,8 @@ app.prepare().then(async () => {
       io.emit("completed-sessions-changed", completedSessions);
       io.emit("period-state-changed", periodStates);
       io.emit("experiment-reset", { mode: "session", periodNumber: pn });
+      emitTimerTick();
+      broadcastSchedulerState();
       console.log(`[Scheduler] Period ${pn} reset by admin`);
     });
 

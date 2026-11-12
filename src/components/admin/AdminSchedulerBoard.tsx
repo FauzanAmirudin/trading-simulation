@@ -788,7 +788,9 @@ export default function AdminSchedulerBoard() {
       }));
       toast.info("Sesi dihentikan", { id: "admin-session-status" });
     });
-    socket.on("experiment-reset", (data?: { mode?: string; periodNumber?: number }) => {
+    socket.on("experiment-reset", (data?: { mode?: string; periodNumber?: number; backupFilename?: string }) => {
+      setIsResetting(false);
+      setIsResetDialogOpen(false);
       setExpState(prev => {
         if (data?.periodNumber !== undefined) {
           const pn = data.periodNumber;
@@ -811,14 +813,19 @@ export default function AdminSchedulerBoard() {
           periodStates: { 0: "idle", 1: "idle", 2: "idle", 3: "idle" },
         };
       });
-      toast.info(
-        data?.mode === "full"
-          ? "Eksperimen & seluruh data berhasil direset."
-          : data?.periodNumber !== undefined
-          ? `${data.periodNumber === 0 ? "Periode Uji Coba" : `Periode ${data.periodNumber}`} berhasil direset.`
-          : "Eksperimen direset.",
-        { id: "admin-exp-reset" }
-      );
+      if (data?.mode === "full") {
+        const msg = data.backupFilename
+          ? `Eksperimen direset penuh. Cadangan data tersimpan: ${data.backupFilename}`
+          : "Eksperimen & seluruh data berhasil direset (cadangan tersimpan).";
+        toast.success(msg, { id: "admin-exp-reset", duration: 7000 });
+      } else {
+        toast.info(
+          data?.periodNumber !== undefined
+            ? `${data.periodNumber === 0 ? "Periode Uji Coba" : `Periode ${data.periodNumber}`} berhasil direset.`
+            : "Eksperimen direset.",
+          { id: "admin-exp-reset" }
+        );
+      }
     });
 
     // Session events
@@ -900,6 +907,7 @@ export default function AdminSchedulerBoard() {
     socket.on("admin-error", (data: { message: string }) => {
       toast.error(data.message, { id: "admin-err" });
       setStartingPeriod(null);
+      setIsResetting(false);
     });
 
     setLoading(false);

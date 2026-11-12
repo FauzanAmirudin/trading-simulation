@@ -465,6 +465,27 @@ function TradingPageContent() {
       setIsPaused(false);
       toast.success("Periode selesai!");
     };
+    const onExperimentReset = (data?: { mode?: string }) => {
+      onRoundEnded();
+      if (data?.mode === "full") {
+        if (typeof window !== "undefined" && user?.id) {
+          try {
+            sessionStorage.removeItem(`simulasi_qs_done_${user.id}`);
+            sessionStorage.removeItem(`simulasi_eval_done_${user.id}`);
+          } catch {}
+        }
+        if (user?.role === "responden") {
+          toast.warning("Eksperimen direset penuh. Mengalihkan ke pengisian kuesioner awal...", { id: "trading-exp-reset" });
+          router.push("/questionnaire");
+          return;
+        }
+      }
+      toast.info("Eksperimen telah direset oleh admin.", { id: "trading-exp-reset" });
+    };
+    const onPeriodAborted = () => {
+      onRoundEnded();
+      toast.warning("Sesi perdagangan telah dihentikan oleh admin.", { id: "trading-period-aborted" });
+    };
     const onExperimentEnded = () => { toast.success("Eksperimen selesai! Terima kasih."); };
     const onSimulationFinished = () => {
       const alreadyDone =
@@ -668,6 +689,8 @@ function TradingPageContent() {
     socket.on("simulation-finished", onSimulationFinished);
     socket.on("session-completed", onSessionCompleted);
     socket.on("intervention-triggered", onInterventionTriggered);
+    socket.on("experiment-reset", onExperimentReset);
+    socket.on("period-aborted", onPeriodAborted);
     socket.on("scheduler-state", onSchedulerState);
     socket.on("portfolio-data", onPortfolioInitial);
     socket.on("portfolio-initial", onPortfolioInitial);
@@ -703,6 +726,8 @@ function TradingPageContent() {
       socket.off("trade-executed", onTradeExecuted);
       socket.off("order-book-update", onOrderBookUpdateGlobal);
       socket.off("orderbook-snapshot", onOrderBookUpdateGlobal);
+      socket.off("experiment-reset", onExperimentReset);
+      socket.off("period-aborted", onPeriodAborted);
       socket.off("user-predictions-loaded", onUserPredictionsLoaded);
       socket.off("prediction-saved", onPredictionSaved);
     };

@@ -124,6 +124,8 @@ logs/
 *.dump
 *.backup
 *.bak
+backups/*
+!backups/.gitkeep
 *.sqlite
 *.sqlite3
 *.db

@@ -319,7 +319,21 @@ export default function DashboardPage() {
       }
     };
 
-    const onExperimentReset = clearHistory;
+    const onExperimentReset = (data?: { mode?: string }) => {
+      clearHistory();
+      if (data?.mode === "full") {
+        if (typeof window !== "undefined" && user?.id) {
+          try {
+            sessionStorage.removeItem(`simulasi_qs_done_${user.id}`);
+            sessionStorage.removeItem(`simulasi_eval_done_${user.id}`);
+          } catch {}
+        }
+        if (user?.role === "responden") {
+          toast.warning("Eksperimen direset penuh. Mengalihkan ke kuesioner awal...", { id: "dashboard-exp-reset" });
+          router.push("/questionnaire");
+        }
+      }
+    };
     const onPeriodAborted = clearHistory;
     const onPortfolioData = (data: { portfolio: any[] }) => {
       if (!Array.isArray(data?.portfolio)) return;

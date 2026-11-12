@@ -19,6 +19,7 @@ import {
   ClipboardCheck,
   Brain,
   UserCheck,
+  HardDrive,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -42,6 +43,7 @@ const adminNav: NavItem[] = [
   { label: "Evaluasi", href: "/admin/evaluasi", icon: <ClipboardCheck className="size-4" /> },
   { label: "Resume", href: "/admin/resume", icon: <ScrollText className="size-4" /> },
   { label: "Hasil", href: "/admin/hasil", icon: <Trophy className="size-4" /> },
+  { label: "Backup Data", href: "/admin/backup", icon: <HardDrive className="size-4" /> },
 ];
 
 

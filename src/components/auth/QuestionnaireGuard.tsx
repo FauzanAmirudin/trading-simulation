@@ -119,22 +119,21 @@ export default function QuestionnaireGuard({
             sessionStorage.setItem(`simulasi_qs_done_${user.id}`, "true");
           } catch {}
         } else {
-          // If server says not completed, verify if local session was just completed
-          const wasRecentlyCompleted =
-            typeof window !== "undefined" &&
-            sessionStorage.getItem(`simulasi_qs_done_${user.id}`) === "true";
-
-          if (!wasRecentlyCompleted) {
-            if (pathname !== "/questionnaire") {
-              router.push("/questionnaire");
-              return;
-            }
-            if (isMounted) {
-              setIsAllowed(true);
-              setChecking(false);
-            }
+          // Server database is authoritative: respondent has NOT completed questionnaire
+          if (typeof window !== "undefined") {
+            try {
+              sessionStorage.removeItem(`simulasi_qs_done_${user.id}`);
+            } catch {}
+          }
+          if (pathname !== "/questionnaire") {
+            router.push("/questionnaire");
             return;
           }
+          if (isMounted) {
+            setIsAllowed(true);
+            setChecking(false);
+          }
+          return;
         }
 
         // 2. Check evaluation questionnaire status (Periode 3 Sesi 4 selesai)
@@ -157,11 +156,12 @@ export default function QuestionnaireGuard({
               sessionStorage.setItem(`simulasi_eval_done_${user.id}`, "true");
             } catch {}
           } else {
-            const evalDoneLocally =
-              typeof window !== "undefined" &&
-              sessionStorage.getItem(`simulasi_eval_done_${user.id}`) === "true";
-
-            if (evalData.success && evalData.isSimulationEnded && !evalData.isCompleted && !evalDoneLocally) {
+            if (typeof window !== "undefined") {
+              try {
+                sessionStorage.removeItem(`simulasi_eval_done_${user.id}`);
+              } catch {}
+            }
+            if (evalData.success && evalData.isSimulationEnded && !evalData.isCompleted) {
               // Simulation ended but respondent hasn't filled evaluation: FORCE TO EVALUATION
               if (pathname !== "/questionnaire/evaluation") {
                 router.push("/questionnaire/evaluation");
@@ -221,10 +221,45 @@ export default function QuestionnaireGuard({
     socket.on("simulation-finished", handleSimulationFinished);
     socket.on("session-completed", handleSessionCompleted);
 
+    const handleExperimentReset = (data?: { mode?: string }) => {
+      if (data?.mode === "full") {
+        if (typeof window !== "undefined" && user?.id) {
+          try {
+            sessionStorage.removeItem(`simulasi_qs_done_${user.id}`);
+            sessionStorage.removeItem(`simulasi_eval_done_${user.id}`);
+          } catch {}
+        }
+        if (user?.role === "responden") {
+          setIsAllowed(false);
+          setChecking(true);
+          toast.warning("Eksperimen direset penuh. Anda diarahkan untuk mengisi kuesioner dari awal.", { id: "reset-redirect" });
+          router.push("/questionnaire");
+        }
+      }
+    };
+
+    const handleForceQuestionnaire = () => {
+      if (typeof window !== "undefined" && user?.id) {
+        try {
+          sessionStorage.removeItem(`simulasi_qs_done_${user.id}`);
+          sessionStorage.removeItem(`simulasi_eval_done_${user.id}`);
+        } catch {}
+      }
+      if (user?.role === "responden") {
+        setIsAllowed(false);
+        setChecking(true);
+        router.push("/questionnaire");
+      }
+    };
+
+    socket.on("experiment-reset", handleExperimentReset);
+    socket.on("force-questionnaire", handleForceQuestionnaire);
     return () => {
       isMounted = false;
       socket.off("simulation-finished", handleSimulationFinished);
       socket.off("session-completed", handleSessionCompleted);
+      socket.off("experiment-reset", handleExperimentReset);
+      socket.off("force-questionnaire", handleForceQuestionnaire);
     };
   }, [hydrated, user, pathname, router]);
 
