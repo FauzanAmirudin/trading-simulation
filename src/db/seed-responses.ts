@@ -348,6 +348,17 @@ export async function seedRespondents1To100() {
     "CREATE UNIQUE INDEX IF NOT EXISTS simulation_evaluations_user_idx ON simulation_evaluations(user_id);\n",
   ];
 
+  sqlStatements.push("-- ====================================================================");
+  sqlStatements.push("-- 1. AKUN RESPONDEN (responden1 - responden100)");
+  sqlStatements.push("-- ====================================================================");
+  for (let i = 1; i <= 100; i++) {
+    sqlStatements.push(
+      `INSERT INTO users (nama, password, role, saldo, created_at, updated_at) ` +
+      `SELECT 'responden${i}', '${passwordHash}', 'responden', '100000000.00', NOW(), NOW() ` +
+      `WHERE NOT EXISTS (SELECT 1 FROM users WHERE nama = 'responden${i}');`
+    );
+  }
+
   console.log("Sedang memproses input data biodata, jawaban instrumen, dan profil psikologis...");
 
   let processedCount = 0;
@@ -355,6 +366,7 @@ export async function seedRespondents1To100() {
   for (let idx = 0; idx < 100; idx++) {
     const respondentNum = idx + 1;
     const user = targetRespondents[idx];
+    const userUidExpr = `(SELECT id FROM users WHERE nama = 'responden${respondentNum}')`;
     const groupIdx = idx < 90 ? Math.floor(idx / 10) : (idx - 90) % 9; // 0..8 seimbang
     const groupDef = groupAssignments[groupIdx];
 
@@ -403,10 +415,9 @@ export async function seedRespondents1To100() {
 
     sqlStatements.push(
       `INSERT INTO respondent_biodata (user_id, jenis_kelamin, usia, program_studi, semester, pernah_investasi_saham, pernah_pelatihan_investasi, sumber_penghasilan, sumber_penghasilan_lainnya, jurusan_sma, created_at, updated_at) ` +
-        `VALUES (${user.id}, '${gender}', ${usia}, '${prodi}', ${semester}, '${pernahSaham}', '${pernahPelatihan}', '${sumberP}', ${sumberLain ? `'${sumberLain}'` : "NULL"}, '${jurusanSma}', NOW(), NOW()) ` +
+        `VALUES (${userUidExpr}, '${gender}', ${usia}, '${prodi}', ${semester}, '${pernahSaham}', '${pernahPelatihan}', '${sumberP}', ${sumberLain ? `'${sumberLain}'` : "NULL"}, '${jurusanSma}', NOW(), NOW()) ` +
         `ON CONFLICT (user_id) DO UPDATE SET jenis_kelamin = EXCLUDED.jenis_kelamin, usia = EXCLUDED.usia, program_studi = EXCLUDED.program_studi, semester = EXCLUDED.semester, pernah_investasi_saham = EXCLUDED.pernah_investasi_saham, pernah_pelatihan_investasi = EXCLUDED.pernah_pelatihan_investasi, sumber_penghasilan = EXCLUDED.sumber_penghasilan, sumber_penghasilan_lainnya = EXCLUDED.sumber_penghasilan_lainnya, jurusan_sma = EXCLUDED.jurusan_sma, updated_at = NOW();`
     );
-
     // ── B. JAWABAN KUESIONER LA & EI (15 BUTIR MASING-MASING) ──
     const laRes = generate15ScoresForCategory(groupDef.laCat);
     const eiRes = generate15ScoresForCategory(groupDef.eiCat);
@@ -416,8 +427,7 @@ export async function seedRespondents1To100() {
       .delete(questionnaireResponses)
       .where(eq(questionnaireResponses.userId, user.id));
 
-    sqlStatements.push(`DELETE FROM questionnaire_responses WHERE user_id = ${user.id};`);
-
+    sqlStatements.push(`DELETE FROM questionnaire_responses WHERE user_id = ${userUidExpr};`);
     const responsesToInsert: {
       userId: number;
       questionId: number;
@@ -434,7 +444,7 @@ export async function seedRespondents1To100() {
         score,
       });
       sqlStatements.push(
-        `INSERT INTO questionnaire_responses (user_id, question_id, instrument, score, created_at) VALUES (${user.id}, ${q.id}, 'LA', ${score}, NOW()) ON CONFLICT (user_id, question_id) DO UPDATE SET score = EXCLUDED.score;`
+        `INSERT INTO questionnaire_responses (user_id, question_id, instrument, score, created_at) VALUES (${userUidExpr}, ${q.id}, 'LA', ${score}, NOW()) ON CONFLICT (user_id, question_id) DO UPDATE SET score = EXCLUDED.score;`
       );
     });
 
@@ -447,7 +457,7 @@ export async function seedRespondents1To100() {
         score,
       });
       sqlStatements.push(
-        `INSERT INTO questionnaire_responses (user_id, question_id, instrument, score, created_at) VALUES (${user.id}, ${q.id}, 'EI', ${score}, NOW()) ON CONFLICT (user_id, question_id) DO UPDATE SET score = EXCLUDED.score;`
+        `INSERT INTO questionnaire_responses (user_id, question_id, instrument, score, created_at) VALUES (${userUidExpr}, ${q.id}, 'EI', ${score}, NOW()) ON CONFLICT (user_id, question_id) DO UPDATE SET score = EXCLUDED.score;`
       );
     });
 
@@ -496,7 +506,7 @@ export async function seedRespondents1To100() {
 
     sqlStatements.push(
       `INSERT INTO respondent_profiles (user_id, la_raw_score, la_avg_score, la_category, ei_raw_score, ei_avg_score, ei_category, profile_code, profile_label, profile_group, is_completed, completed_at, created_at, updated_at) ` +
-        `VALUES (${user.id}, ${laRes.sum}, '${laAvg.toFixed(2)}', '${groupDef.laCat}', ${eiRes.sum}, '${eiAvg.toFixed(2)}', '${groupDef.eiCat}', '${profileDef.code}', '${profileDef.label}', '${profileDef.group}', true, '${completedAt.toISOString()}', NOW(), NOW()) ` +
+        `VALUES (${userUidExpr}, ${laRes.sum}, '${laAvg.toFixed(2)}', '${groupDef.laCat}', ${eiRes.sum}, '${eiAvg.toFixed(2)}', '${groupDef.eiCat}', '${profileDef.code}', '${profileDef.label}', '${profileDef.group}', true, '${completedAt.toISOString()}', NOW(), NOW()) ` +
         `ON CONFLICT (user_id) DO UPDATE SET la_raw_score = EXCLUDED.la_raw_score, la_avg_score = EXCLUDED.la_avg_score, la_category = EXCLUDED.la_category, ei_raw_score = EXCLUDED.ei_raw_score, ei_avg_score = EXCLUDED.ei_avg_score, ei_category = EXCLUDED.ei_category, profile_code = EXCLUDED.profile_code, profile_label = EXCLUDED.profile_label, profile_group = EXCLUDED.profile_group, is_completed = true, completed_at = EXCLUDED.completed_at, updated_at = NOW();`
     );
 
@@ -563,7 +573,7 @@ export async function seedRespondents1To100() {
     const answersJsonEscaped = JSON.stringify(evalAnswersObj).replace(/'/g, "''");
     sqlStatements.push(
       `INSERT INTO simulation_evaluations (user_id, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, answers, is_completed, completed_at, created_at, updated_at) ` +
-        `VALUES (${user.id}, ${evalScores[1]}, ${evalScores[2]}, ${evalScores[3]}, ${evalScores[4]}, ${evalScores[5]}, ${evalScores[6]}, ${evalScores[7]}, ${evalScores[8]}, ${evalScores[9]}, ${evalScores[10]}, '${answersJsonEscaped}', true, '${evalCompletedAt.toISOString()}', NOW(), NOW()) ` +
+        `VALUES (${userUidExpr}, ${evalScores[1]}, ${evalScores[2]}, ${evalScores[3]}, ${evalScores[4]}, ${evalScores[5]}, ${evalScores[6]}, ${evalScores[7]}, ${evalScores[8]}, ${evalScores[9]}, ${evalScores[10]}, '${answersJsonEscaped}', true, '${evalCompletedAt.toISOString()}', NOW(), NOW()) ` +
         `ON CONFLICT (user_id) DO UPDATE SET q1 = EXCLUDED.q1, q2 = EXCLUDED.q2, q3 = EXCLUDED.q3, q4 = EXCLUDED.q4, q5 = EXCLUDED.q5, q6 = EXCLUDED.q6, q7 = EXCLUDED.q7, q8 = EXCLUDED.q8, q9 = EXCLUDED.q9, q10 = EXCLUDED.q10, answers = EXCLUDED.answers, is_completed = true, completed_at = EXCLUDED.completed_at, updated_at = NOW();`
     );
 
@@ -573,6 +583,16 @@ export async function seedRespondents1To100() {
   // 4. Pastikan alokasi portofolio awal (10 lot/saham) untuk 100 responden
   console.log("Memverifikasi portofolio awal 10 lot per saham...");
   await seedInitialPortfolios(10);
+  sqlStatements.push("\n-- ====================================================================");
+  sqlStatements.push("-- 5. ALOKASI PORTOFOLIO AWAL 10 LOT PER SAHAM");
+  sqlStatements.push("-- ====================================================================");
+  sqlStatements.push(
+    `INSERT INTO portfolios (user_id, stock_id, jumlah_lot, average_price, created_at, updated_at) ` +
+      `SELECT u.id, s.id, 10, s.base_price, NOW(), NOW() ` +
+      `FROM users u, stocks s ` +
+      `WHERE u.role = 'responden' ` +
+      `ON CONFLICT (user_id, stock_id) DO NOTHING;\n`
+  );
 
   // 5. Simpan file SQL siap pakai untuk eksekusi langsung di VPS
   const sqlFilePath = path.join(process.cwd(), "drizzle", "seed_100_respondents.sql");
