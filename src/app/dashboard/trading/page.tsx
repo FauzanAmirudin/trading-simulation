@@ -26,6 +26,10 @@ type Stock = {
   kodeSaham: string;
   namaSaham: string;
   basePrice: number | string;
+  priceT1?: number;
+  priceT2?: number;
+  priceT3?: number;
+  isTrial?: boolean;
 };
 type Order = { id: number; userId: number; harga: number; jumlah: number };
 type PricePoint = { time: string; price: number };
@@ -254,8 +258,8 @@ function TradingPageContent() {
   // Real-time portfolios map (stockId -> lot) and last prices (stockId -> lastPrice)
   const [portfoliosMap, setPortfoliosMap] = useState<Record<number, number>>({});
   const [basePricesMap, setBasePricesMap] = useState<Record<number, number>>({});
+  const [trialStockIds, setTrialStockIds] = useState<Set<number>>(new Set());
   const [lastPrices, setLastPrices] = useState<Record<number, number>>({});
-  // Initialize lastPrices when stocks list updates
 
   // Initialize lastPrices when stocks list updates
   useEffect(() => {
@@ -575,15 +579,21 @@ function TradingPageContent() {
       }
     };
 
-    const onPortfolioInitial = (data: { portfolio: { stockId: number; jumlahLot: number; basePrice?: number | string }[] }) => {
+    const onPortfolioInitial = (data: { portfolio: { stockId: number; jumlahLot: number; basePrice?: number | string; isTrial?: boolean }[] }) => {
       const initialMap: Record<number, number> = {};
       const baseMap: Record<number, number> = {};
+      const trials = new Set<number>();
       data.portfolio.forEach(p => {
         initialMap[p.stockId] = p.jumlahLot;
-        if (p.basePrice) baseMap[p.stockId] = Number(p.basePrice);
+        if (p.isTrial) {
+          trials.add(p.stockId);
+        } else if (p.basePrice) {
+          baseMap[p.stockId] = Number(p.basePrice);
+        }
       });
       setPortfoliosMap(initialMap);
       setBasePricesMap(baseMap);
+      setTrialStockIds(trials);
     };
     const onBalanceUpdate = (data: { userId: number; balance: number }) => {
       if (user && data.userId === user.id) {
@@ -761,11 +771,18 @@ function TradingPageContent() {
     if (!user || !stockId) return;
     const socket = getSocket();
 
-    // Instant zero-lag baseline price initialization with valid BEI tick snap
+    // Instant zero-lag baseline price initialization with historical t-3 -> t-2 -> t-1 trajectory
     const rawBase = openingPrices[stockId] || lastPrices[stockId] || (stock ? Number(stock.basePrice) : 1000);
     const initialBase = snapToTickSize(rawBase);
+    const t3 = stock?.priceT3 ? Number(stock.priceT3) : 0;
+    const t2 = stock?.priceT2 ? Number(stock.priceT2) : 0;
+    const historicalBasePoints: PricePoint[] = [
+      ...(t3 > 0 ? [{ time: "t-3", price: t3 }] : []),
+      ...(t2 > 0 ? [{ time: "t-2", price: t2 }] : []),
+      { time: "t-1", price: initialBase },
+    ];
     setCurrentPrice(initialBase);
-    setPriceHistory([{ time: "Pra-Buka", price: initialBase }]);
+    setPriceHistory(historicalBasePoints);
 
     const onPriceHistorySnapshot = (data: { history: { timestamp: string; price: number }[] }) => {
       const formatted = data.history.map(h => ({
@@ -773,8 +790,8 @@ function TradingPageContent() {
         price: h.price,
       }));
       const base = initialBase;
-      const withPraBuka = [{ time: "Pra-Buka", price: base }, ...formatted];
-      setPriceHistory(withPraBuka);
+      const withHistorical = [...historicalBasePoints, ...formatted];
+      setPriceHistory(withHistorical);
       if (formatted.length > 0) {
         const last = formatted[formatted.length - 1].price;
         setCurrentPrice(last);
@@ -831,9 +848,15 @@ function TradingPageContent() {
     setPortfolio(null);
     const rawBase = openingPrices[s.id] || lastPrices[s.id] || Number(s.basePrice) || 1000;
     const base = snapToTickSize(rawBase);
+    const t3 = s.priceT3 ? Number(s.priceT3) : 0;
+    const t2 = s.priceT2 ? Number(s.priceT2) : 0;
     setCurrentPrice(base);
     setPriceChange(0);
-    setPriceHistory([{ time: "Mulai", price: base }]);
+    setPriceHistory([
+      ...(t3 > 0 ? [{ time: "t-3", price: t3 }] : []),
+      ...(t2 > 0 ? [{ time: "t-2", price: t2 }] : []),
+      { time: "t-1", price: base },
+    ]);
     if (userStockOrders[s.id]) {
       setOrderType(userStockOrders[s.id].tipe as "BID" | "ASK");
       setOrderPrice(String(userStockOrders[s.id].harga));
@@ -993,6 +1016,7 @@ function TradingPageContent() {
 
   const totalStockValue = Object.entries(portfoliosMap).reduce((sum, [sIdStr, lot]) => {
     const sId = Number(sIdStr);
+    if (trialStockIds.has(sId)) return sum;
     const price = lastPrices[sId] || openingPricesRef.current[sId] || basePricesMap[sId] || 1000;
     return sum + (lot * 100 * price);
   }, 0);
@@ -1253,6 +1277,9 @@ function TradingPageContent() {
                             <div className="text-xs sm:text-sm font-extrabold text-foreground">
                               Rp {lastP.toLocaleString("id-ID")}
                             </div>
+                            <div className="text-[8.5px] text-muted-foreground font-mono">
+                              t-3: {Number(s.priceT3 ?? s.basePrice).toLocaleString("id-ID")} · t-2: {Number(s.priceT2 ?? s.basePrice).toLocaleString("id-ID")}
+                            </div>
                             <div className={cn(
                               "text-[9.5px] font-bold flex items-center justify-end gap-0.5",
                               isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
@@ -1495,6 +1522,28 @@ function TradingPageContent() {
                                   isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
                                 )}>
                                   {isPositive ? "+" : ""}{chg.toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Historical t-3, t-2, t-1 Prices (Ordered Left to Right, t-1 rightmost as primary) */}
+                            <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-border/40 text-center font-mono">
+                              <div className="rounded-lg bg-muted/40 px-1.5 py-1">
+                                <span className="text-[8px] font-sans text-muted-foreground uppercase block">Harga t-3</span>
+                                <span className="text-[10.5px] font-bold text-muted-foreground">
+                                  Rp {Number(stock.priceT3 ?? stock.basePrice).toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                              <div className="rounded-lg bg-muted/40 px-1.5 py-1">
+                                <span className="text-[8px] font-sans text-muted-foreground uppercase block">Harga t-2</span>
+                                <span className="text-[10.5px] font-bold text-muted-foreground">
+                                  Rp {Number(stock.priceT2 ?? stock.basePrice).toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                              <div className="rounded-lg bg-primary/10 border border-primary/25 px-1.5 py-1">
+                                <span className="text-[8px] font-sans text-primary font-bold uppercase block">Harga t-1</span>
+                                <span className="text-[10.5px] font-black text-foreground">
+                                  Rp {modalStockPrice.toLocaleString("id-ID")}
                                 </span>
                               </div>
                             </div>
@@ -2069,27 +2118,44 @@ function TradingPageContent() {
                           </p>
                         </div>
 
-                        {/* Middle: Price Banner Real-Time */}
+                        {/* Middle: Historical Price Strip (t-3 | t-2 | t-1 Acuan Utama) */}
                         <div className="p-3 rounded-2xl bg-muted/30 border border-border/60 space-y-2">
-                          <div className="flex items-center justify-between font-mono">
-                            <div>
-                              <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
-                                Harga Penutupan (Harga H-1)
-                              </span>
-                              <span className="font-black text-lg text-foreground">
-                                Rp {lastP.toLocaleString("id-ID")}
-                              </span>
+                          <div className="flex items-center justify-between gap-2 font-mono">
+                            <div className="grid grid-cols-3 gap-2 flex-1">
+                              <div>
+                                <span className="text-[8.5px] font-sans font-semibold text-muted-foreground uppercase block">
+                                  Harga t-3
+                                </span>
+                                <span className="font-bold text-xs text-muted-foreground">
+                                  Rp {Number(s.priceT3 ?? s.basePrice).toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[8.5px] font-sans font-semibold text-muted-foreground uppercase block">
+                                  Harga t-2
+                                </span>
+                                <span className="font-bold text-xs text-muted-foreground">
+                                  Rp {Number(s.priceT2 ?? s.basePrice).toLocaleString("id-ID")}
+                                </span>
+                              </div>
+                              <div className="text-right pr-1">
+                                <span className="text-[8.5px] font-sans font-bold text-primary uppercase block">
+                                  Harga t-1 (H-1)
+                                </span>
+                                <span className="font-black text-sm text-foreground">
+                                  Rp {lastP.toLocaleString("id-ID")}
+                                </span>
+                              </div>
                             </div>
 
                             <div className={cn(
-                              "px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 shrink-0",
+                              "px-2 py-1 rounded-xl text-[11px] font-bold border flex items-center gap-0.5 shrink-0",
                               isPositive ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
                             )}>
-                              {isPositive ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
+                              {isPositive ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
                               <span>{isPositive ? "+" : ""}{chg.toFixed(1)}%</span>
                             </div>
                           </div>
-
                           <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10.5px] text-muted-foreground font-mono">
                             <span>ARA: <b className="text-foreground">Rp {upper.toLocaleString("id-ID")}</b></span>
                             <span>·</span>
@@ -2242,12 +2308,32 @@ function TradingPageContent() {
                         </div>
                       </div>
 
-                      {/* Big Live Price Display */}
-                      <div className="flex items-center gap-4 shrink-0 font-mono text-right">
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-sans font-semibold">Harga Penutupan (Harga H-1)</div>
-                          <div className="text-2xl font-black text-foreground">
-                            Rp {activeStockPrice.toLocaleString("id-ID")}
+                      {/* Side-by-Side Historical & Closing Reference Prices (t-3 | t-2 | t-1 Acuan Utama paling kanan) */}
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 shrink-0 font-mono text-right">
+                        <div className="flex items-center gap-3 sm:gap-4 px-3.5 py-2 rounded-2xl bg-muted/40 border border-border/60">
+                          <div className="text-right pr-3 sm:pr-4 border-r border-border/60">
+                            <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground font-sans font-semibold">
+                              Harga t-3
+                            </div>
+                            <div className="text-sm sm:text-base font-bold text-muted-foreground">
+                              Rp {Number(activeStock.priceT3 ?? activeStock.basePrice).toLocaleString("id-ID")}
+                            </div>
+                          </div>
+                          <div className="text-right pr-3 sm:pr-4 border-r border-border/60">
+                            <div className="text-[9.5px] uppercase tracking-wider text-muted-foreground font-sans font-semibold">
+                              Harga t-2
+                            </div>
+                            <div className="text-sm sm:text-base font-bold text-muted-foreground">
+                              Rp {Number(activeStock.priceT2 ?? activeStock.basePrice).toLocaleString("id-ID")}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] uppercase tracking-wider text-primary font-sans font-bold">
+                              Harga Penutupan (t-1)
+                            </div>
+                            <div className="text-xl sm:text-2xl font-black text-foreground">
+                              Rp {activeStockPrice.toLocaleString("id-ID")}
+                            </div>
                           </div>
                         </div>
 

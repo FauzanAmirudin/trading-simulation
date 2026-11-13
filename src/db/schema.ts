@@ -48,6 +48,9 @@ export const stocks = pgTable("stocks", {
   kodeSaham: varchar("kode_saham", { length: 10 }).notNull().unique(),
   namaSaham: varchar("nama_saham", { length: 255 }).notNull(),
   basePrice: decimal("base_price", { precision: 15, scale: 2 }).notNull(),
+  priceT2: decimal("price_t2", { precision: 15, scale: 2 }),
+  priceT3: decimal("price_t3", { precision: 15, scale: 2 }),
+  isTrial: boolean("is_trial").default(false).notNull(),
 });
 
 // === ROUND STOCKS — which 3 stocks are active per round ===

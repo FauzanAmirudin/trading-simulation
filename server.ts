@@ -17,6 +17,7 @@ import {
 import { isValidTickSize, getTickSize, getAutoRejectionLimits } from "./src/lib/market-rules";
 import { createFullBackup } from "./src/lib/backup-service";
 import type { BackupResult } from "./src/lib/backup-service";
+import { ensureStocksSchemaAndSync } from "./src/db/stocks-data";
 
 // ============================================================
 // SERVER SETUP
@@ -37,6 +38,7 @@ type OrderType = {
 };
 type StockRow = {
   id: number; kodeSaham: string; namaSaham: string; basePrice: string;
+  priceT2: string | null; priceT3: string | null; isTrial: boolean;
 };
 
 // ============================================================
@@ -221,6 +223,10 @@ function getSchedulerStatePayload() {
       kodeSaham: s.kodeSaham,
       namaSaham: s.namaSaham,
       basePrice: Number(s.basePrice),
+      priceT1: Number(s.basePrice),
+      priceT2: s.priceT2 ? Number(s.priceT2) : Number(s.basePrice),
+      priceT3: s.priceT3 ? Number(s.priceT3) : Number(s.basePrice),
+      isTrial: Boolean(s.isTrial),
     })),
     openingPrices: activeOpeningPrices,
     interventionCache,
@@ -773,7 +779,10 @@ async function runRound(
   const roundDef = session.rounds[roundIdx];
   const periodNumber = periodConfig.periodNumber;
 
-  const rows = await db.select({ id: stocks.id, kodeSaham: stocks.kodeSaham, namaSaham: stocks.namaSaham, basePrice: stocks.basePrice })
+  const rows = await db.select({
+    id: stocks.id, kodeSaham: stocks.kodeSaham, namaSaham: stocks.namaSaham,
+    basePrice: stocks.basePrice, priceT2: stocks.priceT2, priceT3: stocks.priceT3, isTrial: stocks.isTrial,
+  })
     .from(stocks).where(inArray(stocks.kodeSaham, roundDef.stockCodes));
     
   let orderedStocks = roundDef.stockCodes
@@ -840,7 +849,14 @@ async function runRound(
     sessionNumber: session.sessionNumber,
     sessionLabel: session.label,
     stocks: orderedStocks.map(s => ({
-      id: s.id, kodeSaham: s.kodeSaham, namaSaham: s.namaSaham, basePrice: Number(s.basePrice),
+      id: s.id,
+      kodeSaham: s.kodeSaham,
+      namaSaham: s.namaSaham,
+      basePrice: Number(s.basePrice),
+      priceT1: Number(s.basePrice),
+      priceT2: s.priceT2 ? Number(s.priceT2) : Number(s.basePrice),
+      priceT3: s.priceT3 ? Number(s.priceT3) : Number(s.basePrice),
+      isTrial: Boolean(s.isTrial),
     })),
   });
 
@@ -1117,6 +1133,7 @@ app.prepare().then(async () => {
     }
   }
 
+  await ensureStocksSchemaAndSync();
   await loadInterventionCache();
   await loadPeriodStates();
   await loadLastTradedPrices();
@@ -1177,7 +1194,16 @@ app.prepare().then(async () => {
                 periodLabel: pc.label,
                 sessionNumber: session.sessionNumber,
                 sessionLabel: session.label,
-                stocks: activeStocks.map(s => ({ id: s.id, kodeSaham: s.kodeSaham, namaSaham: s.namaSaham, basePrice: Number(s.basePrice) })),
+                stocks: activeStocks.map(s => ({
+                  id: s.id,
+                  kodeSaham: s.kodeSaham,
+                  namaSaham: s.namaSaham,
+                  basePrice: Number(s.basePrice),
+                  priceT1: Number(s.basePrice),
+                  priceT2: s.priceT2 ? Number(s.priceT2) : Number(s.basePrice),
+                  priceT3: s.priceT3 ? Number(s.priceT3) : Number(s.basePrice),
+                  isTrial: Boolean(s.isTrial),
+                })),
               });
               socket.emit("sub-session-started", {
                 roundNumber: (activeRoundIdx ?? 0) + 1,
@@ -1850,10 +1876,10 @@ app.prepare().then(async () => {
         nama: stocks.namaSaham, jumlahLot: portfolios.jumlahLot,
         avgPrice: portfolios.averagePrice,
         basePrice: stocks.basePrice,
+        isTrial: stocks.isTrial,
       }).from(portfolios).innerJoin(stocks, eq(portfolios.stockId, stocks.id))
         .where(eq(portfolios.userId, data.userId))
         .orderBy(stocks.id);
-
       // Auto-heal: jika responden belum memiliki portofolio, seed otomatis
       if (portfolio.length === 0) {
         const [u] = await db.select().from(users).where(eq(users.id, data.userId)).limit(1);
@@ -1873,6 +1899,7 @@ app.prepare().then(async () => {
               nama: stocks.namaSaham, jumlahLot: portfolios.jumlahLot,
               avgPrice: portfolios.averagePrice,
               basePrice: stocks.basePrice,
+              isTrial: stocks.isTrial,
             }).from(portfolios).innerJoin(stocks, eq(portfolios.stockId, stocks.id))
               .where(eq(portfolios.userId, data.userId))
               .orderBy(stocks.id);
@@ -1890,6 +1917,7 @@ app.prepare().then(async () => {
             jumlahLot: p.jumlahLot,
             avgPrice: Number(p.avgPrice),
             basePrice: Number(p.basePrice),
+            isTrial: Boolean(p.isTrial),
             currentPrice: currentP,
             currentValue: currentP * p.jumlahLot * 100,
           };

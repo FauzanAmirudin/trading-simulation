@@ -31,7 +31,7 @@ export async function generateHasilWorkbook(options: HasilExportOptions = {}): P
       return null;
     }
 
-    const allStocks = await db.select().from(stocks);
+    const allStocks = await db.select().from(stocks).where(eq(stocks.isTrial, false));
     const stockMap = Object.fromEntries(allStocks.map(s => [s.id, s]));
 
     // Fetch and filter valid rounds (kecualikan Periode 0 / Sesi Uji Coba dari laporan export Excel)

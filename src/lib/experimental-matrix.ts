@@ -48,7 +48,7 @@ export const DURATIONS = {
 // ============================================================
 export const PERIOD_MATRIX: PeriodDef[] = [
 
-  // ── PERIOD 0: Sesi Uji Coba (2 Sesi Sebelum Periode I) ────────
+  // ── PERIOD 0: Sesi Uji Coba (4 Sesi Sebelum Periode I, Saham AA s/d DC) ──
   {
     periodNumber: 0,
     label: "Periode Uji Coba",
@@ -59,7 +59,7 @@ export const PERIOD_MATRIX: PeriodDef[] = [
         intervention: "NONE",
         hasTrading: true,
         rounds: [
-          { stockCodes: ["S-1", "S-2", "S-3"] },
+          { stockCodes: ["AA", "AB", "AC"] },
         ],
       },
       {
@@ -68,7 +68,25 @@ export const PERIOD_MATRIX: PeriodDef[] = [
         intervention: "NONE",
         hasTrading: true,
         rounds: [
-          { stockCodes: ["S-4", "S-5", "S-6"] },
+          { stockCodes: ["BA", "BB", "BC"] },
+        ],
+      },
+      {
+        sessionNumber: 3,
+        label: "Sesi Uji Coba 3",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["CA", "CB", "CC"] },
+        ],
+      },
+      {
+        sessionNumber: 4,
+        label: "Sesi Uji Coba 4",
+        intervention: "NONE",
+        hasTrading: true,
+        rounds: [
+          { stockCodes: ["DA", "DB", "DC"] },
         ],
       },
     ],

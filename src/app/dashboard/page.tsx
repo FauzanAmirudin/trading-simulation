@@ -338,9 +338,11 @@ export default function DashboardPage() {
     const onPortfolioData = (data: { portfolio: any[] }) => {
       if (!Array.isArray(data?.portfolio)) return;
       setPortfolio(
-        data.portfolio.map((p: any) => {
-          const curPrice = Number(p.currentPrice) || Number(p.avgPrice) || Number(p.basePrice) || 0;
-          const lot = Number(p.jumlahLot) || 0;
+        data.portfolio
+          .filter((p: any) => !p.isTrial)
+          .map((p: any) => {
+            const curPrice = Number(p.currentPrice) || Number(p.avgPrice) || Number(p.basePrice) || 0;
+            const lot = Number(p.jumlahLot) || 0;
           return {
             stockId: p.stockId,
             stock: p.stockCode,

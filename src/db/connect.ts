@@ -114,6 +114,9 @@ export async function ensureQuestionnaireSchema() {
         updated_at timestamp DEFAULT now() NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS simulation_evaluations_user_idx ON simulation_evaluations(user_id);
+      ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_t2 numeric(15, 2);
+      ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_t3 numeric(15, 2);
+      ALTER TABLE stocks ADD COLUMN IF NOT EXISTS is_trial boolean DEFAULT false NOT NULL;
     `);
     schemaEnsured = true;
   } catch (err) {

@@ -12,7 +12,7 @@ export async function GET() {
     // 1. Parallelize all DB queries
     const [allRespondents, allStocks, allPortfolios, allTransactionsRaw, allOrders, allRoundsRaw] = await Promise.all([
       db.select().from(users).where(eq(users.role, "responden")),
-      db.select().from(stocks),
+      db.select().from(stocks).where(eq(stocks.isTrial, false)),
       db.select().from(portfolios),
       db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt),
       db.select({ id: orderBook.id, userId: orderBook.userId }).from(orderBook),
@@ -73,6 +73,7 @@ export async function GET() {
 
       let nilaiPortofolio = 0;
       for (const p of userPortos) {
+        if (!stockBasePrices.has(p.stockId)) continue;
         const lastPrice = lastPrices[p.stockId] ?? stockBasePrices.get(p.stockId) ?? 0;
         nilaiPortofolio += p.jumlahLot * 100 * lastPrice;
       }
