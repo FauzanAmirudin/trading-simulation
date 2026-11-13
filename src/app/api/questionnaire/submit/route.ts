@@ -3,6 +3,7 @@ import { db } from "@/db/connect";
 import { questions, questionnaireResponses, respondentProfiles, respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { classifyByStandardCutoff, getProfileByCategories, computePopulationTerciles } from "@/lib/questionnaire-logic";
+import { isDemoUsername } from "@/lib/demo-users";
 import { getSession } from "@/lib/auth-server";
 
 export const dynamic = "force-dynamic";
@@ -292,11 +293,20 @@ export async function POST(req: NextRequest) {
       // 4. Kalkulasi Ulang Population Terciles Otomatis untuk seluruh responden yang selesai
       // Mengurutkan dari atas ke bawah dan membagi secara seimbang (33.3% per kelompok)
       const allCompletedProfiles = await tx
-        .select()
+        .select({
+          userId: respondentProfiles.userId,
+          laRawScore: respondentProfiles.laRawScore,
+          eiRawScore: respondentProfiles.eiRawScore,
+          userName: users.nama,
+        })
         .from(respondentProfiles)
+        .innerJoin(users, eq(respondentProfiles.userId, users.id))
         .where(eq(respondentProfiles.isCompleted, true));
 
-      const inputs = allCompletedProfiles.map((p) => ({
+      // Filter out demo users so they NEVER skew tercile cutoffs of official respondents
+      const officialCompletedProfiles = allCompletedProfiles.filter((p) => !isDemoUsername(p.userName));
+
+      const inputs = officialCompletedProfiles.map((p) => ({
         userId: p.userId,
         laRawScore: p.userId === uid ? laRaw : p.laRawScore,
         eiRawScore: p.userId === uid ? eiRaw : p.eiRawScore,

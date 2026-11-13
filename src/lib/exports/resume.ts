@@ -3,6 +3,7 @@ import { users, predictions, transactionsHistory, orderBook, rounds, stocks } fr
 import { eq, desc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { sortRespondentsSequentially } from "./sort-utils";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export type ResumeExportOptions = {
   date?: string | null;
@@ -59,8 +60,11 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
   } = options;
 
   try {
-    // Fetch all respondents
-    const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
+    // Fetch all respondents (excluding demo accounts)
+    const allRespondentsRaw = await db.select().from(users).where(eq(users.role, "responden"));
+    const allRespondents = allRespondentsRaw.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(allRespondents.map((u) => u.id));
+
     if (allRespondents.length === 0) {
       return null;
     }
@@ -106,9 +110,20 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
 
     const validRoundIds = new Set<number>(validRounds.map(r => r.id));
 
-    // Fetch all transactions for valid rounds
+    // Fetch all orders for mapping counterparty
+    const allOrders = await db.select().from(orderBook);
+    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
+    const userMap = Object.fromEntries(await db.select().from(users).then(res => res.map(u => [u.id, u.nama])));
+
+    // Fetch and filter all transactions for valid rounds and official respondents only
     const allTransactionsRaw = await db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt);
-    const allTransactions = allTransactionsRaw.filter(tx => validRoundIds.has(tx.roundId));
+    const allTransactions = allTransactionsRaw
+      .filter(tx => validRoundIds.has(tx.roundId))
+      .filter(tx => {
+        const bId = orderUserMap[tx.orderBuyId];
+        const sId = orderUserMap[tx.orderSellId];
+        return (!bId || officialUserIds.has(bId)) && (!sId || officialUserIds.has(sId));
+      });
 
     // Calculate final price per round and stock
     const finalPrices: Record<number, Record<number, number>> = {};
@@ -117,14 +132,9 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
       finalPrices[tx.roundId][tx.stockId] = Number(tx.harga);
     }
 
-    // Fetch all orders for mapping counterparty
-    const allOrders = await db.select().from(orderBook);
-    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
-    const userMap = Object.fromEntries(await db.select().from(users).then(res => res.map(u => [u.id, u.nama])));
-
-    // Fetch all predictions for valid rounds
+    // Fetch all predictions for valid rounds and official respondents only
     const allPredictionsRaw = await db.select().from(predictions).orderBy(predictions.createdAt);
-    const allPredictions = allPredictionsRaw.filter(p => validRoundIds.has(p.roundId));
+    const allPredictions = allPredictionsRaw.filter(p => validRoundIds.has(p.roundId) && officialUserIds.has(p.userId));
 
     // Filter only respondents who actively participated in trading (have predictions or transactions in valid rounds)
     const activeRespondentsRaw = allRespondents.filter(user => {

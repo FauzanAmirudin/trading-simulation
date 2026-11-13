@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { users, portfolios, stocks, transactionsHistory, orderBook, rounds } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -17,7 +18,8 @@ export async function GET() {
       db.select({ id: orderBook.id, userId: orderBook.userId }).from(orderBook),
       db.select({ id: rounds.id, period: rounds.period }).from(rounds),
     ]);
-
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
     // Filter out transactions from trial rounds (period 0)
     const officialRoundIds = new Set(allRoundsRaw.filter((r) => r.period >= 1).map((r) => r.id));
     const allTransactions = allTransactionsRaw.filter((tx) => officialRoundIds.has(tx.roundId));
@@ -65,7 +67,7 @@ export async function GET() {
     }
 
     // Build the results per user
-    const results = allRespondents.map((user) => {
+    const results = officialRespondents.map((user) => {
       const userKas = Number(user.saldo) || 0;
       const userPortos = userPortosMap.get(user.id) || [];
 

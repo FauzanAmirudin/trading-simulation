@@ -3,6 +3,7 @@ import { users, portfolios, stocks, transactionsHistory, orderBook, rounds } fro
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { sortRespondentsSequentially } from "./sort-utils";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export type HasilExportOptions = {
   date?: string | null;
@@ -22,7 +23,10 @@ export async function generateHasilWorkbook(options: HasilExportOptions = {}): P
   } = options;
 
   try {
-    const allRespondents = await db.select().from(users).where(eq(users.role, "responden"));
+    const allRespondentsRaw = await db.select().from(users).where(eq(users.role, "responden"));
+    const allRespondents = allRespondentsRaw.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(allRespondents.map((u) => u.id));
+
     if (allRespondents.length === 0) {
       return null;
     }
@@ -70,9 +74,17 @@ export async function generateHasilWorkbook(options: HasilExportOptions = {}): P
     const validRoundIds = new Set<number>(validRounds.map(r => r.id));
 
     const allPortfolios = await db.select().from(portfolios);
-    const allTransactionsRaw = await db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt);
-    const allTransactions = allTransactionsRaw.filter(tx => validRoundIds.has(tx.roundId));
     const allOrders = await db.select().from(orderBook);
+    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
+
+    const allTransactionsRaw = await db.select().from(transactionsHistory).orderBy(transactionsHistory.createdAt);
+    const allTransactions = allTransactionsRaw
+      .filter(tx => validRoundIds.has(tx.roundId))
+      .filter(tx => {
+        const bId = orderUserMap[tx.orderBuyId];
+        const sId = orderUserMap[tx.orderSellId];
+        return (!bId || officialUserIds.has(bId)) && (!sId || officialUserIds.has(sId));
+      });
 
     // Get last traded price per stock
     const lastPrices: Record<number, number> = {};
@@ -80,8 +92,7 @@ export async function generateHasilWorkbook(options: HasilExportOptions = {}): P
       lastPrices[tx.stockId] = Number(tx.harga);
     }
 
-    // Map order id to user id
-    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
+    // Map order id to user id (already mapped above)
 
     // Transaction count per user
     const txCountPerUser: Record<number, number> = {};

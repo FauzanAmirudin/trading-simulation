@@ -3,6 +3,7 @@ import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, simulationEvaluations } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth-server";
+import { isDemoUsername } from "@/lib/demo-users";
 import {
   EVALUATION_QUESTIONS,
   EVALUATION_LIKERT_OPTIONS,
@@ -33,9 +34,14 @@ export async function GET(req: NextRequest) {
       db.select().from(simulationEvaluations).catch(() => []),
     ]);
 
-    const evalMap = new Map(allEvaluations.map((e) => [e.userId, e]));
-    const totalRegistered = allRespondents.length;
-    const completedCount = allEvaluations.length;
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const officialEvaluations = allEvaluations.filter((e) => officialUserIds.has(e.userId));
+
+    const evalMap = new Map(officialEvaluations.map((e) => [e.userId, e]));
+    const totalRegistered = officialRespondents.length;
+    const completedCount = officialEvaluations.length;
     const pendingCount = Math.max(0, totalRegistered - completedCount);
     const completionRate =
       totalRegistered > 0
@@ -49,7 +55,7 @@ export async function GET(req: NextRequest) {
       let sum = 0;
       let totalAnswered = 0;
 
-      allEvaluations.forEach((e) => {
+      officialEvaluations.forEach((e) => {
         const val = e[qKey] as number;
         if (typeof val === "number" && val >= 1 && val <= 5) {
           counts[val] = (counts[val] || 0) + 1;
@@ -82,7 +88,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Respondent list with their individual answers
-    const respondentList = allRespondents.map((u) => {
+    const respondentList = officialRespondents.map((u) => {
       const ev = evalMap.get(u.id);
       return {
         userId: u.id,

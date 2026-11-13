@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import sharp from "sharp";
 import { PROFILE_MATRIX, ProfileGroup, computeTercileCutoffs, CategoryType } from "@/lib/questionnaire-logic";
 import { sortRespondentsSequentially } from "./sort-utils";
+import { isDemoUsername } from "@/lib/demo-users";
 type PieSlice = {
   label: string;
   count: number;
@@ -178,14 +179,18 @@ export async function generateProfilesWorkbook(targetUserId: number | null = nul
       .from(users)
       .where(eq(users.role, "responden"))
       .orderBy(asc(users.id));
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
 
-    if (allRespondents.length === 0) {
+    if (officialRespondents.length === 0) {
       return null;
     }
 
-    // 2. Fetch profiles
+    // 2. Fetch profiles for official respondents
     const allProfiles = await db.select().from(respondentProfiles);
-    const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
+    const officialProfiles = allProfiles.filter((p) => officialUserIds.has(p.userId));
+    const profileMap = new Map(officialProfiles.map((p) => [p.userId, p]));
 
     // 3. Fetch questions
     const allQuestions = await db
@@ -196,21 +201,21 @@ export async function generateProfilesWorkbook(targetUserId: number | null = nul
     const laQuestions = allQuestions.filter((q) => q.instrument === "LA");
     const eiQuestions = allQuestions.filter((q) => q.instrument === "EI");
 
-    // 4. Fetch all raw responses
+    // 4. Fetch all raw responses for official respondents
     const allResponses = await db.select().from(questionnaireResponses);
+    const officialResponses = allResponses.filter((r) => officialUserIds.has(r.userId));
     const responseMatrix = new Map<string, number>(); // "userId_questionId" -> score
-    allResponses.forEach((r) => {
+    officialResponses.forEach((r) => {
       responseMatrix.set(`${r.userId}_${r.questionId}`, r.score);
     });
 
     // 5. Compute Ranks (1 = skor tertinggi, diurutkan dari atas ke bawah)
-    const completedProfiles = allProfiles.filter((p) => p.isCompleted);
+    const completedProfiles = officialProfiles.filter((p) => p.isCompleted);
     const totalCompleted = completedProfiles.length;
 
     if (totalCompleted === 0) {
       return null;
     }
-
     const sortedByLA = [...completedProfiles].sort((a, b) => {
       if (b.laRawScore !== a.laRawScore) return b.laRawScore - a.laRawScore;
       return a.userId - b.userId;
@@ -226,7 +231,7 @@ export async function generateProfilesWorkbook(targetUserId: number | null = nul
     sortedByEI.forEach((p, idx) => eiRankMap.set(p.userId, idx + 1));
 
     // 6. Urutkan responden tetap berurutan (natural order)
-    const completedRespondents = allRespondents.filter((u) => profileMap.get(u.id)?.isCompleted);
+    const completedRespondents = officialRespondents.filter((u) => profileMap.get(u.id)?.isCompleted);
 
     if (completedRespondents.length === 0) {
       return null;

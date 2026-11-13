@@ -4,6 +4,7 @@ import { eq, asc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import sharp from "sharp";
 import { sortRespondentsSequentially } from "./sort-utils";
+import { isDemoUsername } from "@/lib/demo-users";
 type PieSlice = {
   label: string;
   count: number;
@@ -150,9 +151,14 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       db.select().from(respondentBiodata),
     ]);
 
-    const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));
-    const totalRegistered = allRespondents.length;
-    const filledCount = allBiodata.length;
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const officialBiodata = allBiodata.filter((b) => officialUserIds.has(b.userId));
+
+    const biodataMap = new Map(officialBiodata.map((b) => [b.userId, b]));
+    const totalRegistered = officialRespondents.length;
+    const filledCount = officialBiodata.length;
     const pendingCount = Math.max(0, totalRegistered - filledCount);
     const completionRate =
       totalRegistered > 0 ? ((filledCount / totalRegistered) * 100).toFixed(1) : "0.0";
@@ -162,9 +168,8 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
     }
 
     // Sort respondents for Sheet 2
-    const filledRaw = allRespondents.filter((u) => biodataMap.has(u.id));
+    const filledRaw = officialRespondents.filter((u) => biodataMap.has(u.id));
     const filledRespondents = sortRespondentsSequentially(filledRaw);
-
     const firstDataRow = 2;
     const lastDataRow = 1 + filledRespondents.length;
 
@@ -193,7 +198,7 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
     const prodiMap: Record<string, number> = {};
     const semesterMap: Record<number, number> = {};
 
-    allBiodata.forEach((b) => {
+    officialBiodata.forEach((b) => {
       if (b.jenisKelamin === "Laki-laki") countLaki++;
       else if (b.jenisKelamin === "Perempuan") countPerempuan++;
 

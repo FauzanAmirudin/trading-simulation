@@ -8,6 +8,7 @@ import {
   getEvaluationOptionLabel,
 } from "@/lib/evaluation-questions";
 import { sortRespondentsSequentially } from "./sort-utils";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export async function generateEvaluationWorkbook(targetUserId: number | null = null): Promise<{ buffer: Buffer; filename: string } | null> {
 
@@ -27,15 +28,18 @@ export async function generateEvaluationWorkbook(targetUserId: number | null = n
         .orderBy(asc(users.id)),
       db.select().from(simulationEvaluations),
     ]);
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const officialEvaluations = allEvaluations.filter((e) => officialUserIds.has(e.userId));
 
-    const evalMap = new Map(allEvaluations.map((e) => [e.userId, e]));
-    const completedRaw = allRespondents.filter((u) => evalMap.has(u.id));
+    const evalMap = new Map(officialEvaluations.map((e) => [e.userId, e]));
+    const completedRaw = officialRespondents.filter((u) => evalMap.has(u.id));
     const completedRespondents = sortRespondentsSequentially(completedRaw);
 
     if (completedRespondents.length === 0) {
       return null;
     }
-
     // If specific target user is requested
     if (targetUserId) {
       const targetUser = allRespondents.find((u) => u.id === targetUserId);
@@ -202,7 +206,7 @@ export async function generateEvaluationWorkbook(targetUserId: number | null = n
     // Summary info
     const summaryRows = [
       ["Total Responden Mengisi Evaluasi (Diekspor)", completedRespondents.length, "Total Butir Pertanyaan", "10 Butir Pertanyaan Likert (1-5)"],
-      ["Total Akun Responden Terdaftar", allRespondents.length, "Cakupan Data", "Hanya Responden yang Selesai Mengisi Evaluasi"],
+      ["Total Akun Responden Terdaftar", officialRespondents.length, "Cakupan Data", "Hanya Responden yang Selesai Mengisi Evaluasi"],
     ];
 
     summaryRows.forEach((r, idx) => {

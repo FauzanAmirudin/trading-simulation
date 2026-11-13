@@ -4,6 +4,7 @@ import { users, respondentProfiles, questionnaireResponses, questions, responden
 import { eq, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup } from "@/lib/questionnaire-logic";
 import { requireAdmin } from "@/lib/auth-server";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -68,7 +69,7 @@ export async function GET(
         .where(eq(questionnaireResponses.userId, userId))
         .catch(() => []),
       db
-        .select({ id: users.id })
+        .select({ id: users.id, nama: users.nama })
         .from(users)
         .where(eq(users.role, "responden"))
         .orderBy(asc(users.id))
@@ -81,12 +82,15 @@ export async function GET(
     ]);
     const userEval = evalRows[0] || null;
 
-    if (!user) {
+    if (!user || isDemoUsername(user.nama)) {
       return NextResponse.json(
         { error: "Data responden tidak ditemukan." },
         { status: 404 }
       );
     }
+
+    const officialRespondents = allRespondents.filter((r) => !isDemoUsername(r.nama));
+    const officialUserIds = new Set(officialRespondents.map((r) => r.id));
 
     const isCompleted = Boolean(profile?.isCompleted);
     const groupKey = (profile?.profileGroup || "E") as ProfileGroup;
@@ -132,11 +136,11 @@ export async function GET(
     });
 
     // Determine Prev & Next Respondent for Navigation Pager
-    const currentIndex = allRespondents.findIndex((r) => r.id === userId);
-    const prevUserId = currentIndex > 0 ? allRespondents[currentIndex - 1].id : null;
+    const currentIndex = officialRespondents.findIndex((r) => r.id === userId);
+    const prevUserId = currentIndex > 0 ? officialRespondents[currentIndex - 1].id : null;
     const nextUserId =
-      currentIndex >= 0 && currentIndex < allRespondents.length - 1
-        ? allRespondents[currentIndex + 1].id
+      currentIndex >= 0 && currentIndex < officialRespondents.length - 1
+        ? officialRespondents[currentIndex + 1].id
         : null;
 
 
@@ -150,11 +154,13 @@ export async function GET(
       .from(respondentProfiles)
       .where(eq(respondentProfiles.isCompleted, true));
 
-    const sortedLA = [...allCompletedProfiles].sort((a, b) => b.laRawScore - a.laRawScore || a.userId - b.userId);
+    const officialCompletedProfiles = allCompletedProfiles.filter((p) => officialUserIds.has(p.userId));
+
+    const sortedLA = [...officialCompletedProfiles].sort((a, b) => b.laRawScore - a.laRawScore || a.userId - b.userId);
     const laRankIndex = sortedLA.findIndex((p) => p.userId === userId);
     const laRank = laRankIndex >= 0 ? laRankIndex + 1 : null;
 
-    const sortedEI = [...allCompletedProfiles].sort((a, b) => b.eiRawScore - a.eiRawScore || a.userId - b.userId);
+    const sortedEI = [...officialCompletedProfiles].sort((a, b) => b.eiRawScore - a.eiRawScore || a.userId - b.userId);
     const eiRankIndex = sortedEI.findIndex((p) => p.userId === userId);
     const eiRank = eiRankIndex >= 0 ? eiRankIndex + 1 : null;
 

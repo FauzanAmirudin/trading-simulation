@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { questions, questionnaireResponses } from "@/db/schema";
-import { eq, asc, sql } from "drizzle-orm";
+import { questions, questionnaireResponses, users } from "@/db/schema";
+import { eq, asc, sql, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth-server";
 
 // ── GET all questions (with response statistics) ──
@@ -22,6 +22,13 @@ export async function GET(req: NextRequest) {
           avgScore: sql<number>`round(avg(${questionnaireResponses.score})::numeric, 2)::float`,
         })
         .from(questionnaireResponses)
+        .innerJoin(users, eq(questionnaireResponses.userId, users.id))
+        .where(
+          and(
+            eq(users.role, "responden"),
+            sql`LOWER(${users.nama}) NOT IN ('andi', 'budi', 'citra', 'doni')`
+          )
+        )
         .groupBy(questionnaireResponses.questionId),
     ]);
 

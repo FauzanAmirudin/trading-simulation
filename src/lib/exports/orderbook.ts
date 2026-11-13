@@ -2,6 +2,7 @@ import { db } from "@/db/connect";
 import { transactionsHistory, orderBook, stocks, rounds, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import ExcelJS from "exceljs";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export type OrderBookExportOptions = {
   date?: string | null;
@@ -63,10 +64,10 @@ export async function generateOrderBookWorkbook(options: OrderBookExportOptions 
     const allRounds = allRoundsRaw.filter(r => r.period >= 1);
     const roundMap = Object.fromEntries(allRounds.map(r => [r.id, r]));
 
-    // Fetch all users for respondent names
+    // Fetch all users and isolate official respondents (excluding demo accounts)
     const allUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
-    const userMap = Object.fromEntries(allUsers.map(u => [u.id, u.nama]));
-
+    const userMap = Object.fromEntries(allUsers.map((u) => [u.id, u.nama]));
+    const officialUserIds = new Set(allUsers.filter((u) => !isDemoUsername(u.nama)).map((u) => u.id));
     let validRounds = allRounds;
 
     if (roundIdsParam) {
@@ -116,10 +117,6 @@ export async function generateOrderBookWorkbook(options: OrderBookExportOptions 
       .from(transactionsHistory)
       .innerJoin(stocks, eq(transactionsHistory.stockId, stocks.id))
       .orderBy(transactionsHistory.createdAt);
-
-    // Filter by valid round IDs
-    const filteredTxs = txsRaw.filter(t => validRoundIds.has(t.roundId));
-
     // Fetch relevant orders
     const allOrders = await db.select({
       id: orderBook.id,
@@ -136,9 +133,21 @@ export async function generateOrderBookWorkbook(options: OrderBookExportOptions 
     .innerJoin(stocks, eq(orderBook.stockId, stocks.id))
     .orderBy(orderBook.createdAt);
 
-    const filteredOrders = allOrders.filter(o => validRoundIds.has(o.roundId));
     const orderPriceMap = Object.fromEntries(allOrders.map(o => [o.id, Number(o.harga)]));
+    const orderUserMap = Object.fromEntries(allOrders.map(o => [o.id, o.userId]));
 
+    // Filter by valid round IDs and official respondents only
+    const filteredTxs = txsRaw
+      .filter((t) => validRoundIds.has(t.roundId))
+      .filter((t) => {
+        const bId = t.orderBuyId ? orderUserMap[t.orderBuyId] : undefined;
+        const sId = t.orderSellId ? orderUserMap[t.orderSellId] : undefined;
+        return (!bId || officialUserIds.has(bId)) && (!sId || officialUserIds.has(sId));
+      });
+
+    const filteredOrders = allOrders
+      .filter((o) => validRoundIds.has(o.roundId))
+      .filter((o) => officialUserIds.has(o.userId));
     // Calculate matched amounts per order
     const orderMatchedLots: Record<number, number> = {};
     for (const tx of txsRaw) {

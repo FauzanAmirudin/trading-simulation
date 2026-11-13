@@ -3,6 +3,7 @@ import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { users, respondentBiodata } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth-server";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -29,13 +30,17 @@ export async function GET(req: NextRequest) {
       db.select().from(respondentBiodata).catch(() => []),
     ]);
 
-    const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));
-    const totalRegistered = allRespondents.length;
-    const filledCount = allBiodata.length;
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const officialBiodata = allBiodata.filter((b) => officialUserIds.has(b.userId));
+
+    const biodataMap = new Map(officialBiodata.map((b) => [b.userId, b]));
+    const totalRegistered = officialRespondents.length;
+    const filledCount = officialBiodata.length;
     const pendingCount = Math.max(0, totalRegistered - filledCount);
     const completionRate =
       totalRegistered > 0 ? Number(((filledCount / totalRegistered) * 100).toFixed(1)) : 0;
-
     // 2. Aggregate Demographics & Percentages
     // 2.1 Jenis Kelamin
     let countLaki = 0;
@@ -76,7 +81,7 @@ export async function GET(req: NextRequest) {
     // 2.8 Program Studi
     const prodiMap: { [key: string]: number } = {};
 
-    allBiodata.forEach((b) => {
+    officialBiodata.forEach((b) => {
       // JK
       if (b.jenisKelamin === "Laki-laki") countLaki++;
       else if (b.jenisKelamin === "Perempuan") countPerempuan++;
@@ -156,7 +161,7 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.semester - b.semester);
 
     // 3. Combined Respondent Row List
-    const respondentList = allRespondents.map((u) => {
+    const respondentList = officialRespondents.map((u) => {
       const b = biodataMap.get(u.id);
       return {
         userId: u.id,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
 import { transactionsHistory, orderBook, stocks, users } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,12 +10,14 @@ export async function GET(req: NextRequest) {
     const dateParam = searchParams.get("date");
     const roundIdParam = searchParams.get("roundId");
 
-    // 1. Fetch total participants count
-    const [participantsCountRow] = await db
-      .select({ count: sql<number>`count(*)` })
+    // 1. Fetch total participants count (excluding demo users)
+    const allRespondents = await db
+      .select({ id: users.id, nama: users.nama })
       .from(users)
       .where(eq(users.role, "responden"));
-    const participantsCount = Number(participantsCountRow?.count) || 0;
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const participantsCount = officialRespondents.length;
 
     // 2. Fetch user and order mappings in memory for maximum performance
     const allUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
@@ -48,9 +51,15 @@ export async function GET(req: NextRequest) {
           .where(eq(transactionsHistory.roundId, roundIdNum))
           .orderBy(desc(transactionsHistory.createdAt))
       : await baseQuery.orderBy(desc(transactionsHistory.createdAt));
+    // Filter transactions to official respondents only (exclude demo accounts)
+    const officialTxs = txs.filter((t) => {
+      const bId = orderUserMap[t.orderBuyId];
+      const sId = orderUserMap[t.orderSellId];
+      return (!bId || officialUserIds.has(bId)) && (!sId || officialUserIds.has(sId));
+    });
 
     // Map to response format and format time in 24h WIB
-    let transactions = txs.map((t) => {
+    let transactions = officialTxs.map((t) => {
       const buyerId = orderUserMap[t.orderBuyId];
       const sellerId = orderUserMap[t.orderSellId];
       const buyerName = buyerId ? userMap[buyerId] || `User #${buyerId}` : "Unknown";

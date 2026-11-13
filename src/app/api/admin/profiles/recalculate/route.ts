@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/connect";
-import { respondentProfiles } from "@/db/schema";
+import { respondentProfiles, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { computePopulationTerciles, RespondentScoreInput } from "@/lib/questionnaire-logic";
+import { isDemoUsername } from "@/lib/demo-users";
 import { requireAdmin } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
@@ -10,13 +11,21 @@ export async function POST(req: NextRequest) {
   if (!auth.authorized) return auth.response;
 
   try {
-    // 1. Fetch all completed profiles
+    // 1. Fetch all completed profiles for official respondents only (exclude demo accounts)
     const completedProfiles = await db
-      .select()
+      .select({
+        userId: respondentProfiles.userId,
+        laRawScore: respondentProfiles.laRawScore,
+        eiRawScore: respondentProfiles.eiRawScore,
+        userName: users.nama,
+      })
       .from(respondentProfiles)
+      .innerJoin(users, eq(respondentProfiles.userId, users.id))
       .where(eq(respondentProfiles.isCompleted, true));
 
-    if (completedProfiles.length === 0) {
+    const officialProfiles = completedProfiles.filter((p) => !isDemoUsername(p.userName));
+
+    if (officialProfiles.length === 0) {
       return NextResponse.json(
         { error: "Belum ada data responden yang menyelesaikan kuesioner untuk dikalkulasi ulang." },
         { status: 400 }
@@ -24,7 +33,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Prepare inputs for population tercile algorithm
-    const inputs: RespondentScoreInput[] = completedProfiles.map((p) => ({
+    const inputs: RespondentScoreInput[] = officialProfiles.map((p) => ({
       userId: p.userId,
       laRawScore: p.laRawScore,
       eiRawScore: p.eiRawScore,

@@ -4,6 +4,7 @@ import { users, respondentProfiles, respondentBiodata } from "@/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { PROFILE_MATRIX, ProfileGroup, computeTercileCutoffs } from "@/lib/questionnaire-logic";
 import { requireAdmin } from "@/lib/auth-server";
+import { isDemoUsername } from "@/lib/demo-users";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -37,11 +38,18 @@ export async function GET(req: NextRequest) {
       db.select().from(respondentProfiles).catch(() => []),
       db.select().from(respondentBiodata).catch(() => []),
     ]);
-    const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
-    const biodataMap = new Map(allBiodata.map((b) => [b.userId, b]));
+
+    // Filter out demo accounts (Andi, Budi, Citra, Doni)
+    const officialRespondents = allRespondents.filter((u) => !isDemoUsername(u.nama));
+    const officialUserIds = new Set(officialRespondents.map((u) => u.id));
+    const officialProfiles = allProfiles.filter((p) => officialUserIds.has(p.userId));
+    const officialBiodata = allBiodata.filter((b) => officialUserIds.has(b.userId));
+
+    const profileMap = new Map(officialProfiles.map((p) => [p.userId, p]));
+    const biodataMap = new Map(officialBiodata.map((b) => [b.userId, b]));
 
     // Compute Ranks (1 = skor tertinggi, diurutkan dari atas ke bawah) untuk responden yang selesai
-    const completedProfiles = allProfiles.filter((p) => p.isCompleted);
+    const completedProfiles = officialProfiles.filter((p) => p.isCompleted);
     const sortedByLA = [...completedProfiles].sort((a, b) => {
       if (b.laRawScore !== a.laRawScore) return b.laRawScore - a.laRawScore;
       return a.userId - b.userId;
@@ -57,7 +65,7 @@ export async function GET(req: NextRequest) {
     sortedByEI.forEach((p, idx) => eiRankMap.set(p.userId, idx + 1));
 
     // Combine data
-    let combined = allRespondents.map((user) => {
+    let combined = officialRespondents.map((user) => {
       const p = profileMap.get(user.id);
       const b = biodataMap.get(user.id);
       const isCompleted = Boolean(p?.isCompleted);
