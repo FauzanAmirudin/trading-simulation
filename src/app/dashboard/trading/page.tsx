@@ -2077,7 +2077,7 @@ function TradingPageContent() {
                           <div className="flex items-center justify-between font-mono">
                             <div>
                               <span className="text-[9.5px] font-sans font-semibold text-muted-foreground uppercase block">
-                                Harga Real-Time
+                                Harga Penutupan (Harga H-1)
                               </span>
                               <span className="font-black text-lg text-foreground">
                                 Rp {lastP.toLocaleString("id-ID")}
@@ -2248,7 +2248,7 @@ function TradingPageContent() {
                       {/* Big Live Price Display */}
                       <div className="flex items-center gap-4 shrink-0 font-mono text-right">
                         <div>
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-sans font-semibold">Harga Real-Time</div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-sans font-semibold">Harga Penutupan (Harga H-1)</div>
                           <div className="text-2xl font-black text-foreground">
                             Rp {activeStockPrice.toLocaleString("id-ID")}
                           </div>
