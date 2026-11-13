@@ -220,7 +220,7 @@ function TradingPageContent() {
   const [bids, setBids] = useState<Order[]>([]);
   const [asks, setAsks] = useState<Order[]>([]);
   const [orderType, setOrderType] = useState<"BID" | "ASK">("BID");
-  const [orderPrice, setOrderPrice] = useState("");
+  const [orderPrice, setOrderPrice] = useState("0");
   const [orderLot, setOrderLot] = useState("");
   const [balance, setBalance] = useState<number>(() => {
     if (authBalance !== null) return authBalance;
@@ -808,7 +808,7 @@ function TradingPageContent() {
     setSelectedId(null);
     activeStockIdRef.current = null;
     selectedIdRef.current = null;
-    setOrderPrice("");
+    setOrderPrice("0");
     setOrderLot("");
     router.replace("/dashboard/trading");
   }, [router]);
@@ -838,11 +838,8 @@ function TradingPageContent() {
       setOrderType(userStockOrders[s.id].tipe as "BID" | "ASK");
       setOrderPrice(String(userStockOrders[s.id].harga));
       setOrderLot(String(userStockOrders[s.id].jumlah));
-    } else if (predictionsSubmitted[s.id]) {
-      setOrderPrice(String(predictionsSubmitted[s.id]));
-      setOrderLot("1");
     } else {
-      setOrderPrice(String(base));
+      setOrderPrice("0");
       setOrderLot("1");
     }
     setIsOrderModalOpen(true);

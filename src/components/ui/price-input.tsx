@@ -67,14 +67,20 @@ export function PriceInput({
   }, [value, basePrice, min, disabled, onChange]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    // Hanya terima angka positif, tidak boleh minus
-    if (raw === "" || /^\d+$/.test(raw)) {
+    let raw = e.target.value;
+    if (raw === "") {
+      onChange("0");
+      return;
+    }
+    if (/^\d+$/.test(raw)) {
+      if (raw.length > 1 && raw.startsWith("0")) {
+        raw = raw.replace(/^0+/, "") || "0";
+      }
       onChange(raw);
     }
   }, [onChange]);
 
-  const canDecrement = currentRefPrice > min;
+  const canDecrement = numericValue > 0 && numericValue > min;
   const canIncrement = max === undefined || currentRefPrice < max;
 
   return (
@@ -102,11 +108,15 @@ export function PriceInput({
         pattern="[0-9]*"
         value={value}
         onChange={handleChange}
+        onFocus={(e) => {
+          if (e.target.value === "0") {
+            e.target.select();
+          }
+        }}
         placeholder={placeholder}
         disabled={disabled}
         className="h-full w-full min-w-[55px] bg-transparent text-center text-sm font-mono font-extrabold text-foreground outline-none placeholder:text-muted-foreground/35 disabled:cursor-not-allowed disabled:opacity-50"
       />
-
       {/* Tombol Tambah */}
       <button
         type="button"
