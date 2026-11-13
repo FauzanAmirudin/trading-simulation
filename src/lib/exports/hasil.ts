@@ -273,7 +273,7 @@ export async function generateHasilWorkbook(options: HasilExportOptions = {}): P
 
       // Section B: Tabel Rincian 36 Emiten Saham
       const tableHeaderRow = userSheet.addRow([
-        'No', 'Kode Saham', 'Nama Saham', 'Harga Dasar (Base Price)', 
+        'No', 'Kode Saham', 'Nama Saham', 'Harga Open (Open Price)',
         'Harga Terakhir (Last Price)', 'Perubahan Harga (%)', 'Jumlah Lot', 
         'Jumlah Lembar', 'Nilai Pasar (Rp)', 'Laba/Rugi Belum Terealisasi (Unrealized PnL)'
       ]);

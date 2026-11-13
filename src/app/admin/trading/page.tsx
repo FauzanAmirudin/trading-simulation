@@ -735,7 +735,7 @@ export default function AdminTradingPage() {
                           {s.namaSaham}
                         </h3>
                         <span className="text-[9.5px] font-mono text-muted-foreground">
-                          Dasar: Rp {s.basePrice.toLocaleString("id-ID")}
+                          Open: Rp {s.basePrice.toLocaleString("id-ID")}
                         </span>
                       </div>
                     </div>

@@ -466,7 +466,7 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
 
       // --- SECTION 1: PREDIKSI & ORDER TRANSAKSI RESPONDEN ---
       const predHeaderRow = sheet.addRow([
-        'Waktu Input', 'Periode', 'Sesi', 'Ronde', 'Kode Saham', 'Pilihan Transaksi', 'Jumlah (Lot)', 'Harga Tebak / Order', 'Harga Acuan / Buka', 'Harga Akhir', 'Selisih', 'Akurasi', 'Rata-rata Akurasi Ronde'
+        'Waktu Input', 'Periode', 'Sesi', 'Ronde', 'Kode Saham', 'Pilihan Transaksi', 'Jumlah (Lot)', 'Harga Tebak / Order', 'Harga Open', 'Harga Akhir', 'Selisih', 'Akurasi', 'Rata-rata Akurasi Ronde'
       ]);
       
       predHeaderRow.eachCell((cell) => {

@@ -2885,7 +2885,7 @@ function TradingPageContent() {
 
                       <div>
                         <span className="text-[8.5px] sm:text-[10px] text-muted-foreground font-sans block truncate">
-                          {isAnyMatch ? "Harga Match" : item.userOrder ? "Harga Order" : "Harga Dasar"}
+                          {isAnyMatch ? "Harga Match" : item.userOrder ? "Harga Order" : "Harga Open"}
                         </span>
                         <span className="font-extrabold text-[10.5px] sm:text-xs text-foreground truncate block">
                           Rp {displayPrice.toLocaleString("id-ID")}
