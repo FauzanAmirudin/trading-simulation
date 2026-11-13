@@ -47,6 +47,7 @@ type RespondentRow = {
     programStudi: string;
     semester: number;
     pernahInvestasiSaham: string;
+    lamaInvestasiSaham?: string | null;
     pernahPelatihanInvestasi: string;
     sumberPenghasilan: string;
     sumberPenghasilanLainnya: string | null;
@@ -1023,7 +1024,9 @@ export default function AdminBiodataPage() {
                               : "bg-muted text-muted-foreground"
                           )}
                         >
-                          {r.biodata.pernahInvestasiSaham}
+                          {r.biodata.pernahInvestasiSaham === "Ya" && r.biodata.lamaInvestasiSaham
+                            ? `Ya (${r.biodata.lamaInvestasiSaham})`
+                            : r.biodata.pernahInvestasiSaham}
                         </span>
                       ) : (
                         "—"

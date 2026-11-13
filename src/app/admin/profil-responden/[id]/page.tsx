@@ -62,6 +62,7 @@ type RespondentBiodata = {
   programStudi: string;
   semester: number;
   pernahInvestasiSaham: string;
+  lamaInvestasiSaham?: string | null;
   pernahPelatihanInvestasi: string;
   sumberPenghasilan: string;
   sumberPenghasilanLainnya: string | null;
@@ -637,7 +638,9 @@ export default function RespondentProfileDetailPage({
                     : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border border-zinc-500/20"
                 )}
               >
-                {respondent.biodata.pernahInvestasiSaham}
+                {respondent.biodata.pernahInvestasiSaham === "Ya" && respondent.biodata.lamaInvestasiSaham
+                  ? `Ya (${respondent.biodata.lamaInvestasiSaham})`
+                  : respondent.biodata.pernahInvestasiSaham}
               </span>
             </div>
 

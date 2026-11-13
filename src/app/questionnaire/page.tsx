@@ -39,11 +39,11 @@ type Question = {
 };
 
 const LIKERT_OPTIONS = [
-  { value: 1, label: "Sangat Tidak Setuju", short: "STS" },
-  { value: 2, label: "Tidak Setuju", short: "TS" },
-  { value: 3, label: "Netral", short: "N" },
-  { value: 4, label: "Setuju", short: "S" },
-  { value: 5, label: "Sangat Setuju", short: "SS" },
+  { value: 1, label: "Sangat Tidak Sesuai", short: "STS" },
+  { value: 2, label: "Tidak Sesuai", short: "TS" },
+  { value: 3, label: "Cukup Sesuai", short: "CS" },
+  { value: 4, label: "Sesuai", short: "S" },
+  { value: 5, label: "Sangat Sesuai", short: "SS" },
 ];
 
 export default function QuestionnairePage() {
@@ -64,6 +64,9 @@ export default function QuestionnairePage() {
     programStudi: "",
     semester: "",
     pernahInvestasiSaham: "",
+    lamaInvestasiAngka: "",
+    lamaInvestasiAngkaLainnya: "",
+    lamaInvestasiSatuan: "Bulan",
     pernahPelatihanInvestasi: "",
     sumberPenghasilan: "",
     sumberPenghasilanLainnya: "",
@@ -123,12 +126,29 @@ export default function QuestionnairePage() {
 
         // Pre-fill existing biodata if previously submitted
         if (statusData?.biodata) {
+          let parsedAngka = "";
+          let parsedLainnya = "";
+          let parsedSatuan = "Bulan";
+          if (statusData.biodata.lamaInvestasiSaham) {
+            const parts = String(statusData.biodata.lamaInvestasiSaham).trim().split(/\s+/);
+            const numVal = parseInt(parts[0], 10);
+            parsedSatuan = parts[1] === "Tahun" ? "Tahun" : "Bulan";
+            if (!isNaN(numVal) && numVal >= 1 && numVal <= 10) {
+              parsedAngka = String(numVal);
+            } else if (!isNaN(numVal) && numVal > 10) {
+              parsedAngka = "Lainnya";
+              parsedLainnya = String(numVal);
+            }
+          }
           setBiodata({
             jenisKelamin: statusData.biodata.jenisKelamin || "",
             usia: statusData.biodata.usia ? String(statusData.biodata.usia) : "",
             programStudi: statusData.biodata.programStudi || "",
             semester: statusData.biodata.semester ? String(statusData.biodata.semester) : "",
             pernahInvestasiSaham: statusData.biodata.pernahInvestasiSaham || "",
+            lamaInvestasiAngka: parsedAngka,
+            lamaInvestasiAngkaLainnya: parsedLainnya,
+            lamaInvestasiSatuan: parsedSatuan,
             pernahPelatihanInvestasi: statusData.biodata.pernahPelatihanInvestasi || "",
             sumberPenghasilan: statusData.biodata.sumberPenghasilan || "",
             sumberPenghasilanLainnya: statusData.biodata.sumberPenghasilanLainnya || "",
@@ -163,6 +183,19 @@ export default function QuestionnairePage() {
     }));
   };
 
+  // Resolved duration string for stock investment experience (e.g., "6 Bulan", "2 Tahun", "15 Tahun")
+  const resolvedLamaInvestasi = (() => {
+    if (biodata.pernahInvestasiSaham !== "Ya") return null;
+    const num =
+      biodata.lamaInvestasiAngka === "Lainnya"
+        ? parseInt(biodata.lamaInvestasiAngkaLainnya, 10)
+        : parseInt(biodata.lamaInvestasiAngka, 10);
+    if (isNaN(num) || num < 1) return null;
+    if (biodata.lamaInvestasiAngka === "Lainnya" && num <= 10) return null;
+    const satuan = biodata.lamaInvestasiSatuan === "Tahun" ? "Tahun" : "Bulan";
+    return `${num} ${satuan}`;
+  })();
+
   // Biodata validation checks
   const isBiodataValid =
     Boolean(biodata.jenisKelamin) &&
@@ -170,6 +203,7 @@ export default function QuestionnairePage() {
     Boolean(biodata.programStudi.trim()) &&
     Boolean(biodata.semester && Number(biodata.semester) >= 1 && Number(biodata.semester) <= 20) &&
     Boolean(biodata.pernahInvestasiSaham) &&
+    (biodata.pernahInvestasiSaham !== "Ya" || Boolean(resolvedLamaInvestasi)) &&
     Boolean(biodata.pernahPelatihanInvestasi) &&
     Boolean(biodata.sumberPenghasilan) &&
     (biodata.sumberPenghasilan !== "Lainnya" || Boolean(biodata.sumberPenghasilanLainnya.trim())) &&
@@ -180,7 +214,10 @@ export default function QuestionnairePage() {
     Boolean(biodata.usia && Number(biodata.usia) >= 10 && Number(biodata.usia) <= 100),
     Boolean(biodata.programStudi.trim()),
     Boolean(biodata.semester && Number(biodata.semester) >= 1 && Number(biodata.semester) <= 20),
-    Boolean(biodata.pernahInvestasiSaham),
+    Boolean(
+      biodata.pernahInvestasiSaham &&
+        (biodata.pernahInvestasiSaham !== "Ya" || Boolean(resolvedLamaInvestasi))
+    ),
     Boolean(biodata.pernahPelatihanInvestasi),
     Boolean(
       biodata.sumberPenghasilan &&
@@ -211,7 +248,10 @@ export default function QuestionnairePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
-          biodata,
+          biodata: {
+            ...biodata,
+            lamaInvestasiSaham: resolvedLamaInvestasi,
+          },
         }),
       });
       const data = await res.json();
@@ -270,7 +310,10 @@ export default function QuestionnairePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
-          biodata,
+          biodata: {
+            ...biodata,
+            lamaInvestasiSaham: resolvedLamaInvestasi,
+          },
           responses: responsePayload,
         }),
       });
@@ -497,10 +540,31 @@ export default function QuestionnairePage() {
                 </span>
               </div>
 
-              <p className="text-[11.5px] sm:text-xs text-muted-foreground leading-relaxed text-pretty">
-                Mohon lengkapi seluruh isian biodata dan butir pernyataan di bawah ini secara jujur sesuai
-                dengan kondisi dan diri Anda yang sebenarnya. Seluruh data murni untuk keperluan riset akademis.
-              </p>
+              <div className="rounded-2xl border border-border/70 bg-muted/35 p-3 sm:p-4 space-y-2">
+                <div className="text-xs sm:text-sm font-extrabold text-foreground">
+                  Petunjuk Pengisian
+                </div>
+                <p className="text-[11.5px] sm:text-xs text-muted-foreground leading-relaxed text-pretty">
+                  Responden dimohon untuk memberikan penilaian pada setiap butir pertanyaan berikut dengan memberikan tanda centang (√) pada kolom skala 1-5 yang paling sesuai dengan yang ada pada diri responden, berdasarkan kriteria berikut:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 sm:gap-2 pt-0.5 text-[11px] sm:text-xs">
+                  <div className="px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/60 font-medium text-foreground">
+                    <span className="font-mono font-bold text-primary">1</span> = sangat tidak sesuai
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/60 font-medium text-foreground">
+                    <span className="font-mono font-bold text-primary">2</span> = tidak sesuai
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/60 font-medium text-foreground">
+                    <span className="font-mono font-bold text-primary">3</span> = cukup sesuai
+                  </div>
+                  <div className="px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/60 font-medium text-foreground">
+                    <span className="font-mono font-bold text-primary">4</span> = sesuai
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 px-2.5 py-1.5 rounded-xl bg-background/80 border border-border/60 font-medium text-foreground">
+                    <span className="font-mono font-bold text-primary">5</span> = sangat sesuai
+                  </div>
+                </div>
+              </div>
 
               {/* 3-Step Navigation Pills */}
               <div className="grid grid-cols-3 gap-2 pt-1">
@@ -775,7 +839,15 @@ export default function QuestionnairePage() {
                         <button
                           key={opt}
                           type="button"
-                          onClick={() => setBiodata((b) => ({ ...b, pernahInvestasiSaham: opt }))}
+                          onClick={() =>
+                            setBiodata((b) => ({
+                              ...b,
+                              pernahInvestasiSaham: opt,
+                              ...(opt === "Tidak"
+                                ? { lamaInvestasiAngka: "", lamaInvestasiAngkaLainnya: "" }
+                                : {}),
+                            }))
+                          }
                           className={cn(
                             "flex items-center justify-center p-3 rounded-xl sm:rounded-2xl border text-xs sm:text-sm font-bold transition-all cursor-pointer active:scale-95 touch-manipulation",
                             isSelected
@@ -788,6 +860,92 @@ export default function QuestionnairePage() {
                       );
                     })}
                   </div>
+
+                  {biodata.pernahInvestasiSaham === "Ya" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="pt-2.5 mt-1 border-t border-border/60 space-y-2.5"
+                    >
+                      <label className="text-xs font-bold text-foreground block">
+                        Berapa lama pengalaman Anda berinvestasi di pasar saham? <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div className="space-y-1">
+                          <span className="text-[10.5px] font-semibold text-muted-foreground block">
+                            Lama Waktu (Angka)
+                          </span>
+                          <select
+                            value={biodata.lamaInvestasiAngka}
+                            onChange={(e) =>
+                              setBiodata((b) => ({
+                                ...b,
+                                lamaInvestasiAngka: e.target.value,
+                                ...(e.target.value !== "Lainnya" ? { lamaInvestasiAngkaLainnya: "" } : {}),
+                              }))
+                            }
+                            className="h-10 w-full rounded-xl border border-border/80 bg-background px-3 text-xs sm:text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                          >
+                            <option value="">-- Pilih Angka --</option>
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                              <option key={num} value={String(num)}>
+                                {num}
+                              </option>
+                            ))}
+                            <option value="Lainnya">Lainnya (&gt; 10)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[10.5px] font-semibold text-muted-foreground block">
+                            Satuan Waktu
+                          </span>
+                          <select
+                            value={biodata.lamaInvestasiSatuan}
+                            onChange={(e) =>
+                              setBiodata((b) => ({
+                                ...b,
+                                lamaInvestasiSatuan: e.target.value,
+                              }))
+                            }
+                            className="h-10 w-full rounded-xl border border-border/80 bg-background px-3 text-xs sm:text-sm font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                          >
+                            <option value="Bulan">Bulan</option>
+                            <option value="Tahun">Tahun</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {biodata.lamaInvestasiAngka === "Lainnya" && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          className="space-y-1"
+                        >
+                          <Input
+                            type="number"
+                            min={11}
+                            max={100}
+                            placeholder="Masukkan angka lebih dari 10 (misal: 12, 15, ...)"
+                            value={biodata.lamaInvestasiAngkaLainnya}
+                            onChange={(e) =>
+                              setBiodata((b) => ({
+                                ...b,
+                                lamaInvestasiAngkaLainnya: e.target.value,
+                              }))
+                            }
+                            className="h-10 rounded-xl text-xs sm:text-sm font-mono font-bold"
+                          />
+                          {biodata.lamaInvestasiAngkaLainnya &&
+                            parseInt(biodata.lamaInvestasiAngkaLainnya, 10) <= 10 && (
+                              <p className="text-[11px] text-rose-500 font-medium">
+                                Untuk opsi &ldquo;Lainnya&rdquo;, masukkan angka lebih dari 10.
+                              </p>
+                            )}
+                        </motion.div>
+                      )}
+                    </motion.div>
+                  )}
                 </Card>
 
                 {/* 6. Pelatihan / Mata Kuliah Investasi */}
@@ -998,8 +1156,8 @@ export default function QuestionnairePage() {
 
                             {/* Scale range label on mobile */}
                             <div className="flex items-center justify-between text-[9.5px] text-muted-foreground font-medium px-1 sm:hidden">
-                              <span>1 = Sangat Tidak Setuju</span>
-                              <span>5 = Sangat Setuju</span>
+                              <span>1 = Sangat Tidak Sesuai</span>
+                              <span>5 = Sangat Sesuai</span>
                             </div>
                           </div>
                         </Card>

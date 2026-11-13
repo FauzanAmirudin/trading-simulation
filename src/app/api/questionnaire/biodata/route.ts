@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth-server";
@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureQuestionnaireSchema();
     const session = getSession(req);
     const body = await req.json();
     const { userId, biodata } = body;
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
       programStudi,
       semester,
       pernahInvestasiSaham,
+      lamaInvestasiSaham,
       pernahPelatihanInvestasi,
       sumberPenghasilan,
       sumberPenghasilanLainnya,
@@ -73,6 +75,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Pertanyaan riwayat investasi di pasar saham wajib dijawab." }, { status: 400 });
     }
 
+    const cleanLamaInvestasi =
+      pernahInvestasiSaham === "Ya" && typeof lamaInvestasiSaham === "string"
+        ? lamaInvestasiSaham.trim()
+        : null;
+    if (pernahInvestasiSaham === "Ya" && !cleanLamaInvestasi) {
+      return NextResponse.json({ error: "Harap isi lama waktu pengalaman berinvestasi di pasar saham." }, { status: 400 });
+    }
     if (!pernahPelatihanInvestasi || !["Ya", "Tidak"].includes(pernahPelatihanInvestasi)) {
       return NextResponse.json({ error: "Pertanyaan mata kuliah/pelatihan investasi wajib dijawab." }, { status: 400 });
     }
@@ -104,6 +113,7 @@ export async function POST(req: NextRequest) {
         programStudi: programStudi.trim(),
         semester: parsedSemester,
         pernahInvestasiSaham,
+        lamaInvestasiSaham: cleanLamaInvestasi,
         pernahPelatihanInvestasi,
         sumberPenghasilan,
         sumberPenghasilanLainnya: sumberPenghasilan === "Lainnya" ? sumberPenghasilanLainnya.trim() : null,
@@ -120,6 +130,7 @@ export async function POST(req: NextRequest) {
           programStudi: programStudi.trim(),
           semester: parsedSemester,
           pernahInvestasiSaham,
+          lamaInvestasiSaham: cleanLamaInvestasi,
           pernahPelatihanInvestasi,
           sumberPenghasilan,
           sumberPenghasilanLainnya: sumberPenghasilan === "Lainnya" ? sumberPenghasilanLainnya.trim() : null,

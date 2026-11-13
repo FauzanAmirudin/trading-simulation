@@ -219,6 +219,7 @@ export const respondentBiodata = pgTable("respondent_biodata", {
   programStudi: varchar("program_studi", { length: 255 }).notNull(),
   semester: integer("semester").notNull(),
   pernahInvestasiSaham: varchar("pernah_investasi_saham", { length: 10 }).notNull(), // 'Ya' | 'Tidak'
+  lamaInvestasiSaham: varchar("lama_investasi_saham", { length: 50 }), // e.g. '6 Bulan', '2 Tahun' (when pernahInvestasiSaham === 'Ya')
   pernahPelatihanInvestasi: varchar("pernah_pelatihan_investasi", { length: 10 }).notNull(), // 'Ya' | 'Tidak'
   sumberPenghasilan: varchar("sumber_penghasilan", { length: 50 }).notNull(), // 'Orang tua' | 'Beasiswa' | 'Pekerjaan sampingan' | 'Lainnya'
   sumberPenghasilanLainnya: varchar("sumber_penghasilan_lainnya", { length: 255 }),

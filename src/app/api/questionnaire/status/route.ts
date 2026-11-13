@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import { respondentProfiles, respondentBiodata, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth-server";
@@ -9,6 +9,7 @@ export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   try {
+    await ensureQuestionnaireSchema();
     const session = getSession(req);
     const { searchParams } = new URL(req.url);
     const userIdParam = searchParams.get("userId");
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
         programStudi: respondentBiodata.programStudi,
         semester: respondentBiodata.semester,
         pernahInvestasiSaham: respondentBiodata.pernahInvestasiSaham,
+        lamaInvestasiSaham: respondentBiodata.lamaInvestasiSaham,
         pernahPelatihanInvestasi: respondentBiodata.pernahPelatihanInvestasi,
         sumberPenghasilan: respondentBiodata.sumberPenghasilan,
         sumberPenghasilanLainnya: respondentBiodata.sumberPenghasilanLainnya,
@@ -89,6 +91,7 @@ export async function GET(req: NextRequest) {
           programStudi: row.programStudi,
           semester: row.semester,
           pernahInvestasiSaham: row.pernahInvestasiSaham,
+          lamaInvestasiSaham: row.lamaInvestasiSaham,
           pernahPelatihanInvestasi: row.pernahPelatihanInvestasi,
           sumberPenghasilan: row.sumberPenghasilan,
           sumberPenghasilanLainnya: row.sumberPenghasilanLainnya,

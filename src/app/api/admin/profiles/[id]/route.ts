@@ -193,6 +193,7 @@ export async function GET(
               programStudi: biodata.programStudi,
               semester: biodata.semester,
               pernahInvestasiSaham: biodata.pernahInvestasiSaham,
+              lamaInvestasiSaham: biodata.lamaInvestasiSaham,
               pernahPelatihanInvestasi: biodata.pernahPelatihanInvestasi,
               sumberPenghasilan: biodata.sumberPenghasilan,
               sumberPenghasilanLainnya: biodata.sumberPenghasilanLainnya,

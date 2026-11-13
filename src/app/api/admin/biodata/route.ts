@@ -174,6 +174,7 @@ export async function GET(req: NextRequest) {
               programStudi: b.programStudi,
               semester: b.semester,
               pernahInvestasiSaham: b.pernahInvestasiSaham,
+              lamaInvestasiSaham: b.lamaInvestasiSaham,
               pernahPelatihanInvestasi: b.pernahPelatihanInvestasi,
               sumberPenghasilan: b.sumberPenghasilan,
               sumberPenghasilanLainnya: b.sumberPenghasilanLainnya,

@@ -117,6 +117,7 @@ export async function ensureQuestionnaireSchema() {
       ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_t2 numeric(15, 2);
       ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_t3 numeric(15, 2);
       ALTER TABLE stocks ADD COLUMN IF NOT EXISTS is_trial boolean DEFAULT false NOT NULL;
+      ALTER TABLE respondent_biodata ADD COLUMN IF NOT EXISTS lama_investasi_saham varchar(50);
     `);
     schemaEnsured = true;
   } catch (err) {

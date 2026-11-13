@@ -984,7 +984,8 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       { header: "Usia (Thn)", key: "usia", width: 12 },
       { header: "Program Studi / Jurusan", key: "prodi", width: 28 },
       { header: "Semester", key: "semester", width: 12 },
-      { header: "Pernah Saham", key: "saham", width: 16 },
+      { header: "Pernah Saham", key: "saham", width: 14 },
+      { header: "Lama Investasi Saham", key: "lamaSaham", width: 20 },
       { header: "Pelatihan Keuangan", key: "pelatihan", width: 18 },
       { header: "Sumber Penghasilan Utama", key: "sumber", width: 24 },
       { header: "Rincian Sumber Lainnya", key: "sumberLain", width: 24 },
@@ -997,8 +998,8 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
     hRow2.eachCell((cell, colNum) => {
       let bg = "FF1E293B"; // Slate (General)
       if (colNum >= 5 && colNum <= 8) bg = "FF0369A1"; // Sky (Demografi & Akademik)
-      if (colNum >= 9 && colNum <= 10) bg = "FF0F766E"; // Teal (Literasi Keuangan)
-      if (colNum >= 11 && colNum <= 13) bg = "FF4338CA"; // Indigo (Ekonomi & SMA)
+      if (colNum >= 9 && colNum <= 11) bg = "FF0F766E"; // Teal (Literasi Keuangan)
+      if (colNum >= 12 && colNum <= 14) bg = "FF4338CA"; // Indigo (Ekonomi & SMA)
 
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bg } };
       cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 9.5 };
@@ -1020,6 +1021,7 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
         prodi: b.programStudi ? b.programStudi.trim() : "—",
         semester: typeof b.semester === "number" ? b.semester : null,
         saham: b.pernahInvestasiSaham || "—",
+        lamaSaham: b.pernahInvestasiSaham === "Ya" ? (b.lamaInvestasiSaham || "—") : "—",
         pelatihan: b.pernahPelatihanInvestasi || "—",
         sumber: b.sumberPenghasilan || "—",
         sumberLain: b.sumberPenghasilanLainnya || "—",
@@ -1048,9 +1050,10 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
           colNum === 6 || // Usia
           colNum === 8 || // Semester
           colNum === 9 || // Saham
-          colNum === 10 || // Pelatihan
-          colNum === 13 || // SMA
-          colNum === 14 // Waktu
+          colNum === 10 || // Lama Saham
+          colNum === 11 || // Pelatihan
+          colNum === 14 || // SMA
+          colNum === 15 // Waktu
         ) {
           cell.alignment = { vertical: "middle", horizontal: "center" };
         }
