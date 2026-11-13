@@ -318,6 +318,7 @@ export async function seedRespondents1To100() {
     "  program_studi varchar(255) NOT NULL,",
     "  semester integer NOT NULL,",
     "  pernah_investasi_saham varchar(10) NOT NULL,",
+    "  lama_investasi_saham varchar(50),",
     "  pernah_pelatihan_investasi varchar(10) NOT NULL,",
     "  sumber_penghasilan varchar(50) NOT NULL,",
     "  sumber_penghasilan_lainnya varchar(255),",
@@ -326,6 +327,7 @@ export async function seedRespondents1To100() {
     "  updated_at timestamp DEFAULT now() NOT NULL",
     ");",
     "CREATE UNIQUE INDEX IF NOT EXISTS respondent_biodata_user_idx ON respondent_biodata(user_id);",
+    "ALTER TABLE respondent_biodata ADD COLUMN IF NOT EXISTS lama_investasi_saham varchar(50);",
     "CREATE TABLE IF NOT EXISTS simulation_evaluations (",
     "  id serial PRIMARY KEY,",
     "  user_id integer NOT NULL REFERENCES users(id) UNIQUE,",
@@ -377,6 +379,8 @@ export async function seedRespondents1To100() {
     const usia = 19 + ((respondentNum * 7) % 5); // 19, 20, 21, 22, 23
     const semester = [4, 6, 8][(respondentNum + 1) % 3];
     const pernahSaham = respondentNum % 3 === 0 ? "Ya" : "Tidak";
+    const sampleDurations = ["3 Bulan", "6 Bulan", "9 Bulan", "1 Tahun", "2 Tahun", "3 Tahun", "12 Bulan"];
+    const lamaSaham = pernahSaham === "Ya" ? sampleDurations[idx % sampleDurations.length] : null;
     const pernahPelatihan = respondentNum % 2 === 0 ? "Ya" : "Tidak";
     const sumberP = ["Orang tua", "Beasiswa", "Pekerjaan sampingan", "Lainnya"][idx % 4];
     const sumberLain = sumberP === "Lainnya" ? "Usaha online / Freelance" : null;
@@ -392,6 +396,7 @@ export async function seedRespondents1To100() {
         programStudi: prodi,
         semester,
         pernahInvestasiSaham: pernahSaham,
+        lamaInvestasiSaham: lamaSaham,
         pernahPelatihanInvestasi: pernahPelatihan,
         sumberPenghasilan: sumberP,
         sumberPenghasilanLainnya: sumberLain,
@@ -405,6 +410,7 @@ export async function seedRespondents1To100() {
           programStudi: prodi,
           semester,
           pernahInvestasiSaham: pernahSaham,
+          lamaInvestasiSaham: lamaSaham,
           pernahPelatihanInvestasi: pernahPelatihan,
           sumberPenghasilan: sumberP,
           sumberPenghasilanLainnya: sumberLain,
@@ -414,9 +420,9 @@ export async function seedRespondents1To100() {
       });
 
     sqlStatements.push(
-      `INSERT INTO respondent_biodata (user_id, jenis_kelamin, usia, program_studi, semester, pernah_investasi_saham, pernah_pelatihan_investasi, sumber_penghasilan, sumber_penghasilan_lainnya, jurusan_sma, created_at, updated_at) ` +
-        `VALUES (${userUidExpr}, '${gender}', ${usia}, '${prodi}', ${semester}, '${pernahSaham}', '${pernahPelatihan}', '${sumberP}', ${sumberLain ? `'${sumberLain}'` : "NULL"}, '${jurusanSma}', NOW(), NOW()) ` +
-        `ON CONFLICT (user_id) DO UPDATE SET jenis_kelamin = EXCLUDED.jenis_kelamin, usia = EXCLUDED.usia, program_studi = EXCLUDED.program_studi, semester = EXCLUDED.semester, pernah_investasi_saham = EXCLUDED.pernah_investasi_saham, pernah_pelatihan_investasi = EXCLUDED.pernah_pelatihan_investasi, sumber_penghasilan = EXCLUDED.sumber_penghasilan, sumber_penghasilan_lainnya = EXCLUDED.sumber_penghasilan_lainnya, jurusan_sma = EXCLUDED.jurusan_sma, updated_at = NOW();`
+      `INSERT INTO respondent_biodata (user_id, jenis_kelamin, usia, program_studi, semester, pernah_investasi_saham, lama_investasi_saham, pernah_pelatihan_investasi, sumber_penghasilan, sumber_penghasilan_lainnya, jurusan_sma, created_at, updated_at) ` +
+        `VALUES (${userUidExpr}, '${gender}', ${usia}, '${prodi}', ${semester}, '${pernahSaham}', ${lamaSaham ? `'${lamaSaham}'` : "NULL"}, '${pernahPelatihan}', '${sumberP}', ${sumberLain ? `'${sumberLain}'` : "NULL"}, '${jurusanSma}', NOW(), NOW()) ` +
+        `ON CONFLICT (user_id) DO UPDATE SET jenis_kelamin = EXCLUDED.jenis_kelamin, usia = EXCLUDED.usia, program_studi = EXCLUDED.program_studi, semester = EXCLUDED.semester, pernah_investasi_saham = EXCLUDED.pernah_investasi_saham, lama_investasi_saham = EXCLUDED.lama_investasi_saham, pernah_pelatihan_investasi = EXCLUDED.pernah_pelatihan_investasi, sumber_penghasilan = EXCLUDED.sumber_penghasilan, sumber_penghasilan_lainnya = EXCLUDED.sumber_penghasilan_lainnya, jurusan_sma = EXCLUDED.jurusan_sma, updated_at = NOW();`
     );
     // ── B. JAWABAN KUESIONER LA & EI (15 BUTIR MASING-MASING) ──
     const laRes = generate15ScoresForCategory(groupDef.laCat);

@@ -178,6 +178,9 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
     let countPerempuan = 0;
     let countSahamYa = 0;
     let countSahamTidak = 0;
+    let countLamaBulan = 0;
+    let countLamaTahun = 0;
+    let countLamaKosong = 0;
     let countPelatihanYa = 0;
     let countPelatihanTidak = 0;
     let countSmaIpa = 0;
@@ -202,9 +205,16 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       if (b.jenisKelamin === "Laki-laki") countLaki++;
       else if (b.jenisKelamin === "Perempuan") countPerempuan++;
 
-      if (b.pernahInvestasiSaham === "Ya") countSahamYa++;
-      else if (b.pernahInvestasiSaham === "Tidak") countSahamTidak++;
-
+      if (b.pernahInvestasiSaham === "Ya") {
+        countSahamYa++;
+        const dur = (b.lamaInvestasiSaham || "").toLowerCase();
+        if (dur.includes("bulan")) countLamaBulan++;
+        else if (dur.includes("tahun")) countLamaTahun++;
+        else countLamaKosong++;
+      } else {
+        if (b.pernahInvestasiSaham === "Tidak") countSahamTidak++;
+        countLamaKosong++;
+      }
       if (b.pernahPelatihanInvestasi === "Ya") countPelatihanYa++;
       else if (b.pernahPelatihanInvestasi === "Tidak") countPelatihanTidak++;
 
@@ -254,6 +264,11 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       { label: "Belum (Tidak)", count: countSahamTidak, percentage: calcPct(countSahamTidak), color: "#DC2626" },
     ];
 
+    const slicesLamaSaham: PieSlice[] = [
+      { label: "Hitungan Bulan", count: countLamaBulan, percentage: calcPct(countLamaBulan), color: "#0D9488" },
+      { label: "Hitungan Tahun", count: countLamaTahun, percentage: calcPct(countLamaTahun), color: "#2563EB" },
+      { label: "Belum / Tidak Ada", count: countLamaKosong, percentage: calcPct(countLamaKosong), color: "#94A3B8" },
+    ];
     const slicesPelatihan: PieSlice[] = [
       { label: "Pernah (Ya)", count: countPelatihanYa, percentage: calcPct(countPelatihanYa), color: "#2563EB" },
       { label: "Belum (Tidak)", count: countPelatihanTidak, percentage: calcPct(countPelatihanTidak), color: "#F97316" },
@@ -313,6 +328,7 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
     const [
       pngChart1,
       pngChart2,
+      pngChart2b,
       pngChart3,
       pngChart4,
       pngChart5,
@@ -347,7 +363,19 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       )
         .png()
         .toBuffer(),
-
+      sharp(
+        Buffer.from(
+          generateCircularPieSvg({
+            questionNumber: 2,
+            title: "Durasi Pengalaman Investasi Saham",
+            badgeText: "Bulan vs Tahun vs Belum Pernah",
+            slices: slicesLamaSaham,
+            total: filledCount,
+          })
+        )
+      )
+        .png()
+        .toBuffer(),
       sharp(
         Buffer.from(
           generateCircularPieSvg({
@@ -780,6 +808,31 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
       chartBuffer: pngChart2,
     });
 
+    // 2.2b Durasi Pengalaman Investasi Saham
+    nextRow = renderQuestionPair({
+      startRow: nextRow,
+      minRows: 10,
+      title: "2.2b Durasi Pengalaman Investasi Saham",
+      headerBg: "FF0F766E", // Teal
+      items: [
+        {
+          label: "Hitungan Bulan (1-10+ Bulan)",
+          preCount: countLamaBulan,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$J$${firstDataRow}:$J$${lastDataRow}, "*Bulan*")`,
+        },
+        {
+          label: "Hitungan Tahun (1-10+ Tahun)",
+          preCount: countLamaTahun,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$J$${firstDataRow}:$J$${lastDataRow}, "*Tahun*")`,
+        },
+        {
+          label: "Belum Pernah / Kosong (—)",
+          preCount: countLamaKosong,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$J$${firstDataRow}:$J$${lastDataRow}, "—")`,
+        },
+      ],
+      chartBuffer: pngChart2b,
+    });
     // 3. Pelatihan Keuangan / Investasi
     nextRow = renderQuestionPair({
       startRow: nextRow,
@@ -790,12 +843,12 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
         {
           label: "Pernah (Ya)",
           preCount: countPelatihanYa,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$J$${firstDataRow}:$J$${lastDataRow}, "Ya")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Ya")`,
         },
         {
           label: "Belum (Tidak)",
           preCount: countPelatihanTidak,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$J$${firstDataRow}:$J$${lastDataRow}, "Tidak")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Tidak")`,
         },
       ],
       chartBuffer: pngChart3,
@@ -811,17 +864,17 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
         {
           label: "IPA",
           preCount: countSmaIpa,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$M$${firstDataRow}:$M$${lastDataRow}, "IPA")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$N$${firstDataRow}:$N$${lastDataRow}, "IPA")`,
         },
         {
           label: "IPS",
           preCount: countSmaIps,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$M$${firstDataRow}:$M$${lastDataRow}, "IPS")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$N$${firstDataRow}:$N$${lastDataRow}, "IPS")`,
         },
         {
           label: "Bahasa / Lain-lain",
           preCount: countSmaBahasa,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$M$${firstDataRow}:$M$${lastDataRow}, "Bahasa/lain-lain")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$N$${firstDataRow}:$N$${lastDataRow}, "Bahasa/lain-lain")`,
         },
       ],
       chartBuffer: pngChart4,
@@ -837,22 +890,22 @@ export async function generateBiodataWorkbook(): Promise<{ buffer: Buffer; filen
         {
           label: "Orang tua",
           preCount: countOrtu,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Orang tua")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$L$${firstDataRow}:$L$${lastDataRow}, "Orang tua")`,
         },
         {
           label: "Pekerjaan sampingan",
           preCount: countSideJob,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Pekerjaan sampingan")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$L$${firstDataRow}:$L$${lastDataRow}, "Pekerjaan sampingan")`,
         },
         {
           label: "Beasiswa",
           preCount: countBeasiswa,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Beasiswa")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$L$${firstDataRow}:$L$${lastDataRow}, "Beasiswa")`,
         },
         {
           label: "Lainnya",
           preCount: countLainnya,
-          formulaFreq: `COUNTIF('Data Responden Lengkap'!$K$${firstDataRow}:$K$${lastDataRow}, "Lainnya")`,
+          formulaFreq: `COUNTIF('Data Responden Lengkap'!$L$${firstDataRow}:$L$${lastDataRow}, "Lainnya")`,
         },
       ],
       chartBuffer: pngChart5,
