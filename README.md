@@ -7,9 +7,9 @@
 
 ## 📖 Overview
 
-**Trading Simulation** adalah platform web interaktif eksperimental komprehensif yang dirancang untuk riset ekonomi perilaku (*behavioral economics*), psikologi keuangan, dan simulasi pasar modal. 
+**Trading Simulation** adalah platform web interaktif eksperimental komprehensif yang dirancang untuk riset ekonomi perilaku (*behavioral economics*), psikologi keuangan, dan simulasi pasar modal.
 
-Platform ini menggabungkan **Central Limit Order Book (CLOB) matching engine** *real-time* berbasis **Socket.io**, matriks penjadwalan multi-periode dengan intervensi asimetris (berita baik & buruk), instrumen profil psikologis responden (*Loss Aversion* & *Emotional Intelligence*), instrumen demografi/biodata, serta kuesioner evaluasi akhir simulasi yang terintegrasi secara *end-to-end*.
+Platform ini menggabungkan **Central Limit Order Book (CLOB) matching engine** berbasis **Socket.io**, matriks penjadwalan multi-periode (4 sesi uji coba + 3 periode utama) dengan intervensi berita asimetris, tampilan harga historis beruntun (`t-3` → `t-2` → `t-1`), instrumen profil psikologis *Population Terciles* (*Loss Aversion* & *Emotional Intelligence*), formulir demografi/biodata dinamis, kuesioner evaluasi pasca-simulasi, pusat **Auto-Backup ZIP**, serta isolasi penuh akun demo terhadap data penelitian.
 
 ---
 
@@ -27,9 +27,9 @@ Platform ini menggabungkan **Central Limit Order Book (CLOB) matching engine** *
 - **Custom Real-Time Server:** Node.js + [Socket.io](https://socket.io/) (`server.ts`)
 - **Database:** PostgreSQL (v15+)
 - **ORM & Migrations:** [Drizzle ORM](https://orm.drizzle.team/) & Drizzle Kit
-- **Autentikasi & Keamanan:** BcryptJS password hashing, stateful session cookie, idle auto-timeout safeguard
-- **Export & Pelaporan:** [ExcelJS](https://github.com/exceljs/exceljs) (Multi-sheet styled XLSX) & [Archiver](https://www.archiverjs.com/) (ZIP bundled archives)
-- **Containerization:** Docker & Docker Compose (Multi-stage production build)
+- **Autentikasi & Keamanan:** BcryptJS password hashing, signed HMAC session cookie, idle auto-timeout watchdog
+- **Export & Pelaporan:** [ExcelJS](https://github.com/exceljs/exceljs) (Multi-sheet styled XLSX + formula dinamis), [Sharp](https://sharp.pixelplumbing.com/) (SVG-to-PNG chart rendering), & [Archiver](https://www.archiverjs.com/) (`ZipArchive` bundled backups)
+- **Containerization:** Docker & Docker Compose (Multi-stage production build dengan persistent `./backups` volume)
 
 ---
 
@@ -37,51 +37,58 @@ Platform ini menggabungkan **Central Limit Order Book (CLOB) matching engine** *
 
 ```text
 trading-simulasi/
-├── drizzle/                  # Drizzle ORM migration outputs & SQL snapshots
+├── backups/                  # Direktori penyimpanan arsip backup otomatis (.zip & .json)
+├── drizzle/                  # Drizzle ORM migrations & seed_100_respondents.sql
 ├── public/                   # Static assets, logo institusi, dan favicon
 ├── src/
 │   ├── app/                  # Next.js App Router (Halaman & Endpoint API)
 │   │   ├── admin/            # Panel Kontrol Eksperimen (Admin)
-│   │   │   ├── biodata/      # Analitik demografi peserta & filter profil
+│   │   │   ├── backup/       # Pusat Monitoring & Manajemen Cadangan Data (ZIP & JSON)
+│   │   │   ├── biodata/      # Analitik demografi peserta, durasi investasi & filter profil
 │   │   │   ├── evaluasi/     # Analitik hasil evaluasi akhir simulasi (10 pertanyaan)
 │   │   │   ├── hasil/        # Leaderboard real-time, NAV, PnL, dan peringkat kekayaan
 │   │   │   ├── kuesioner/    # Monitoring respons instrumen psikologis LA & EI
-│   │   │   ├── profil-responden/ # Matriks 9 kelompok profil psikologis (A s/d I) & detail responden
+│   │   │   ├── profil-responden/ # Matriks 9 kelompok profil (A-I) & detail responden
 │   │   │   ├── resume/       # Rekapitulasi transaksi, volume perdagangan & ekspor modal
 │   │   │   └── trading/      # Live surveillance monitor order book pasar aktif
 │   │   ├── api/              # REST Endpoints
-│   │   │   ├── admin/        # API internal admin (ekspor XLSX/ZIP, recalculate, reset, audit)
+│   │   │   ├── admin/        # API admin (backup, ekspor XLSX, recalculate, audit)
 │   │   │   ├── evaluation/   # Pengumpulan & status evaluasi pasca-simulasi
 │   │   │   ├── questionnaire/# Pengumpulan biodata & kuesioner psikologis
 │   │   │   ├── session/      # State machine kontrol ronde, intervensi, & penjadwalan
-│   │   │   └── stocks/       # Data master 36 emiten saham dan base price
+│   │   │   └── stocks/       # Data master emiten saham dan harga historis
 │   │   ├── dashboard/        # Antarmuka Peserta / Responden
-│   │   │   ├── page.tsx      # Terminal portofolio, saldo kas, dan daftar aset
-│   │   │   └── trading/      # Terminal perdagangan aktif, order book live, & chart pergerakan harga
+│   │   │   ├── page.tsx      # Terminal portofolio (36 saham resmi), saldo kas & aset
+│   │   │   └── trading/      # Terminal perdagangan aktif, t-3/t-2/t-1, order book & chart
 │   │   ├── login/            # Halaman otentikasi login multi-role (Admin & Responden)
 │   │   └── questionnaire/    # Pengisian biodata, instrumen LA & EI, dan evaluasi
 │   │       └── evaluation/   # Kuesioner evaluasi akhir (terkunci otomatis hingga simulasi selesai)
 │   ├── components/           # Komponen UI modular
-│   │   ├── admin/            # Scheduler board, modal ekspor, dialog reset darurat
+│   │   ├── admin/            # Scheduler board, modal ekspor, dialog reset 3-level
 │   │   ├── auth/             # QuestionnaireGuard (alur wajib kuesioner) & SessionTimeoutModal
 │   │   ├── layout/           # AppSidebar, Navbar, Footer, MobileBottomNav
 │   │   ├── trading/          # Running text berita intervensi, order book depth, tick input
-│   │   └── ui/               # Primitives Shadcn UI (PriceInput, Button, Card, Table, dsb.)
-│   ├── db/                   # Konfigurasi database, relasi skema, dan seeding
-│   │   ├── schema.ts         # Skema Drizzle (Users, Stocks, Rounds, OrderBook, Biodata, Evaluasi, dsb.)
-│   │   ├── init.ts           # Inisialisasi basis data terpadu & idempoten
-│   │   ├── seed.ts           # Seeder 36 emiten saham BEI & akun Admin
-│   │   ├── seed-users.ts     # Seeder 30 akun responden massal
-│   │   ├── create-users.ts   # Seeder akun personal responden (Andi, Budi, Citra, Doni)
+│   │   └── ui/               # Primitives Shadcn UI (PriceInput default 0, Button, Card, Table)
+│   ├── db/                   # Konfigurasi database, skema, dan seeding
+│   │   ├── schema.ts         # Skema Drizzle (Users, Stocks t-1/t-2/t-3, Rounds, Biodata, Evaluasi, dsb.)
+│   │   ├── stocks-data.ts    # Master 36 saham utama (S-1..S-36) & 12 saham uji coba (AA..DC)
+│   │   ├── init.ts           # Inisialisasi basis data terpadu & idempoten (100 responden)
+│   │   ├── seed.ts           # Seeder 48 emiten saham & akun Admin
+│   │   ├── seed-users.ts     # Seeder 100 akun responden massal + 4 akun demo
+│   │   ├── seed-responses.ts # Seeder lengkap 100 responden (biodata, kuesioner, profil, evaluasi)
 │   │   ├── seed-questionnaire.ts # Seeder 30 item instrumen psikologis (15 LA & 15 EI)
 │   │   └── reset-experiment.ts   # Script utilitas pembersihan transaksi eksperimen
 │   └── lib/                  # Library pembantu & logika bisnis
-│       ├── experimental-matrix.ts # Logika matriks sesi, periode (1-3), ronde, dan intervensi
-│       ├── market-rules.ts   # Regulasi BEI: Fraksi harga (Tick Size) dan Auto Rejection (ARA/ARB)
+│       ├── exports/          # Generator Excel resmi terpadu (single source of truth)
+│       ├── backup-service.ts # Mesin pembundelan ZIP cadangan seluruh ekspor resmi + JSON
+│       ├── demo-users.ts     # Filter isolasi 4 akun demo (Andi, Budi, Citra, Doni)
+│       ├── experimental-matrix.ts # Matriks Periode 0 (4 Sesi Uji Coba) & Periode 1-3
+│       ├── questionnaire-logic.ts # Algoritma Population Terciles (T/S/R) & Matriks 9 Grup (A-I)
+│       ├── market-rules.ts   # Regulasi BEI: Fraksi harga (Tick Size) & Auto Rejection (ARA/ARB)
 │       ├── evaluation-questions.ts # Definisi pertanyaan & skala Likert evaluasi akhir
 │       ├── socket.ts         # Klien Socket.io dengan auto-reconnect
 │       └── auth-context.tsx  # Context autentikasi, sinkronisasi profil, & idle watchdog
-├── server.ts                 # Custom Node.js + Socket.io Server (CLOB matching engine 750ms)
+├── server.ts                 # Custom Node.js + Socket.io Server (CLOB matching engine & scheduler)
 ├── Dockerfile                # Multi-stage production container build
 ├── docker-compose.yml        # Orkestrasi Docker (Next.js App + PostgreSQL + pgAdmin)
 ├── drizzle.config.ts         # Konfigurasi migrasi Drizzle Kit
@@ -91,71 +98,52 @@ trading-simulasi/
 
 ---
 
-## ✨ Fitur-Fitur Lengkap (Detailed Features)
+## ✨ Fitur-Fitur Utama
 
-### 1. ⚙️ Real-Time Central Limit Order Book (CLOB) Matching Engine
-- **Price-Time Priority:** Algoritma eksekusi order otomatis dengan interval pencocokan berkala setiap **750ms** pada `server.ts`.
-- **Live Bid/Ask Depth:** Antarmuka terminal perdagangan memperbarui kedalaman antrean permintaan (*bid*) dan penawaran (*ask*) secara instan tanpa perlu memuat ulang halaman (*zero-refresh*).
-- **In-Memory Order Tracking:** Pencatatan dan validasi instan terhadap saldo kas dan sisa kepemilikan lot portofolio responden guna mencegah *double spending* atau *short selling*.
+### 1. ⚙️ Terminal Trading Real-Time & Harga Historis (`t-3` → `t-2` → `t-1`)
+- **Tampilan Harga Historis Berurutan:** Pada setiap kartu saham, header terminal trading, maupun *PriceChart*, sistem menampilkan rentang harga historis **`t-3` → `t-2` → `t-1 (Harga Penutupan H-1)`** secara berdampingan dengan `t-1` di posisi paling kanan sebagai acuan utama untuk ke-36 saham utama (`S-1` s/d `S-36`) dan 12 saham uji coba (`AA` s/d `DC`).
+- **Input Harga Mandiri (Default `0`):** Kolom input *Harga Order / Prediksi* dimulai dari angka **`0`** (tidak terisi otomatis oleh harga pembukaan) agar responden menentukan nominal harga beli/jual secara independen.
+- **CLOB Matching Engine (FIFO Price-Time Priority):** Pencocokan antrean *Bid* dan *Ask* secara deterministik di `server.ts`, disertai modal **Hasil Pencocokan Transaksi Akhir Sesi** dengan keterangan `Harga Match`, `Harga Order`, atau `Harga Open`.
+- **Kepatuhan Regulasi BEI:** Validasi otomatis **Fraksi Harga (Tick Size)** dan batas **Auto Rejection Atas/Bawah (ARA/ARB)** di frontend dan backend (`Peng-00067/BEI.POP/04-2026`).
 
-### 2. 🏛️ Regulasi Bursa Efek Indonesia (BEI) Compliance
-Sistem trading mengadopsi mekanisme regulasi perdagangan saham nyata sesuai acuan BEI:
-- **Aturan Fraksi Harga (Tick Size):**
-  - `< Rp 200`: Fraksi Rp 1
-  - `Rp 200 - Rp 500`: Fraksi Rp 2
-  - `Rp 500 - Rp 2.000`: Fraksi Rp 5
-  - `Rp 2.000 - Rp 5.000`: Fraksi Rp 10
-  - `≥ Rp 5.000`: Fraksi Rp 25
-  - Dilengkapi tombol *Quick Price Chips* (prediksi naik/turun persentase) dan tombol penyesuaian fraksi (+/-) otomatis.
-- **Auto Rejection Atas (ARA) & Auto Rejection Bawah (ARB):**
-  - Proteksi batas pergerakan harga maksimal harian/ronde (35% untuk saham ≤ Rp 200; 25% untuk saham Rp 200 - Rp 5.000; 20% untuk saham > Rp 5.000) yang divalidasi langsung di frontend dan backend.
+### 2. 🧪 Matriks Eksperimen: 4 Sesi Uji Coba + 3 Periode Utama
+- **Periode 0 (Periode Uji Coba — 4 Sesi):**
+  - **Sesi Uji Coba 1:** `AA`, `AB`, `AC`
+  - **Sesi Uji Coba 2:** `BA`, `BB`, `BC`
+  - **Sesi Uji Coba 3:** `CA`, `CB`, `CC`
+  - **Sesi Uji Coba 4:** `DA`, `DB`, `DC`
+  - Saham uji coba diisolasi (`is_trial = true`) agar tidak memengaruhi laporan hasil resmi 36 saham.
+- **Periode I – III (36 Saham Utama `S-1` s/d `S-36`):**
+  - Mendukung injeksi berita asimetris (`BERITA_BAIK`, `BERITA_BURUK`, `NONE`) dengan *running text ticker* di layar peserta.
 
-### 3. 🧪 State Machine & Matriks Eksperimen Multi-Periode
-- **Struktur Matriks Eksperimen:**
-  - Terdiri dari **3 Periode Utama** dengan masing-masing **4 Sesi Sub-Putaran**.
-  - Setiap putaran mengaktifkan 3 saham pilihan dari total 36 emiten saham terdaftar.
-- **Fase Putaran Dinamis:**
-  - `PRE_MARKET` (Pra-Pasar): Peserta melakukan tebakan/prediksi harga pembukaan serta latihan penempatan order *Bid*/*Ask* uji coba tanpa mengurangi saldo uang riil.
-  - `TRADING` (Pasar Aktif): Perdagangan live continuous trading dengan pencocokan riil di engine CLOB.
-  - `COOLDOWN`: Jeda kalkulasi hasil transaksi, rekap laba/rugi, dan transisi ke putaran selanjutnya.
-- **Injeksi Intervensi Eksperimen:**
-  - Fasilitas penyampaian berita terprogram: `BERITA_BAIK` (Good News), `BERITA_BURUK` (Bad News), atau `NONE` (Kontrol).
-  - Tampilan *running text* *ticker tape* berjalan di layar terminal trading peserta untuk menguji respons psikologis terhadap informasi asimetris.
+### 3. 🧠 Profiling Psikologis *Population Terciles* (Adaptif & Seimbang)
+- **Instrumen Kuesioner:** 15 butir *Loss Aversion* (LA) + 15 butir *Emotional Intelligence* (EI) dengan **Petunjuk Pengisian** skala 1–5 (`1 = sangat tidak sesuai` s/d `5 = sangat sesuai`).
+- **Algoritma Population Terciles:** Secara otomatis mengurutkan total skor seluruh responden yang telah mengisi dari tertinggi ke terendah dan membagi menjadi 3 kelompok seimbang (**Tinggi 33.3%**, **Sedang 33.3%**, **Rendah 33.3%**) — adaptif untuk jumlah populasi berapapun mulai dari $N \ge 3$ (misal: $N=3 \rightarrow 1:1:1$, $N=100 \rightarrow 34:33:33$) dan dipetakan ke **Matriks 9 Kuadran (Grup A – I)**.
 
-### 4. 🧠 Profiling Psikologis Responden (Loss Aversion & Emotional Intelligence)
-- **Instrumen Kuesioner Komprehensif:** 30 butir pertanyaan skala Likert (15 butir untuk mengukur kecenderungan *Loss Aversion* / keengganan merugi, dan 15 butir untuk *Emotional Intelligence* / kecerdasan emosional).
-- **Pengelompokan Otomatis Matriks 9 Kuadran (Group A – I):**
-  - Kombinasi otomatis dari skor LA (Tinggi / Sedang / Rendah) dan EI (Tinggi / Sedang / Rendah) menghasilkan profil seperti `LATEIT` (Kelompok A) hingga `LAREIR` (Kelompok I).
-  - Dilengkapi fitur *Recalculate Scores* di panel admin apabila ada penyesuaian batas kategori skor.
+### 4. 📋 Formulir Biodata Kondisional & Route Protection
+- Mengumpulkan 8 butir demografi peserta termasuk **pertanyaan kondisional lama pengalaman investasi saham**: jika responden memilih `Ya` pada riwayat investasi saham, muncul dropdown angka (`1–10` dan `Lainnya > 10` beserta input manual) dan dropdown satuan (`Bulan` / `Tahun`).
+- **QuestionnaireGuard:** Mengunci akses terminal trading hingga biodata dan kuesioner LA/EI selesai diisi, serta mengarahkan peserta ke evaluasi akhir (`/questionnaire/evaluation`) setelah Periode 3 Sesi 4 berakhir.
 
-### 5. 📋 Biodata & Demografi Peserta
-- **Formulir Biodata Interaktif:** Pengumpulan data demografi awal mencakup jenis kelamin, rentang usia, program studi, semester, pengalaman investasi saham nyata, riwayat pelatihan pasar modal, sumber penghasilan, dan latar belakang jurusan SMA.
-- **Questionnaire Guard:** Mekanisme *route protection* cerdas; peserta yang belum melengkapi biodata atau kuesioner psikologis secara otomatis dialihkan ke halaman instrumen sebelum diizinkan mengakses terminal perdagangan.
+### 5. 🛡️ Isolasi Akun Demo (`Andi`, `Budi`, `Citra`, `Doni`)
+- Ke-4 akun personal demo tetap dapat digunakan untuk simulasi/demonstrasi kapan pun, namun **diisolasi 100%** dari seluruh data riset resmi:
+  - Tidak diikutsertakan dalam pemeringkatan *Population Terciles* LA/EI.
+  - Disembunyikan dari seluruh tampilan dashboard admin (`/admin/biodata`, `/admin/profil-responden`, `/admin/evaluasi`, `/admin/hasil`, `/admin/resume`, `/admin/kuesioner`).
+  - Tidak masuk ke dalam berkas ekspor laporan Excel mana pun.
 
-### 6. 📝 Evaluasi Pasca-Simulasi (Post-Simulation Evaluation)
-- **Evaluasi 10 Pertanyaan:** Kuesioner evaluasi komprehensif terkait pengalaman simulasi, persepsi risiko, pemahaman mekanisme pasar, dan pengaruh berita yang dihadapi peserta.
-- **Sistem Penguncian Terprogram:** Halaman `/questionnaire/evaluation` terkunci secara cerdas dan baru dapat diakses setelah seluruh rangkaian perdagangan simulasi (Periode 3 Sesi 4) dinyatakan selesai oleh Admin.
-
-### 7. 🛡️ Keamanan & Pemantauan Sesi (Idle Timeout Watchdog)
-- **Sesi Otomatis & Pemantauan Keaktifan:** Deteksi aktivitas pengguna (gerakan mouse, penekanan keyboard, sentuhan layar).
-- **Modal Peringatan Countdown:** Jika pengguna tidak aktif selama periode tertentu, modal peringatan mengambang akan muncul dengan hitung mundur detik sebelum sesi dikeluarkan secara aman (*auto-logout*).
-
-### 8. 📊 Dashboard Kontrol & Analisis Peneliti (Admin Panel)
-- **Penjadwal Putaran (`/admin`):** Kontrol peluncuran putaran, jeda, reset, serta pengaturan intervensi per periode secara fleksibel.
-- **Live Market Surveillance (`/admin/trading`):** Memantau arus order book dan transaksi berjalan antar peserta secara langsung.
-- **Leaderboard & Hasil (`/admin/hasil`):** Peringkat peserta *real-time* berdasarkan *Net Asset Value* (NAV), saldo kas tunai, total valuasi portofolio saham, persentase *Return/PnL*, dan frekuensi transaksi.
-- **Rekapitulasi Pasar (`/admin/resume`):** Ringkasan volume perputaran uang, rata-rata transaksi, dan histori log transaksi per tanggal eksperimen.
-- **Analitik Biodata & Evaluasi (`/admin/biodata` & `/admin/evaluasi`):** Visualisasi statistik demografi dan distribusi jawaban instrumen evaluasi dalam bentuk diagram persentase dan ringkasan metrik.
-- **Profil Responden (`/admin/profil-responden`):** Distribusi sebaran kelompok A–I dan rincian jawaban per individu responden.
-
-### 9. 📥 Sistem Ekspor Laporan Riset Mutakhir
-- **Multi-Sheet Styled Excel (`.xlsx`):** Laporan data berformat rapi menggunakan library ExcelJS, lengkap dengan filter tanggal eksperimen dan pemisahan tab:
-  - Tab Transaksi & Riwayat Order
-  - Tab Evaluasi Portofolio & NAV
-  - Tab Profil Jawaban LA & EI Responden
-  - Tab Data Demografi & Biodata
-  - Tab Hasil Kuesioner Evaluasi Akhir
-- **ZIP Bundling Archive:** Kemudahan mengunduh seluruh berkas ekspor data mentah secara kolektif dalam satu arsip terkompresi.
+### 6. 🗄️ Pusat Backup (`/admin/backup`), Auto-Backup ZIP & Reset 3 Level
+- **Reset 3 Level (`ResetDialog.tsx`):**
+  - **Level 1 (Reset State Saja):** Menghentikan timer/sesi dan mengembalikan status ke `IDLE` tanpa menghapus data transaksi.
+  - **Level 2 (Reset Sesi & Batalkan Order):** Semua aksi Level 1 + membatalkan antrean *open orders*.
+  - **Level 3 (Reset Penuh dari Nol / Hard Reset):** Secara otomatis mengeksekusi **Auto-Backup ZIP** ke `backups/` terlebih dahulu, lalu menghapus bersih seluruh data transaksi, order book, prediksi, ronde, biodata, kuesioner, profil, dan evaluasi serta mengembalikan saldo ke Rp 100.000.000 & portofolio ke 10 lot agar eksperimen dimulai murni dari nol.
+- **Halaman Monitoring Backup (`/admin/backup`):** Memantau riwayat arsip cadangan di server, membuat snapshot baru secara instan, atau mengunduh paket ZIP/JSON.
+- **Single Source of Truth Ekspor Resmi:** Paket ZIP backup membundel berkas-berkas Excel yang **100% identik** nama, template, grafik, rumus Excel, dan isinya dengan ekspor di tiap halaman admin:
+  - `Laporan_Biodata_Responden_YYYY-MM-DD.xlsx`
+  - `Laporan_Profil_Psikologis_Responden_YYYY-MM-DD.xlsx`
+  - `Rekap_Evaluasi_Simulasi_YYYY-MM-DD.xlsx`
+  - `Laporan_Trading_Semua_Sesi.xlsx`
+  - `Laporan_OrderBook_Semua_Sesi.xlsx`
+  - `Laporan_Hasil_Semua_Sesi.xlsx` *(Sheet 1 `Ranking Kekayaan` + Sheet individual per user berurutan dari `responden1` s/d `responden100` dengan kolom `Harga Open`)*
+  - `snapshot_database_lengkap.json`
 
 ---
 
@@ -163,63 +151,60 @@ Sistem trading mengadopsi mekanisme regulasi perdagangan saham nyata sesuai acua
 
 ### 1. Prasyarat Sistem
 - [Node.js](https://nodejs.org/) (Versi 20 LTS atau lebih baru disarankan)
-- [PostgreSQL](https://www.postgresql.org/) database (Lokal atau Cloud instance)
-- npm / yarn / pnpm
+- [PostgreSQL](https://www.postgresql.org/) database (Lokal atau Docker)
+- npm
 
-### 2. Kloning Repositori
+### 2. Kloning Repositori & Install Dependensi
 ```bash
 git clone https://github.com/FauzanAmirudin/trading-simulation.git
 cd trading-simulation
-```
-
-### 3. Instalasi Dependensi
-```bash
 npm install
 ```
 
-### 4. Konfigurasi Environment Variables
-Salin berkas template `.env.example` ke `.env`:
+### 3. Konfigurasi Environment Variables
+Salin berkas `.env.example` menjadi `.env` dan sesuaikan `DATABASE_URL`:
 ```bash
 cp .env.example .env
 ```
-Sesuaikan konfigurasi string koneksi `DATABASE_URL` pada `.env`:
 ```env
+PORT=3000
+NODE_ENV=development
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/trading_simulasi
 ```
 
-### 5. Inisialisasi Basis Data & Seeding Otomatis
-Jalankan migrasi skema dan *idempotent database initializer*:
+### 4. Inisialisasi Basis Data & Seeding
 ```bash
 # Push skema Drizzle ke basis data
 npm run db:push
 
-# Inisialisasi & seed seluruh data (36 saham, akun Admin, 34 responden, 30 butir kuesioner)
+# Inisialisasi data master (48 saham, akun Admin, 100 responden, 30 butir kuesioner)
 npm run db:init
 ```
 
 > [!TIP]
 > **Daftar Skrip Database Mandiri:**
-> - `npm run db:seed`: Seed saham & akun admin saja
-> - `npm run db:seed:users`: Seed 30 akun responden massal
-> - `npm run db:create-users`: Seed akun responden bernama (Andi, Budi, Citra, Doni)
+> - `npm run db:seed`: Sync 48 emiten saham (`S-1..S-36` & `AA..DC`) + akun Admin
+> - `npm run db:seed:users`: Seed 100 akun responden (`responden1` s/d `responden100`) + 4 akun demo
+> - `npm run db:seed:100` / `npm run db:seed:responses`: Seed lengkap data 100 responden (biodata, kuesioner, profil, evaluasi, portofolio) & menghasilkan `drizzle/seed_100_respondents.sql`
 > - `npm run db:seed:questionnaire`: Seed 30 instrumen pertanyaan LA & EI
 > - `npm run db:reset`: Reset data order book dan transaksi eksperimen tanpa menghapus akun
 
-### 6. Menjalankan Aplikasi
+### 5. Menjalankan Aplikasi
 Jalankan server terintegrasi Socket.io dan Next.js:
 ```bash
-npm run dev:server
-# atau
 npm run dev
+# atau
+npm run dev:server
 ```
-*Aplikasi akan berjalan dan dapat diakses di: `http://localhost:3000`.*
+> **Catatan:** Selalu gunakan `npm run dev` / `npm run dev:server` (menjalankan `tsx watch server.ts`), bukan `next dev` standar, agar Socket.io dan matching engine aktif di port `3000`.
+
+Aplikasi dapat diakses di: **`http://localhost:3000`**
 
 ---
 
-## 🐳 Panduan Deployment Docker (Production Server)
+## 🐳 Panduan Deployment & Pembaruan Docker (Production Server)
 
 ### 1. Konfigurasi `.env` Server
-Buat berkas `.env` pada direktori root server:
 ```env
 PORT=3000
 NODE_ENV=production
@@ -231,16 +216,25 @@ PGADMIN_EMAIL=admin@trading.com
 PGADMIN_PASSWORD=admin
 ```
 
-### 2. Build & Jalankan Kontainer
+### 2. Build & Jalankan Pertama Kali
 ```bash
-# Build dan jalankan seluruh container (Aplikasi + PostgreSQL + pgAdmin) di latar belakang
 docker compose up -d --build
-
-# Pantau log server real-time
 docker compose logs -f app
 ```
 
-Kontainer aplikasi otomatis menerapkan sinkronisasi skema Drizzle, mengeksekusi seed terpadu `src/db/init.ts` secara idempoten, dan memulai *Node.js Socket.io matching engine server*.
+### 3. Memperbarui Aplikasi di Server Docker Setelah `git push`
+```bash
+# 1. Tarik kode terbaru dari GitHub
+git pull origin master
+
+# 2. Build ulang dan jalankan container aplikasi (tanpa mengganggu database)
+docker compose up -d --build app
+
+# 3. (Opsional) Seed 100 responden lengkap langsung via SQL jika belum ada
+docker compose exec -T postgres psql -U postgres -d trading_simulasi < drizzle/seed_100_respondents.sql
+```
+
+*(Folder `./backups` di host server otomatis ter-mount ke `/app/backups` di dalam container sehingga berkas arsip ZIP cadangan tetap aman saat rebuild).*
 
 ---
 
@@ -248,9 +242,9 @@ Kontainer aplikasi otomatis menerapkan sinkronisasi skema Drizzle, mengeksekusi 
 
 | Peran (Role) | Username | Password | Deskripsi & Hak Akses |
 | :--- | :--- | :--- | :--- |
-| **Administrator** | `Admin` | `admin` | Akses kontrol penuh: Penjadwalan eksperimen, monitoring surveillance, analitik kuesioner, evaluasi, dan ekspor laporan XLSX/ZIP. |
-| **Responden Massal** | `responden1` s/d `responden30` | `password123` | Akun peserta penelitian standar (Modal awal: Rp 100.000.000 tunai + 10 lot pada seluruh saham). |
-| **Responden Personal** | `Andi`, `Budi`, `Citra`, `Doni` | `password` | Akun peserta pengujian mandiri (Modal awal: Rp 100.000.000 tunai + 10 lot pada seluruh saham). |
+| **Administrator** | `Admin` | `admin` | Kontrol penuh: Penjadwalan 4 sesi uji coba + 3 periode, surveillance live, analitik, monitoring backup ZIP, dan ekspor laporan. |
+| **Responden Resmi** | `responden1` s/d `responden100` | `password123` | Akun peserta penelitian resmi (Modal awal: Rp 100.000.000 tunai + 10 lot pada seluruh saham). |
+| **Akun Demo (Terisolasi)** | `Andi`, `Budi`, `Citra`, `Doni` | `password` | Akun demo/uji coba mandiri — aksinya terisolasi penuh dan tidak masuk ke data riset maupun laporan Excel admin. |
 
 ---
 
