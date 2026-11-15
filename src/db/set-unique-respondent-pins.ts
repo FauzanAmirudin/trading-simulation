@@ -147,8 +147,8 @@ export async function setupUniqueRespondentAccounts() {
       where: eq(users.nama, item.username),
     });
 
-    if (!user) {
-      failureList.push(`${item.username}: User tidak ditemukan di DB`);
+    if (!user || !user.password) {
+      failureList.push(`${item.username}: User tidak ditemukan atau password kosong`);
       continue;
     }
 
