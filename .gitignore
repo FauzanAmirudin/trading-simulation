@@ -25,6 +25,7 @@ id_ed25519*
 
 # Kredensial & Autentikasi API Lokal
 *credential*.json
+!src/db/respondent-credentials.json
 *token*.json
 *secret*.json
 *.token
@@ -121,6 +122,7 @@ logs/
 # ==============================================================================
 *.sql
 !drizzle/*.sql
+!scripts/update_passwords.sql
 *.dump
 *.backup
 *.bak
@@ -137,6 +139,7 @@ backups/*
 # 10. DOKUMEN & FILE EXPORT HASIL EKSPERIMEN LOKAL
 # ==============================================================================
 *.docx
+!Daftar_Kredensial_Responden_1-100.docx
 *.doc
 *.pptx
 *.ppt

@@ -24,7 +24,8 @@
     "db:seed:portfolios": "tsx src/db/seed-portfolios.ts",
     "db:seed:responses": "tsx src/db/seed-responses.ts",
     "db:seed:100": "tsx src/db/seed-responses.ts",
-    "db:reset": "tsx src/db/reset-experiment.ts"
+    "db:reset": "tsx src/db/reset-experiment.ts",
+    "db:set-unique-pins": "tsx src/db/set-unique-respondent-pins.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

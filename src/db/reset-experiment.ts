@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
 import { db } from "./connect";
 import { users, stocks, portfolios } from "./schema";
 import { eq, sql } from "drizzle-orm";
@@ -37,19 +39,40 @@ export async function resetExperiment() {
   `);
   console.log("✓ Seluruh tabel riwayat berhasil dikosongkan.");
 
-  // 1.5. Pastikan seluruh akun responden (responden1 s.d responden90) tersedia
-  console.log("1.5. Memeriksa keberadaan akun responden (responden1 s.d responden90)...");
+  // 1.5. Pastikan seluruh akun responden (responden1 s.d responden100) tersedia
+  console.log("1.5. Memeriksa keberadaan akun responden (responden1 s.d responden100)...");
   const existingUsers = await db.select({ id: users.id, nama: users.nama }).from(users);
   const existingMap = new Set(existingUsers.map((u) => u.nama.toLowerCase()));
-  const userHashed = await bcrypt.hash("password123", 12);
+
+  // Cek apakah ada file kredensial unik tersimpan
+  const credPath = path.join(process.cwd(), "src", "db", "respondent-credentials.json");
+  let credentialsMap = new Map<string, string>();
+  if (fs.existsSync(credPath)) {
+    try {
+      const rawCreds = JSON.parse(fs.readFileSync(credPath, "utf8"));
+      if (Array.isArray(rawCreds)) {
+        for (const item of rawCreds) {
+          if (item.username && item.pin) {
+            credentialsMap.set(item.username.toLowerCase(), item.pin);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Gagal membaca respondent-credentials.json:", e);
+    }
+  }
+
+  const defaultHashed = await bcrypt.hash("password123", 10);
   const toCreate: { nama: string; password: string; role: string; saldo: string }[] = [];
 
-  for (let i = 1; i <= 90; i++) {
+  for (let i = 1; i <= 100; i++) {
     const username = `responden${i}`;
     if (!existingMap.has(username.toLowerCase())) {
+      const pin = credentialsMap.get(username.toLowerCase());
+      const passHash = pin ? await bcrypt.hash(pin, 10) : defaultHashed;
       toCreate.push({
         nama: username,
-        password: userHashed,
+        password: passHash,
         role: "responden",
         saldo: "100000000.00",
       });
