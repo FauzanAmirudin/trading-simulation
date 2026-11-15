@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ZipArchive } from "archiver";
-import { db } from "@/db/connect";
+import { db, ensureQuestionnaireSchema } from "@/db/connect";
 import {
   users,
   stocks,
@@ -11,6 +11,8 @@ import {
   orderBook,
   portfolios,
   transactionsHistory,
+  sessions,
+  sessionStocks,
   questions,
   questionnaireResponses,
   respondentProfiles,
@@ -28,10 +30,15 @@ import { generateOrderBookWorkbook } from "./exports/orderbook";
 
 const BACKUP_DIR = path.join(process.cwd(), "backups");
 
-function ensureBackupDir() {
-  if (!fs.existsSync(BACKUP_DIR)) {
-    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+export function ensureBackupDir(): string {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.error("[BackupService] Gagal memastikan direktori BACKUP_DIR:", err);
   }
+  return BACKUP_DIR;
 }
 
 export function formatWibDateTime(d?: Date | string | null): string {
@@ -66,6 +73,15 @@ export function getBackupTimestamp(): string {
   return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
 }
 
+export interface JsonBackupResult {
+  timestamp: string;
+  jsonPath: string;
+  jsonFilename: string;
+  jsonString: string;
+  recordCounts: Record<string, number>;
+  payload: any;
+}
+
 export interface BackupResult {
   timestamp: string;
   zipPath: string;
@@ -74,18 +90,22 @@ export interface BackupResult {
   jsonFilename: string;
   filesIncluded: string[];
   recordCounts: Record<string, number>;
-  zipBuffer?: Buffer;
+  zipBuffer: Buffer;
 }
 
 // ─────────────────────────────────────────────────────────────
-// CORE EXPORT: CREATE FULL BACKUP ZIP (ALL INDIVIDUAL EXCELS + JSON)
+// CORE EXPORT 1: CREATE FAST DATABASE JSON SNAPSHOT
 // ─────────────────────────────────────────────────────────────
-export async function createFullBackup(reason: string = "hard-reset"): Promise<BackupResult> {
+export async function createJsonBackup(reason: string = "manual-export"): Promise<JsonBackupResult> {
   ensureBackupDir();
+  await ensureQuestionnaireSchema().catch((e) =>
+    console.warn("[BackupService] ensureQuestionnaireSchema warning:", e)
+  );
+
   const timestamp = getBackupTimestamp();
   const baseFilename = `backup_full_${timestamp}`;
 
-  // 1. Fetch raw database records for snapshot & questionnaire builder
+  // Fetch raw database records across all tables with safe fallbacks
   const [
     allUsers,
     allStocks,
@@ -95,6 +115,8 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
     allOrderBook,
     allPortfolios,
     allTransactions,
+    allSessions,
+    allSessionStocks,
     allQuestions,
     allQuestionnaireResponses,
     allProfiles,
@@ -102,20 +124,22 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
     allEvaluations,
     allConfig,
   ] = await Promise.all([
-    db.select().from(users).orderBy(asc(users.id)),
-    db.select().from(stocks).orderBy(asc(stocks.id)),
-    db.select().from(rounds).orderBy(asc(rounds.id)),
-    db.select().from(roundStocks).orderBy(asc(roundStocks.id)),
-    db.select().from(predictions).orderBy(asc(predictions.id)),
-    db.select().from(orderBook).orderBy(asc(orderBook.id)),
-    db.select().from(portfolios).orderBy(asc(portfolios.id)),
-    db.select().from(transactionsHistory).orderBy(asc(transactionsHistory.id)),
-    db.select().from(questions).orderBy(asc(questions.orderNumber)),
-    db.select().from(questionnaireResponses).orderBy(asc(questionnaireResponses.id)),
-    db.select().from(respondentProfiles).orderBy(asc(respondentProfiles.id)),
-    db.select().from(respondentBiodata).orderBy(asc(respondentBiodata.id)),
-    db.select().from(simulationEvaluations).orderBy(asc(simulationEvaluations.id)),
-    db.select().from(experimentalConfig).orderBy(asc(experimentalConfig.id)),
+    db.select().from(users).orderBy(asc(users.id)).catch(() => []),
+    db.select().from(stocks).orderBy(asc(stocks.id)).catch(() => []),
+    db.select().from(rounds).orderBy(asc(rounds.id)).catch(() => []),
+    db.select().from(roundStocks).orderBy(asc(roundStocks.id)).catch(() => []),
+    db.select().from(predictions).orderBy(asc(predictions.id)).catch(() => []),
+    db.select().from(orderBook).orderBy(asc(orderBook.id)).catch(() => []),
+    db.select().from(portfolios).orderBy(asc(portfolios.id)).catch(() => []),
+    db.select().from(transactionsHistory).orderBy(asc(transactionsHistory.id)).catch(() => []),
+    db.select().from(sessions).orderBy(asc(sessions.id)).catch(() => []),
+    db.select().from(sessionStocks).orderBy(asc(sessionStocks.id)).catch(() => []),
+    db.select().from(questions).orderBy(asc(questions.orderNumber)).catch(() => []),
+    db.select().from(questionnaireResponses).orderBy(asc(questionnaireResponses.id)).catch(() => []),
+    db.select().from(respondentProfiles).orderBy(asc(respondentProfiles.id)).catch(() => []),
+    db.select().from(respondentBiodata).orderBy(asc(respondentBiodata.id)).catch(() => []),
+    db.select().from(simulationEvaluations).orderBy(asc(simulationEvaluations.id)).catch(() => []),
+    db.select().from(experimentalConfig).orderBy(asc(experimentalConfig.id)).catch(() => []),
   ]);
 
   const recordCounts = {
@@ -127,6 +151,8 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
     orderBook: allOrderBook.length,
     portfolios: allPortfolios.length,
     transactionsHistory: allTransactions.length,
+    sessions: allSessions.length,
+    sessionStocks: allSessionStocks.length,
     questions: allQuestions.length,
     questionnaireResponses: allQuestionnaireResponses.length,
     respondentProfiles: allProfiles.length,
@@ -135,7 +161,6 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
     experimentalConfig: allConfig.length,
   };
 
-  // 2. Generate JSON full snapshot
   const jsonPayload = {
     metadata: {
       title: "Trading Simulation Full Backup Snapshot",
@@ -153,6 +178,8 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
       orderBook: allOrderBook,
       portfolios: allPortfolios,
       transactionsHistory: allTransactions,
+      sessions: allSessions,
+      sessionStocks: allSessionStocks,
       questions: allQuestions,
       questionnaireResponses: allQuestionnaireResponses,
       respondentProfiles: allProfiles,
@@ -164,9 +191,36 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
 
   const jsonFilename = `${baseFilename}.json`;
   const jsonPath = path.join(BACKUP_DIR, jsonFilename);
-  fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), "utf8");
+  const jsonString = JSON.stringify(jsonPayload, null, 2);
 
-  // 3. Build each individual Excel report using the exact same official generator functions & filenames as the UI pages
+  try {
+    fs.writeFileSync(jsonPath, jsonString, "utf8");
+  } catch (writeErr) {
+    console.error("[BackupService] Gagal menulis file JSON backup ke disk:", writeErr);
+  }
+
+  return {
+    timestamp,
+    jsonPath,
+    jsonFilename,
+    jsonString,
+    recordCounts,
+    payload: jsonPayload,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// CORE EXPORT 2: CREATE FULL BACKUP ZIP (ALL INDIVIDUAL EXCELS + JSON)
+// ─────────────────────────────────────────────────────────────
+export async function createFullBackup(reason: string = "hard-reset"): Promise<BackupResult> {
+  ensureBackupDir();
+
+  // 1. Generate JSON snapshot first (persisted to disk)
+  const jsonBackup = await createJsonBackup(reason);
+  const { timestamp, jsonPath, jsonFilename, jsonString, recordCounts } = jsonBackup;
+  const baseFilename = `backup_full_${timestamp}`;
+
+  // 2. Build each individual Excel report using the official generator functions
   const [
     biodataRes,
     profilesRes,
@@ -223,31 +277,56 @@ export async function createFullBackup(reason: string = "hard-reset"): Promise<B
   }
   filesToZip.push({
     name: "snapshot_database_lengkap.json",
-    buffer: Buffer.from(JSON.stringify(jsonPayload, null, 2), "utf8"),
+    buffer: Buffer.from(jsonString, "utf8"),
   });
 
-  // 4. Bundle all into a single ZIP file using ZipArchive
+  // 3. Bundle all into a single ZIP file using ZipArchive
   const zipFilename = `${baseFilename}.zip`;
   const zipPath = path.join(BACKUP_DIR, zipFilename);
 
   const archive = new ZipArchive({ zlib: { level: 9 } });
   const outputStream = fs.createWriteStream(zipPath);
 
-  const { promise: zipPromise, resolve: resolveZip, reject: rejectZip } = Promise.withResolvers<void>();
-  outputStream.on("close", resolveZip);
-  outputStream.on("error", rejectZip);
-  archive.on("error", rejectZip);
+  // Standard Promise implementation compatible with Node 18, 20, 22, 24+
+  const zipBuffer = await new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    const chunks: Buffer[] = [];
 
-  archive.pipe(outputStream);
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
 
-  for (const item of filesToZip) {
-    archive.append(item.buffer, { name: item.name });
-  }
+    const onDone = () => {
+      if (!settled) {
+        settled = true;
+        resolve(Buffer.concat(chunks));
+      }
+    };
 
-  archive.finalize();
-  await zipPromise;
+    const onError = (err: unknown) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    };
 
-  const zipBuffer = fs.readFileSync(zipPath);
+    outputStream.on("close", onDone);
+    outputStream.on("finish", onDone);
+    outputStream.on("error", (err) => {
+      console.error("[BackupService] File write stream error:", err);
+    });
+    archive.on("error", onError);
+    archive.on("end", () => {
+      setTimeout(onDone, 50);
+    });
+
+    archive.pipe(outputStream);
+
+    for (const item of filesToZip) {
+      archive.append(item.buffer, { name: item.name });
+    }
+
+    archive.finalize();
+  });
+
   const filesIncluded = filesToZip.map((f) => f.name);
 
   return {

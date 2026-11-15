@@ -3,11 +3,21 @@ import { db } from "./connect";
 import { users, stocks, portfolios } from "./schema";
 import { eq, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { createFullBackup } from "@/lib/backup-service";
 
 export async function resetExperiment() {
   console.log("=======================================================");
   console.log("⚠️  MEMULAI PROSES RESET TOTAL RIWAYAT EKSPERIMEN ⚠️");
   console.log("=======================================================");
+
+  // 0. Auto-Backup sebelum truncate data riset
+  console.log("0. Membuat cadangan otomatis data sebelum reset...");
+  try {
+    const backup = await createFullBackup("db-reset-script");
+    console.log(`✓ Cadangan data otomatis berhasil dibuat: ${backup.zipFilename}`);
+  } catch (backupErr) {
+    console.warn("⚠️ Peringatan: Gagal membuat cadangan otomatis:", backupErr);
+  }
 
   // 1. Truncate semua tabel transaksi, order, prediksi, ronde, kuesioner, dan portofolio
   console.log("1. Mengosongkan data riwayat transaksi, ronde, prediksi & kuesioner...");

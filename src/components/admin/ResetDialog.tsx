@@ -16,6 +16,7 @@ import {
   Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export type ResetMode = "state" | "session" | "full";
 
@@ -39,20 +40,33 @@ export function ResetDialog({
 
   const handleDownloadBackup = async () => {
     setIsDownloadingBackup(true);
+    toast.info("Menyiapkan cadangan data (.zip)...", { id: "reset-backup-dl" });
     try {
       const res = await fetch("/api/admin/backup?format=zip");
-      if (!res.ok) throw new Error("Gagal mengunduh cadangan data.");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Gagal mengunduh cadangan data.");
+      }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `backup_full_${new Date().toISOString().slice(0, 10)}.zip`;
+      const disposition = res.headers.get("content-disposition");
+      let downloadFilename = `backup_full_${new Date().toISOString().slice(0, 10)}.zip`;
+      if (disposition) {
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        if (match?.[1]) downloadFilename = match[1];
+      }
+      a.download = downloadFilename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+      toast.success("Cadangan data ZIP berhasil diunduh!", { id: "reset-backup-dl" });
     } catch (err: unknown) {
       console.error("Backup download error:", err);
+      const msg = err instanceof Error ? err.message : "Gagal mengunduh cadangan data.";
+      toast.error(msg, { id: "reset-backup-dl" });
     } finally {
       setIsDownloadingBackup(false);
     }

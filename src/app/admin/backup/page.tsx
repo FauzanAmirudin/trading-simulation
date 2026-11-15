@@ -187,12 +187,21 @@ export default function AdminBackupPage() {
     toast.info("Menyiapkan paket arsip ZIP berisi seluruh berkas Excel...", { id: "direct-zip" });
     try {
       const res = await fetch("/api/admin/backup?format=zip");
-      if (!res.ok) throw new Error("Gagal mengunduh paket arsip ZIP.");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Gagal mengunduh paket arsip ZIP.");
+      }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `backup_full_${new Date().toISOString().slice(0, 10)}.zip`;
+      const disposition = res.headers.get("content-disposition");
+      let downloadFilename = `backup_full_${new Date().toISOString().slice(0, 10)}.zip`;
+      if (disposition) {
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        if (match?.[1]) downloadFilename = match[1];
+      }
+      a.download = downloadFilename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -210,12 +219,21 @@ export default function AdminBackupPage() {
     toast.info("Menyiapkan snapshot JSON mentah...", { id: "direct-json" });
     try {
       const res = await fetch("/api/admin/backup?format=json");
-      if (!res.ok) throw new Error("Gagal mengunduh snapshot JSON.");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Gagal mengunduh snapshot JSON.");
+      }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `backup_full_${new Date().toISOString().slice(0, 10)}.json`;
+      const disposition = res.headers.get("content-disposition");
+      let downloadFilename = `backup_full_${new Date().toISOString().slice(0, 10)}.json`;
+      if (disposition) {
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        if (match?.[1]) downloadFilename = match[1];
+      }
+      a.download = downloadFilename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

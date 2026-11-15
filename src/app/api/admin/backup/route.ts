@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { requireAdmin } from "@/lib/auth-server";
-import { createFullBackup, listBackups } from "@/lib/backup-service";
+import { createFullBackup, createJsonBackup, listBackups } from "@/lib/backup-service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const auth = requireAdmin(req);
@@ -61,20 +62,21 @@ export async function GET(req: NextRequest) {
 
   // 3. Action: Generate new backup on-the-fly and download
   try {
-    const backup = await createFullBackup("manual-admin-export");
-
     if (format === "json") {
-      const jsonContent = fs.readFileSync(backup.jsonPath, "utf8");
-      return new NextResponse(jsonContent, {
+      const jsonBackup = await createJsonBackup("manual-admin-export");
+      return new NextResponse(jsonBackup.jsonString, {
         status: 200,
         headers: {
           "Content-Type": "application/json; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${backup.jsonFilename}"`,
+          "Content-Disposition": `attachment; filename="${jsonBackup.jsonFilename}"`,
         },
       });
     }
+
     // Default: Return ZIP bundle with all Excel files + JSON snapshot
-    const buffer = backup.zipBuffer || fs.readFileSync(backup.zipPath);
+    const backup = await createFullBackup("manual-admin-export");
+    const buffer = backup.zipBuffer || (fs.existsSync(backup.zipPath) ? fs.readFileSync(backup.zipPath) : Buffer.from([]));
+    
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
