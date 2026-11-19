@@ -25,7 +25,8 @@
     "db:seed:responses": "tsx src/db/seed-responses.ts",
     "db:seed:100": "tsx src/db/seed-responses.ts",
     "db:reset": "tsx src/db/reset-experiment.ts",
-    "db:set-unique-pins": "tsx src/db/set-unique-respondent-pins.ts"
+    "db:set-unique-pins": "tsx src/db/set-unique-respondent-pins.ts",
+    "db:recalculate-profiles": "tsx src/db/recalculate-balanced-profiles.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

@@ -1,5 +1,5 @@
 import { db } from "@/db/connect";
-import { users, predictions, transactionsHistory, orderBook, rounds, stocks } from "@/db/schema";
+import { users, predictions, transactionsHistory, orderBook, rounds, stocks, roundStocks } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { sortRespondentsSequentially } from "./sort-utils";
@@ -78,6 +78,16 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     const allRounds = allRoundsRaw.filter(r => r.period >= 1);
     const roundMap = Object.fromEntries(allRounds.map(r => [r.id, r]));
 
+    // Fetch roundStocks mapping active stocks per round
+    const allRoundStocks = await db.select().from(roundStocks);
+    const roundStocksMap: Record<number, number[]> = {};
+    for (const rs of allRoundStocks) {
+      if (!roundStocksMap[rs.roundId]) {
+        roundStocksMap[rs.roundId] = [];
+      }
+      roundStocksMap[rs.roundId].push(rs.stockId);
+    }
+
     // Determine valid rounds
     let validRounds = allRounds;
 
@@ -108,6 +118,14 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
       });
     }
 
+    // Urutkan ronde secara kronologis: Periode, Sesi, Ronde
+    validRounds.sort((a, b) => {
+      if (a.period !== b.period) return a.period - b.period;
+      if (a.sessionGroup !== b.sessionGroup) return a.sessionGroup - b.sessionGroup;
+      if (a.roundIndex !== b.roundIndex) return a.roundIndex - b.roundIndex;
+      return a.id - b.id;
+    });
+
     const validRoundIds = new Set<number>(validRounds.map(r => r.id));
 
     // Fetch all orders for mapping counterparty
@@ -136,8 +154,11 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     const allPredictionsRaw = await db.select().from(predictions).orderBy(predictions.createdAt);
     const allPredictions = allPredictionsRaw.filter(p => validRoundIds.has(p.roundId) && officialUserIds.has(p.userId));
 
-    // Filter only respondents who actively participated in trading (have predictions or transactions in valid rounds)
-    const activeRespondentsRaw = allRespondents.filter(user => {
+    // Natural sort SELURUH responden resmi (responden1 s.d responden100)
+    // agar seluruh responden tercatat lengkap di Excel meskipun tidak bertransaksi
+    const sortedRespondents = sortRespondentsSequentially(allRespondents);
+
+    const activeRespondentsCount = allRespondents.filter(user => {
       const hasPreds = allPredictions.some(p => p.userId === user.id);
       const hasTx = allTransactions.some(tx => {
         const buyerId = orderUserMap[tx.orderBuyId];
@@ -145,10 +166,7 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
         return buyerId === user.id || sellerId === user.id;
       });
       return hasPreds || hasTx;
-    });
-
-    // Natural sort: responden1, responden2, ..., responden9, responden10, ..., responden90
-    const activeRespondents = sortRespondentsSequentially(activeRespondentsRaw);
+    }).length;
 
     // Create the Workbook
     const workbook = new ExcelJS.Workbook();
@@ -176,12 +194,13 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     // ==========================================
     const summarySheet = workbook.addWorksheet("Ringkasan Ekspor");
     
-    summarySheet.addRow(["LAPORAN HASIL SIMULASI INVESTASI"]);
+    summarySheet.addRow(["LAPORAN HASIL SIMULASI INVESTASI (TRADING & PREDIKSI)"]);
     summarySheet.getRow(1).font = { bold: true, size: 14 };
     summarySheet.addRow(["Waktu Ekspor:", formatWibDateTime(new Date())]);
     summarySheet.addRow(["Total Ronde Terpilih:", validRounds.length]);
     summarySheet.addRow(["Total Responden Terdaftar:", allRespondents.length]);
-    summarySheet.addRow(["Total Responden Aktif:", activeRespondents.length]);
+    summarySheet.addRow(["Total Responden Aktif Transaksi:", activeRespondentsCount]);
+    summarySheet.addRow(["Total Responden Pasif (0 Transaksi):", allRespondents.length - activeRespondentsCount]);
     summarySheet.addRow(["Total Prediksi Terinput:", allPredictions.length]);
     summarySheet.addRow(["Total Transaksi Match:", allTransactions.length]);
     summarySheet.addRow([]);
@@ -226,7 +245,7 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
       { width: 6 }, { width: 10 }, { width: 12 }, { width: 10 }, { width: 12 },
       { width: 14 }, { width: 22 }, { width: 24 }, { width: 24 }, { width: 16 }, { width: 16 }
     ];
-    summarySheet.views = [{ state: 'frozen', ySplit: 7 }];
+    summarySheet.views = [{ state: 'frozen', ySplit: 10 }];
 
     // Helper to calculate prediction accuracy metrics consistently
     const getPredictionMetrics = (p: typeof allPredictions[0]) => {
@@ -263,10 +282,10 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     // ==========================================
     const userSummarySheet = workbook.addWorksheet("Rata-rata Akurasi User");
 
-    userSummarySheet.addRow(["LAPORAN RATA-RATA AKURASI PREDIKSI RESPONDEN AKTIF"]);
+    userSummarySheet.addRow(["LAPORAN RATA-RATA AKURASI PREDIKSI SELURUH RESPONDEN"]);
     userSummarySheet.getRow(1).font = { bold: true, size: 14 };
     userSummarySheet.addRow(["Waktu Ekspor:", formatWibDateTime(new Date())]);
-    userSummarySheet.addRow(["Total Responden Aktif:", activeRespondents.length]);
+    userSummarySheet.addRow(["Total Responden Terdaftar:", sortedRespondents.length]);
     userSummarySheet.addRow([]);
 
     const userSummaryHeader = userSummarySheet.addRow([
@@ -290,16 +309,16 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     const allUserAverages: number[] = [];
     const allUserSelisih: number[] = [];
 
-    if (activeRespondents.length === 0) {
+    if (sortedRespondents.length === 0) {
       const emptySummaryRow = userSummarySheet.addRow([
-        "-", "-", "Tidak ada responden yang aktif pada ronde yang dipilih", "-", "-", "-", "-"
+        "-", "-", "Tidak ada responden yang terdaftar pada sistem", "-", "-", "-", "-"
       ]);
       emptySummaryRow.eachCell(cell => {
         cell.border = borderStyle;
         cell.alignment = { horizontal: "center", vertical: "middle" };
       });
     } else {
-      activeRespondents.forEach((user, idx) => {
+      sortedRespondents.forEach((user, idx) => {
         const userPreds = allPredictions.filter(p => p.userId === user.id);
         const roundsSet = new Set<number>();
         const accuracies: number[] = [];
@@ -317,11 +336,11 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
         grandTotalPreds += userPreds.length;
         const userAvgAkurasi = accuracies.length > 0
           ? accuracies.reduce((a, b) => a + b, 0) / accuracies.length
-          : null;
-        const userAvgSelisih = userPreds.length > 0 ? totalUserSelisih / userPreds.length : null;
+          : 0; // Tercatat 0 jika tidak ada transaksi
+        const userAvgSelisih = userPreds.length > 0 ? totalUserSelisih / userPreds.length : 0;
 
-        if (userAvgAkurasi !== null) allUserAverages.push(userAvgAkurasi);
-        if (userAvgSelisih !== null) allUserSelisih.push(userAvgSelisih);
+        if (accuracies.length > 0) allUserAverages.push(userAvgAkurasi);
+        if (userPreds.length > 0) allUserSelisih.push(userAvgSelisih);
 
         const row = userSummarySheet.addRow([
           idx + 1,
@@ -329,8 +348,8 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
           user.nama || `User #${user.id}`,
           roundsSet.size,
           userPreds.length,
-          userAvgSelisih !== null ? userAvgSelisih : "-",
-          userAvgAkurasi !== null ? userAvgAkurasi : "-"
+          userAvgSelisih,
+          userAvgAkurasi
         ]);
 
         row.eachCell((cell, colNumber) => {
@@ -340,18 +359,25 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
           if ([1, 2, 4, 5].includes(colNumber)) {
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
           }
-          if (colNumber === 6 && typeof cell.value === 'number') {
+          if (colNumber === 6) {
             cell.numFmt = 'Rp #,##0.00';
+            if (userPreds.length === 0) {
+              cell.font = { color: { argb: 'FF6B7280' } };
+            }
           }
-          if (colNumber === 7 && typeof cell.value === 'number') {
+          if (colNumber === 7) {
             cell.numFmt = '0.00%';
             cell.font = { bold: true };
             cell.alignment = { horizontal: 'center', vertical: 'middle' };
-            cell.fill = {
-              type: 'pattern',
-              pattern: 'solid',
-              fgColor: { argb: 'FFE0E7FF' } // Soft indigo highlight
-            };
+            if (userPreds.length === 0) {
+              cell.font = { color: { argb: 'FF6B7280' } };
+            } else {
+              cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFE0E7FF' } // Soft indigo highlight
+              };
+            }
           }
         });
       });
@@ -375,35 +401,56 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
       grandAvgAkurasi !== null ? grandAvgAkurasi : "-"
     ]);
 
-    userSummarySheet.mergeCells(grandAvgRow.number, 1, grandAvgRow.number, 4);
-
-    grandAvgRow.eachCell((cell, colNumber) => {
-      cell.font = { bold: true };
+    for (let c = 1; c <= 4; c++) {
+      const cell = grandAvgRow.getCell(c);
       cell.border = borderStyle;
+      cell.font = { bold: true };
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FFF3F4F6' } // Light gray fill
+        fgColor: { argb: 'FFF3F4F6' }
       };
-      if (colNumber === 1) {
+      if (c === 1) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       }
-      if (colNumber === 5) {
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      }
-      if (colNumber === 6 && typeof cell.value === 'number') {
-        cell.numFmt = 'Rp #,##0.00';
-      }
-      if (colNumber === 7 && typeof cell.value === 'number') {
-        cell.numFmt = '0.00%';
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFC7D2FE' } // Distinct indigo highlight
-        };
-      }
-    });
+    }
+
+    const col5 = grandAvgRow.getCell(5);
+    col5.border = borderStyle;
+    col5.font = { bold: true };
+    col5.alignment = { horizontal: 'center', vertical: 'middle' };
+    col5.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    };
+
+    const col6 = grandAvgRow.getCell(6);
+    col6.border = borderStyle;
+    col6.font = { bold: true };
+    col6.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    };
+    if (typeof col6.value === 'number') {
+      col6.numFmt = 'Rp #,##0.00';
+    }
+
+    const col7 = grandAvgRow.getCell(7);
+    col7.border = borderStyle;
+    col7.font = { bold: true };
+    if (typeof col7.value === 'number') {
+      col7.numFmt = '0.00%';
+      col7.alignment = { horizontal: 'center', vertical: 'middle' };
+      col7.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFC7D2FE' }
+      };
+    }
+
+    userSummarySheet.mergeCells(grandAvgRow.number, 1, grandAvgRow.number, 4);
 
     userSummarySheet.columns = [
       { width: 8 },  // 1. No
@@ -417,9 +464,11 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
     userSummarySheet.views = [{ state: 'frozen', ySplit: 5 }];
 
     // ==========================================
-    // WORKSHEETS PER RESPONDEN AKTIF (URUT NATURAL 1 s.d. 90)
+    // WORKSHEETS PER RESPONDEN (LENGKAP SELURUH RESPONDEN 1 s.d 100)
     // ==========================================
-    for (const user of activeRespondents) {
+    const usedSheetNames = new Set<string>();
+
+    for (const user of sortedRespondents) {
       const userPredictions = allPredictions.filter(p => p.userId === user.id);
       const userTransactions = allTransactions.filter(tx => {
         const buyerId = orderUserMap[tx.orderBuyId];
@@ -427,41 +476,13 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
         return buyerId === user.id || sellerId === user.id;
       });
 
-      // Sort user predictions chronologically by period, session, round, and creation time
-      userPredictions.sort((a, b) => {
-        const rA = roundMap[a.roundId];
-        const rB = roundMap[b.roundId];
-        if (rA && rB) {
-          if (rA.period !== rB.period) return rA.period - rB.period;
-          if (rA.sessionGroup !== rB.sessionGroup) return rA.sessionGroup - rB.sessionGroup;
-          if (rA.roundIndex !== rB.roundIndex) return rA.roundIndex - rB.roundIndex;
-        }
-        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
-      });
-
-      // Pre-calculate round-level average accuracy for this user
-      const userRoundAccuracies: Record<number, number[]> = {};
-      for (const p of userPredictions) {
-        if (!userRoundAccuracies[p.roundId]) {
-          userRoundAccuracies[p.roundId] = [];
-        }
-        const { akurasiVal } = getPredictionMetrics(p);
-        if (akurasiVal !== null) {
-          userRoundAccuracies[p.roundId].push(akurasiVal);
-        }
+      const baseSheetName = (user.nama || `User_${user.id}`).replace(/[\\/?*\[\]]/g, '').substring(0, 31);
+      let safeSheetName = baseSheetName;
+      let collisionIdx = 1;
+      while (usedSheetNames.has(safeSheetName.toLowerCase())) {
+        safeSheetName = `${baseSheetName.substring(0, 27)}_${collisionIdx++}`;
       }
-
-      const userRoundAvgMap: Record<number, number | null> = {};
-      for (const roundIdStr in userRoundAccuracies) {
-        const roundId = Number(roundIdStr);
-        const accs = userRoundAccuracies[roundId];
-        userRoundAvgMap[roundId] = accs.length > 0
-          ? accs.reduce((a, b) => a + b, 0) / accs.length
-          : null;
-      }
-
-      // If user has no predictions and no transactions, and there are rounds, we can still include sheet or skip if empty
-      const safeSheetName = (user.nama || `User_${user.id}`).replace(/[\\/?*\[\]]/g, '').substring(0, 31);
+      usedSheetNames.add(safeSheetName.toLowerCase());
       const sheet = workbook.addWorksheet(safeSheetName);
 
       // --- SECTION 1: PREDIKSI & ORDER TRANSAKSI RESPONDEN ---
@@ -476,87 +497,190 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
         cell.border = borderStyle;
       });
 
-      if (userPredictions.length === 0) {
-        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada prediksi/order pada ronde yang dipilih', '-', '-', '-', '-', '-', '-', '-', '-']);
+      if (validRounds.length === 0) {
+        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada ronde yang dipilih', '-', 0, 0, 0, 0, 0, 0, 0]);
         emptyRow.eachCell((cell) => {
           cell.border = borderStyle;
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         });
       } else {
-        // Group contiguous predictions by roundId so we can merge cells per round
-        type RoundGroup = {
-          roundId: number;
-          predictions: typeof userPredictions;
-        };
+        const userAllAccuracies: number[] = [];
 
-        const roundGroups: RoundGroup[] = [];
-        for (const p of userPredictions) {
-          const lastGroup = roundGroups[roundGroups.length - 1];
-          if (lastGroup && lastGroup.roundId === p.roundId) {
-            lastGroup.predictions.push(p);
-          } else {
-            roundGroups.push({ roundId: p.roundId, predictions: [p] });
+        // Loop melalui setiap ronde valid secara berurutan (Periode -> Sesi -> Ronde)
+        for (const round of validRounds) {
+          // Dapatkan daftar seluruh saham aktif pada ronde ini
+          let roundStockIds: number[] = roundStocksMap[round.id] || [];
+          if (roundStockIds.length === 0 && round.openingPrices && typeof round.openingPrices === "object") {
+            roundStockIds = Object.keys(round.openingPrices).map(Number).filter(n => !isNaN(n) && n > 0);
           }
-        }
+          if (roundStockIds.length === 0) {
+            const fromPreds = allPredictions.filter(p => p.roundId === round.id).map(p => p.stockId);
+            if (fromPreds.length > 0) roundStockIds = Array.from(new Set(fromPreds));
+          }
+          if (roundStockIds.length === 0) {
+            const fromTxs = allTransactions.filter(t => t.roundId === round.id).map(t => t.stockId);
+            if (fromTxs.length > 0) roundStockIds = Array.from(new Set(fromTxs));
+          }
+          roundStockIds = Array.from(new Set(roundStockIds));
+          roundStockIds.sort((a, b) => {
+            const sA = stockMap[a];
+            const sB = stockMap[b];
+            return (sA?.kodeSaham || "").localeCompare(sB?.kodeSaham || "");
+          });
 
-        for (const group of roundGroups) {
-          const roundAvg = userRoundAvgMap[group.roundId] ?? null;
-          const startRow = sheet.rowCount + 1;
-
-          for (let i = 0; i < group.predictions.length; i++) {
-            const p = group.predictions[i];
-            const { round, stock, openingPrice, finalPrice, predPrice, selisih, akurasiVal } = getPredictionMetrics(p);
-
-            const timeStr = formatWibDateTime(p.createdAt);
-            const pilihan = p.tipe || "-";
-            const lot = p.jumlahLot || 1;
-
+          // Fallback jika ronde tidak memiliki saham tercatat: buat 1 baris ronde kosong bernilai 0
+          if (roundStockIds.length === 0) {
             const row = sheet.addRow([
-              timeStr,
-              `Periode ${round?.period || "-"}`,
-              `Sesi ${round?.sessionGroup || "-"}`,
-              `Ronde ${round?.roundIndex !== undefined ? round.roundIndex + 1 : "-"}`,
-              stock?.kodeSaham || "-",
-              pilihan,
-              lot,
-              predPrice,
-              openingPrice,
-              finalPrice,
-              selisih,
-              akurasiVal,
-              i === 0 ? (roundAvg !== null ? roundAvg : "-") : ""
+              '-',
+              `Periode ${round.period}`,
+              `Sesi ${round.sessionGroup}`,
+              `Ronde ${round.roundIndex + 1}`,
+              '-',
+              '-',
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
             ]);
-
             row.eachCell((cell, colNumber) => {
               cell.border = borderStyle;
-              cell.alignment = { vertical: 'middle' };
-
-              if ([2, 3, 4, 5].includes(colNumber)) {
-                cell.alignment = { horizontal: 'center', vertical: 'middle' };
-              }
-              if (colNumber === 6) {
-                const isBeli = pilihan.toUpperCase() === "BELI" || pilihan.toUpperCase() === "BID";
-                const isJual = pilihan.toUpperCase() === "JUAL" || pilihan.toUpperCase() === "ASK";
-                cell.font = { bold: true, color: { argb: isBeli ? 'FF00B050' : isJual ? 'FFFF0000' : 'FF000000' } };
-                cell.alignment = { horizontal: 'center', vertical: 'middle' };
-              }
-              if (colNumber === 7) {
-                cell.numFmt = '#,##0';
-                cell.alignment = { horizontal: 'center', vertical: 'middle' };
-              }
-              if ([8, 9, 10, 11].includes(colNumber)) {
-                cell.numFmt = 'Rp #,##0.00';
-              }
-              if (colNumber === 12 && cell.value !== null && typeof cell.value === 'number') {
-                cell.numFmt = '0.00%';
-                cell.alignment = { horizontal: 'center', vertical: 'middle' };
-              }
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+              if ([8, 9, 10, 11].includes(colNumber)) cell.numFmt = 'Rp #,##0.00';
+              if (colNumber === 7) cell.numFmt = '#,##0';
+              if (colNumber === 12 || colNumber === 13) cell.numFmt = '0.00%';
             });
+            continue;
+          }
+
+          const startRow = sheet.rowCount + 1;
+          const roundAccuracies: number[] = [];
+
+          // Untuk setiap saham pada ronde ini:
+          for (const stockId of roundStockIds) {
+            const stock = stockMap[stockId];
+            const stockPreds = userPredictions.filter(p => p.roundId === round.id && p.stockId === stockId);
+
+            if (stockPreds.length > 0) {
+              // Kasus A: Responden melakukan prediksi / aksi transaksi
+              for (const p of stockPreds) {
+                const { openingPrice, finalPrice, predPrice, selisih, akurasiVal } = getPredictionMetrics(p);
+                const timeStr = formatWibDateTime(p.createdAt);
+                const pilihan = p.tipe || "-";
+                const lot = p.jumlahLot || 1;
+
+                if (akurasiVal !== null) {
+                  roundAccuracies.push(akurasiVal);
+                  userAllAccuracies.push(akurasiVal);
+                }
+
+                const row = sheet.addRow([
+                  timeStr,
+                  `Periode ${round.period}`,
+                  `Sesi ${round.sessionGroup}`,
+                  `Ronde ${round.roundIndex + 1}`,
+                  stock?.kodeSaham || "-",
+                  pilihan,
+                  lot,
+                  predPrice,
+                  openingPrice,
+                  finalPrice,
+                  selisih,
+                  akurasiVal ?? 0,
+                  "" // Akan diisi dan dimerge nanti
+                ]);
+
+                row.eachCell((cell, colNumber) => {
+                  cell.border = borderStyle;
+                  cell.alignment = { vertical: 'middle' };
+
+                  if ([2, 3, 4, 5].includes(colNumber)) {
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  }
+                  if (colNumber === 6) {
+                    const isBeli = pilihan.toUpperCase() === "BELI" || pilihan.toUpperCase() === "BID";
+                    const isJual = pilihan.toUpperCase() === "JUAL" || pilihan.toUpperCase() === "ASK";
+                    cell.font = { bold: true, color: { argb: isBeli ? 'FF00B050' : isJual ? 'FFFF0000' : 'FF000000' } };
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  }
+                  if (colNumber === 7) {
+                    cell.numFmt = '#,##0';
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  }
+                  if ([8, 9, 10, 11].includes(colNumber)) {
+                    cell.numFmt = 'Rp #,##0.00';
+                  }
+                  if (colNumber === 12) {
+                    cell.numFmt = '0.00%';
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  }
+                });
+              }
+            } else {
+              // Kasus B: Responden TIDAK melakukan transaksi/aksi jual beli pada saham ini di ronde ini:
+              // Rekam bernilai 0 di hasil ekspor sesuai arahan agar lengkap tiap sesi dan rondenya
+              const openingPrice = round?.openingPrices && (round.openingPrices as any)[stockId]
+                ? Number((round.openingPrices as any)[stockId])
+                : Number(stock?.basePrice || 0);
+              const finalPrice = (finalPrices[round.id] && finalPrices[round.id][stockId])
+                ? finalPrices[round.id][stockId]
+                : openingPrice;
+
+              const row = sheet.addRow([
+                "-",
+                `Periode ${round.period}`,
+                `Sesi ${round.sessionGroup}`,
+                `Ronde ${round.roundIndex + 1}`,
+                stock?.kodeSaham || "-",
+                "-",
+                0,
+                0,
+                openingPrice,
+                finalPrice,
+                0,
+                0,
+                "" // Diisi dan dimerge nanti
+              ]);
+
+              row.eachCell((cell, colNumber) => {
+                cell.border = borderStyle;
+                cell.alignment = { vertical: 'middle' };
+
+                if ([1, 2, 3, 4, 5, 6].includes(colNumber)) {
+                  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  if (colNumber === 6) {
+                    cell.font = { color: { argb: 'FF6B7280' } };
+                  }
+                }
+                if (colNumber === 7) {
+                  cell.numFmt = '#,##0';
+                  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  cell.font = { color: { argb: 'FF6B7280' } };
+                }
+                if ([8, 9, 10, 11].includes(colNumber)) {
+                  cell.numFmt = 'Rp #,##0.00';
+                  if (colNumber === 8 || colNumber === 11) {
+                    cell.font = { color: { argb: 'FF6B7280' } };
+                  }
+                }
+                if (colNumber === 12) {
+                  cell.numFmt = '0.00%';
+                  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                  cell.font = { color: { argb: 'FF6B7280' } };
+                }
+              });
+            }
           }
 
           const endRow = sheet.rowCount;
 
-          // Merge Column 13 ("Rata-rata Akurasi Ronde") for this round
+          // Merge Column 13 ("Rata-rata Akurasi Ronde") untuk ronde ini
+          const roundAvg = roundAccuracies.length > 0
+            ? roundAccuracies.reduce((a, b) => a + b, 0) / roundAccuracies.length
+            : 0;
+
           for (let r = startRow; r <= endRow; r++) {
             const cell = sheet.getCell(r, 13);
             cell.border = borderStyle;
@@ -572,32 +696,28 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
           }
 
           const masterCell = sheet.getCell(startRow, 13);
-          masterCell.value = roundAvg !== null ? roundAvg : "-";
-          if (typeof roundAvg === 'number') {
-            masterCell.numFmt = '0.00%';
-          }
+          masterCell.value = roundAvg;
+          masterCell.numFmt = '0.00%';
           masterCell.font = { bold: true };
+          if (roundAccuracies.length === 0) {
+            masterCell.font = { bold: false, color: { argb: 'FF6B7280' } };
+          }
           masterCell.alignment = { horizontal: 'center', vertical: 'middle' };
         }
 
         // Summary row for user overall average accuracy
-        const allUserAccs = userPredictions
-          .map(p => getPredictionMetrics(p).akurasiVal)
-          .filter((v): v is number => v !== null);
-
-        const overallUserAvg = allUserAccs.length > 0
-          ? allUserAccs.reduce((a, b) => a + b, 0) / allUserAccs.length
-          : null;
+        const overallUserAvg = userAllAccuracies.length > 0
+          ? userAllAccuracies.reduce((a, b) => a + b, 0) / userAllAccuracies.length
+          : 0;
 
         const totalUserAvgRow = sheet.addRow([
           "RATA-RATA KESELURUHAN AKURASI:",
           "", "", "", "", "", "", "", "", "", "", "",
-          overallUserAvg !== null ? overallUserAvg : "-"
+          overallUserAvg
         ]);
 
-        sheet.mergeCells(totalUserAvgRow.number, 1, totalUserAvgRow.number, 12);
-
-        totalUserAvgRow.eachCell((cell, colNumber) => {
+        for (let c = 1; c <= 12; c++) {
+          const cell = totalUserAvgRow.getCell(c);
           cell.border = borderStyle;
           cell.font = { bold: true };
           cell.fill = {
@@ -605,19 +725,23 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
             pattern: 'solid',
             fgColor: { argb: 'FFF3F4F6' }
           };
-          if (colNumber === 1) {
+          if (c === 1) {
             cell.alignment = { horizontal: 'right', vertical: 'middle' };
           }
-          if (colNumber === 13 && typeof cell.value === 'number') {
-            cell.numFmt = '0.00%';
-            cell.alignment = { horizontal: 'center', vertical: 'middle' };
-            cell.fill = {
-              type: 'pattern',
-              pattern: 'solid',
-              fgColor: { argb: 'FFC7D2FE' }
-            };
-          }
-        });
+        }
+
+        const avgCell = totalUserAvgRow.getCell(13);
+        avgCell.border = borderStyle;
+        avgCell.font = { bold: true };
+        avgCell.numFmt = '0.00%';
+        avgCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        avgCell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFC7D2FE' }
+        };
+
+        sheet.mergeCells(totalUserAvgRow.number, 1, totalUserAvgRow.number, 12);
       }
 
       // Spacer rows
@@ -637,10 +761,18 @@ export async function generateResumeWorkbook(options: ResumeExportOptions = {}):
       });
 
       if (userTransactions.length === 0) {
-        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada transaksi match pada ronde yang dipilih', '-', '-', '-', '-', '-', '-']);
-        emptyRow.eachCell((cell) => {
+        const emptyRow = sheet.addRow(['-', '-', '-', '-', 'Tidak ada transaksi (0 transaksi match)', '-', 0, 0, 0, '-', '-']);
+        emptyRow.eachCell((cell, colNumber) => {
           cell.border = borderStyle;
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          if ([7, 9].includes(colNumber)) {
+            cell.numFmt = 'Rp #,##0.00';
+            cell.font = { color: { argb: 'FF6B7280' } };
+          }
+          if (colNumber === 8) {
+            cell.numFmt = '#,##0';
+            cell.font = { color: { argb: 'FF6B7280' } };
+          }
         });
       } else {
         for (const tx of userTransactions) {

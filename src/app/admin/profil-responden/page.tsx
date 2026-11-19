@@ -128,7 +128,7 @@ export default function AdminRespondentProfilesPage() {
   const handleRecalculate = async () => {
     if (
       !confirm(
-        "Kalkulasi ulang Tercile akan mengurutkan skor seluruh responden yang telah mengisi kuesioner dan membagi kategori (T/S/R) menjadi 3 kelompok sama rata secara otomatis. Lanjutkan?"
+        "Kalkulasi ulang akan mengurutkan skor seluruh responden yang telah mengisi kuesioner dan membagi 9 kelompok profil (Kelompok A s.d I) serta kategori LA & EI (T/S/R) secara seimbang dan sama rata. Data jawaban mentah responden tetap aman tidak berubah. Lanjutkan?"
       )
     ) {
       return;

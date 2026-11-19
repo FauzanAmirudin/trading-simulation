@@ -470,7 +470,7 @@ export async function generateProfilesWorkbook(targetUserId: number | null = nul
     // Subjudul / Deskripsi Metodologi
     sheetSummary.mergeCells("B3:N3");
     const descCell = sheetSummary.getCell("B3");
-    descCell.value = `Tanggal Ekspor: ${new Date().toLocaleDateString("id-ID", { dateStyle: "full" })} | Metodologi: Pemeringkatan Skor (1..N) dibagi seimbang menjadi 3 Kelompok Tercile (Tinggi 33.3%, Sedang 33.3%, Rendah 33.3%).`;
+    descCell.value = `Tanggal Ekspor: ${new Date().toLocaleDateString("id-ID", { dateStyle: "full" })} | Metodologi: Balanced Hierarchical Terciles — Pemeringkatan skor dibagi seimbang dan terbagi rata ke dalam 9 kelompok profil (Kelompok A s.d I) dan kategori (Tinggi, Sedang, Rendah).`;
     descCell.font = { italic: true, size: 9.5, color: { argb: "FF475569" } };
     descCell.alignment = { vertical: "middle", horizontal: "center" };
     sheetSummary.getRow(3).height = 20;
@@ -521,7 +521,7 @@ export async function generateProfilesWorkbook(targetUserId: number | null = nul
 
     sheetSummary.mergeCells("F7:H7");
     const valMetode = sheetSummary.getCell("F7");
-    valMetode.value = "Population Terciles (Seimbang 33.3%)";
+    valMetode.value = "Balanced Hierarchical Terciles (Seimbang 9 Kelompok & 33.3%)";
     valMetode.alignment = { horizontal: "center", vertical: "middle" };
     valMetode.font = { bold: true, size: 9.5, color: { argb: "FF0F172A" } };
     valMetode.border = borderStyle;

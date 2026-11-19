@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Berhasil mengkalkulasi ulang pengelompokan Tercile untuk ${results.length} responden.`,
+      message: `Berhasil mengkalkulasi ulang pembagian seimbang 9 kelompok profil (Kelompok A s.d I) untuk ${results.length} responden.`,
       updatedCount: results.length,
     });
   } catch (error: any) {

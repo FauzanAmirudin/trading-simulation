@@ -163,15 +163,38 @@ export interface InstrumentTercileCutoff {
 }
 
 /**
- * Algoritma Population Terciles (Seimbang Berdasarkan Jumlah User):
- * 1. Seluruh responden diurutkan berdasarkan nilai skor dari atas ke bawah (descending).
- * 2. Dibagi menjadi 3 kelompok seimbang:
- *    - Sepertiga teratas (Top 33.3%, peringkat 1 s.d N/3) = Tinggi (T)
- *    - Sepertiga tengah (Middle 33.3%)                   = Sedang (S)
- *    - Sepertiga terbawah (Bottom 33.3%)                 = Rendah (R)
- * 3. Dijalankan secara independen untuk instrumen Loss Aversion (LA) dan Emotional Intelligence (EI).
- *    Contoh: Jika N = 90 responden, maka otomatis terbagi 30 Tinggi, 30 Sedang, dan 30 Rendah.
- *    Jika N bukan kelipatan 3 (misal N = 91 atau 92), sisa dialokasikan proporsional ke kuantil teratas.
+ * Helper untuk menghitung ukuran 3 kuantil (Tinggi, Sedang, Rendah)
+ * secara seimbang dan proporsional untuk sejumlah N responden.
+ */
+export function getTercileSplit(total: number): { countT: number; countS: number; countR: number } {
+  if (total <= 0) return { countT: 0, countS: 0, countR: 0 };
+  const remainder = total % 3;
+  const baseSize = Math.floor(total / 3);
+  const countT = baseSize + (remainder >= 1 ? 1 : 0);
+  const countS = baseSize + (remainder === 2 ? 1 : 0);
+  const countR = baseSize;
+  return { countT, countS, countR };
+}
+
+/**
+ * Algoritma Balanced Hierarchical Terciles (Seimbang & Terbagi Rata):
+ * 1. Peringkat Global:
+ *    - Seluruh responden dihitung peringkat skornya secara menyeluruh (Global Rank 1..N)
+ *      untuk instrumen Loss Aversion (LA) dan Emotional Intelligence (EI).
+ * 2. Strata Utama (Loss Aversion):
+ *    - Populasi diurutkan berdasarkan skor LA (descending), lalu dibagi menjadi 3 kuantil seimbang:
+ *      * Sepertiga teratas  (Top 33.3%)    = LA Tinggi (T)
+ *      * Sepertiga tengah   (Middle 33.3%) = LA Sedang (S)
+ *      * Sepertiga terbawah (Bottom 33.3%) = LA Rendah (R)
+ * 3. Stratifikasi Kondisional (Emotional Intelligence):
+ *    - Di dalam masing-masing strata LA tersebut, skor EI diurutkan kembali dan dibagi 3 kuantil sama rata:
+ *      * Strata LA(T): dibagi rata menjadi Kelompok A (T+T), Kelompok B (T+S), Kelompok C (T+R).
+ *      * Strata LA(S): dibagi rata menjadi Kelompok D (S+T), Kelompok E (S+S), Kelompok F (S+R).
+ *      * Strata LA(R): dibagi rata menjadi Kelompok G (R+T), Kelompok H (R+S), Kelompok I (R+R).
+ * 4. Hasil:
+ *    - Seluruh 9 kelompok (Kelompok A s.d I) TERBAGI RATA SECARA SEMPURNA (misal 10 responden per kelompok untuk N=90).
+ *    - Margin LA dan EI (Tinggi, Sedang, Rendah) juga tepat seimbang (masing-masing 33.3%).
+ *    - Data mentah (jawaban asli responden, skor total, skor rata-rata) 100% aman dan tidak tersentuh.
  */
 export function computePopulationTerciles(
   respondents: RespondentScoreInput[]
@@ -182,7 +205,6 @@ export function computePopulationTerciles(
 
   // Jika responden < 3, gunakan standard cutoff sebagai fallback
   if (n < 3) {
-    // Tetap urutkan untuk peringkat
     const sortedLA = [...respondents].sort((a, b) => b.laRawScore - a.laRawScore || a.userId - b.userId);
     const sortedEI = [...respondents].sort((a, b) => b.eiRawScore - a.eiRawScore || a.userId - b.userId);
     const laRankMap = new Map<number, number>();
@@ -214,52 +236,72 @@ export function computePopulationTerciles(
     });
   }
 
-  // Hitung ukuran kelompok seimbang untuk N responden
-  const remainder = n % 3;
-  const baseSize = Math.floor(n / 3);
-  const countT = baseSize + (remainder >= 1 ? 1 : 0);
-  const countS = baseSize + (remainder === 2 ? 1 : 0);
-  // Sisa kuota kelompok R (Rendah) adalah baseSize
-
-  // 1. Kategorisasi LA secara independen (Diurutkan dari atas ke bawah / Nilai Tertinggi ke Terendah)
-  const sortedByLA = [...respondents].sort((a, b) => {
+  // 1. Peringkat Global Populasi (1 = nilai skor tertinggi, diurutkan dari atas ke bawah)
+  const sortedGlobalLA = [...respondents].sort((a, b) => {
     if (b.laRawScore !== a.laRawScore) return b.laRawScore - a.laRawScore;
     return a.userId - b.userId; // deterministic tie-breaker
   });
-  const laCategoryMap = new Map<number, CategoryType>();
   const laRankMap = new Map<number, number>();
+  sortedGlobalLA.forEach((r, idx) => laRankMap.set(r.userId, idx + 1));
 
-  sortedByLA.forEach((r, idx) => {
-    laRankMap.set(r.userId, idx + 1);
-    if (idx < countT) {
-      laCategoryMap.set(r.userId, "T"); // Sepertiga teratas -> Tinggi
-    } else if (idx < countT + countS) {
-      laCategoryMap.set(r.userId, "S"); // Sepertiga tengah -> Sedang
-    } else {
-      laCategoryMap.set(r.userId, "R"); // Sepertiga terbawah -> Rendah
-    }
-  });
-
-  // 2. Kategorisasi EI secara independen (Diurutkan dari atas ke bawah / Nilai Tertinggi ke Terendah)
-  const sortedByEI = [...respondents].sort((a, b) => {
+  const sortedGlobalEI = [...respondents].sort((a, b) => {
     if (b.eiRawScore !== a.eiRawScore) return b.eiRawScore - a.eiRawScore;
     return a.userId - b.userId; // deterministic tie-breaker
   });
-  const eiCategoryMap = new Map<number, CategoryType>();
   const eiRankMap = new Map<number, number>();
+  sortedGlobalEI.forEach((r, idx) => eiRankMap.set(r.userId, idx + 1));
 
-  sortedByEI.forEach((r, idx) => {
-    eiRankMap.set(r.userId, idx + 1);
-    if (idx < countT) {
-      eiCategoryMap.set(r.userId, "T"); // Sepertiga teratas -> Tinggi
-    } else if (idx < countT + countS) {
-      eiCategoryMap.set(r.userId, "S"); // Sepertiga tengah -> Sedang
+  // 2. Bagi populasi menjadi 3 strata Loss Aversion secara seimbang (Tinggi, Sedang, Rendah)
+  const { countT: laCountT, countS: laCountS } = getTercileSplit(n);
+  const laStratumT: RespondentScoreInput[] = [];
+  const laStratumS: RespondentScoreInput[] = [];
+  const laStratumR: RespondentScoreInput[] = [];
+
+  sortedGlobalLA.forEach((r, idx) => {
+    if (idx < laCountT) {
+      laStratumT.push(r);
+    } else if (idx < laCountT + laCountS) {
+      laStratumS.push(r);
     } else {
-      eiCategoryMap.set(r.userId, "R"); // Sepertiga terbawah -> Rendah
+      laStratumR.push(r);
     }
   });
 
-  // 3. Gabungkan hasil menjadi profil 9 kelompok
+  // 3. Hierarchical / Conditional Stratification untuk EI di setiap strata LA:
+  //    Membagi setiap strata LA menjadi 3 kuantil EI secara seimbang sehingga
+  //    seluruh 9 kelompok (A s.d I) terbagi rata tanpa merusak data mentah.
+  const laCategoryMap = new Map<number, CategoryType>();
+  const eiCategoryMap = new Map<number, CategoryType>();
+
+  const assignConditionalEI = (
+    stratum: RespondentScoreInput[],
+    laCat: CategoryType
+  ) => {
+    // Urutkan anggota strata berdasarkan skor EI tertinggi ke terendah
+    const sortedStratumEI = [...stratum].sort((a, b) => {
+      if (b.eiRawScore !== a.eiRawScore) return b.eiRawScore - a.eiRawScore;
+      return a.userId - b.userId;
+    });
+
+    const { countT, countS } = getTercileSplit(sortedStratumEI.length);
+
+    sortedStratumEI.forEach((r, idx) => {
+      laCategoryMap.set(r.userId, laCat);
+      if (idx < countT) {
+        eiCategoryMap.set(r.userId, "T"); // Sub-kuantil atas
+      } else if (idx < countT + countS) {
+        eiCategoryMap.set(r.userId, "S"); // Sub-kuantil tengah
+      } else {
+        eiCategoryMap.set(r.userId, "R"); // Sub-kuantil bawah
+      }
+    });
+  };
+
+  assignConditionalEI(laStratumT, "T"); // Menghasilkan Kelompok A (T+T), B (T+S), C (T+R)
+  assignConditionalEI(laStratumS, "S"); // Menghasilkan Kelompok D (S+T), E (S+S), F (S+R)
+  assignConditionalEI(laStratumR, "R"); // Menghasilkan Kelompok G (R+T), H (R+S), I (R+R)
+
+  // 4. Gabungkan hasil menjadi profil 9 kelompok seimbang
   return respondents.map((r) => {
     const laItemCount = r.laItemCount || 15;
     const eiItemCount = r.eiItemCount || 15;
